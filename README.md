@@ -1,18 +1,18 @@
-Yleaf: software for human Y-chromosomal haplogroup inference from next generation sequencing data
+# Yleaf: software for human Y-chromosomal haplogroup inference from next generation sequencing data
 
-Arwin Ralf, Diego Montiel Gonzalez, Kaiyin Zhong and Manfred Kayser
+#### Arwin Ralf, Diego Montiel Gonzalez, Kaiyin Zhong and Manfred Kayser
 
-Department of Genetic Identification, Erasmus MC University Medical Centre Rotterdam, Rotterdam,
+### Department of Genetic Identification, Erasmus MC University Medical Centre Rotterdam, Rotterdam,
 The Netherlands
 
-# Requirements
+## Requirements
 
     Operating system: Linux only. Tested on Ubuntu 16.04LTS, but should also work on newer version of Ubuntu. It should be easy to made it work on other Linux distributions. 
     Python, R, wget, git.
     Internet connection during installation (for downloading and extracting hg19 reference genome).
     Data storage: For installation we recommend a storage capacity of > 10 GB. 
 
-# Installation
+## Installation
 
 1. Install dependencies, you can skip this step if these packages are already installed on your system
 
@@ -23,8 +23,7 @@ The Netherlands
             apt-get install p7zip-full 
             apt-get install bwa
 
-	-SAMtools
-            We recommend the newests versions of SAMtools (e.g. > 1.4.1)
+	SAMtools: We recommend the newests versions of SAMtools (e.g. > 1.4.1)
 
             1. wget https://github.com/samtools/samtools/releases/download/1.4.1/samtools-1.4.1.tar.bz2 -O samtools.tar.bz2
             2. tar -xjvf samtools.tar.bz2 
