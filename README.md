@@ -2,8 +2,7 @@
 
 #### Arwin Ralf, Diego Montiel Gonzalez, Kaiyin Zhong and Manfred Kayser
 
-### Department of Genetic Identification, Erasmus MC University Medical Centre Rotterdam, Rotterdam,
-The Netherlands
+### Department of Genetic Identification, Erasmus MC University Medical Centre Rotterdam, Rotterdam, The Netherlands
 
 ## Requirements
 
@@ -16,11 +15,11 @@ The Netherlands
 
 1. Install dependencies, you can skip this step if these packages are already installed on your system
 
-            apt-get install git-core 
-	    apt-get install python2.7 
-            apt-get install r-base 
-            apt-get install mawk 
-            apt-get install p7zip-full 
+            apt-get install git-core            
+	    apt-get install python2.7
+            apt-get install r-base
+            apt-get install mawk
+            apt-get install p7zip-full
             apt-get install bwa
 
 	SAMtools: We recommend the newests versions of SAMtools (e.g. > 1.4.1)

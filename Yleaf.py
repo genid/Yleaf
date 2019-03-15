@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-#-- Kaiyin and Diego Montiel 2017
+#-- Diego Montiel 2017
 #-- Genetics Identificacion Group @ Erasmus MC  --
 #-- YLeaf detection of Y-Haplogroups in Human genome DNA 
 
