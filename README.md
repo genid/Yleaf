@@ -2,7 +2,8 @@
 
 #### Arwin Ralf, Diego Montiel Gonzalez, Kaiyin Zhong and Manfred Kayser
 
-### Department of Genetic Identification, Erasmus MC University Medical Centre Rotterdam, Rotterdam, The Netherlands
+### Department of Genetic Identification 
+#### Erasmus MC University Medical Centre Rotterdam, The Netherlands
 
 ## Requirements
 
