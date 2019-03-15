@@ -46,6 +46,7 @@
 
 5. Usage and examples
 
+
 ### FASTQ
     
 python Yleaf.py -fastq raw_reads.fastq -out out -r 1 -q 20 -b 90 -t 16
@@ -53,8 +54,14 @@ python Yleaf.py -fastq raw_reads.fastq -out out -r 1 -q 20 -b 90 -t 16
 ### BAM
     
 python Yleaf.py -bam file.bam -out out -r 1 -q 20 -b 90 -t 1
-        
+
 
 6. Bug report
 
-Please email me at d.montielgonzalez@erasmusmc.nl when there is a problem getting the software up and running.
+Please send an email at d.montielgonzalez@erasmusmc.nl if there is a problem getting the software up and running.
+
+### References and Supporting Information
+A. Ralf, et al., Yleaf: software for human Y-chromosomal haplogroup inference from next generation sequencing data (2018).
+
+https://academic.oup.com/mbe/article/35/7/1820/4993044
+
