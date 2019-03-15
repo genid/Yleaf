@@ -45,10 +45,13 @@
 
 5. Usage and examples
 
-    FASTQ
-        python Yleaf.py -fastq raw_reads.fastq -out out -r 1 -q 20 -b 90 -t 16
-    BAM
-        python Yleaf.py -bam file.bam -out out -r 1 -q 20 -b 90 -t 1
+### FASTQ
+    
+python Yleaf.py -fastq raw_reads.fastq -out out -r 1 -q 20 -b 90 -t 16
+        
+### BAM
+    
+python Yleaf.py -bam file.bam -out out -r 1 -q 20 -b 90 -t 1
         
 
 6. Bug report
