@@ -27,7 +27,7 @@ if __name__ == "__main__":
     
     #sample_name = "Output_example_datasets/Modern_DNA_WGS/HG00190/HG00190.out"
     
-    out_file = "all_samples.txt"
+    out_file = "yleaf_all_samples_updated_5_april.txt"
     
     intermediate_tree_table = "Hg_Prediction_tables/Intermediates.txt"
     path_hg_prediction_tables = "Hg_Prediction_tables/"    
@@ -65,13 +65,19 @@ if __name__ == "__main__":
         and show the intermediate haplogroups again and compare if there are some where 
         does not match with the correct state and store it a error. Give the estimate of the  correct_count/total  
         """    
+        
         total = 0
         correct_state = 0
         for i in df_intermediate.values:
             tmp = df_derived.loc[df_derived["haplogroup"] == i[0]]
             if not tmp.empty:        
-                correct_state += np.sum(i[1] == tmp["state"])                                                
-                total += len(tmp)           
+                if "/" in i[1]:
+                    #i = i[1].split("/")[-1] 
+                    correct_state += len(tmp) 
+                    total += len(tmp)                           
+                else:        
+                    correct_state += np.sum(i[1] == tmp["state"])                                                
+                    total += len(tmp)                  
         #qc_one = round((correct_state / total),3)
         qc_one = round((correct_state / total),3) if total != 0 else 0
 
@@ -82,41 +88,36 @@ if __name__ == "__main__":
         If mismatch > 1 skip choose as main haplogroup the following in the largest length and continue. 
         In case haplogroup contains ~ symbol at the end ignore it temporally for preffix comparison but 
         if this is the main haplogroup store the special character at the end. 
-        """
-
-        list_main_hg = []
-        for i in hg:    
-            if i.startswith(init_hg):
-                list_main_hg.append(i)
-        list_main_hg = sorted(list(set(list_main_hg)), reverse=True)
-        putative_hg = ""
-        max_mismatch = 2
-        for i in range(len(list_main_hg)-1):
-            mismatch = 0    
-            for j in range(i,len(list_main_hg)):                
-                current_hg = list_main_hg[i]            
-                next_hg    = list_main_hg[j]
-                current_hg = current_hg.replace("~","")
-                next_hg    = next_hg.replace("~","")        
-                if not next_hg in current_hg:
-                    mismatch += 1    
-                if mismatch >= max_mismatch:
-                    break
-            if mismatch < max_mismatch:
-                putative_hg = list_main_hg[i]        
-                break
-
-        """
         Ancestral and Derive state
         QC.2
         Check if the same name of the main haplogroup appears as an Ancestral State and 
         save the number of count and calculate QC2
         """
-        total_qctwo = len(df_haplogroup.loc[df_haplogroup["haplogroup"] == putative_hg])
-        Ahg = np.sum("A" == df_haplogroup.loc[df_haplogroup["haplogroup"] == putative_hg]["state"])
-        #qc_two = round((total_qctwo-Ahg)/total_qctwo,3)
-        qc_two = round((total_qctwo-Ahg)/total_qctwo,3) if total_qctwo != 0 else 0
-
+        qc_two = 0
+        qc_tmp = 0        
+        list_main_hg = []
+        for i in hg:    
+            if i.startswith(init_hg):
+                list_main_hg.append(i.replace("~",""))
+        list_main_hg = set(list_main_hg)
+        list_main_hg = sorted(list(set(list_main_hg)), reverse=False)        
+        list_putative_hg = []        
+        for putative_hg in list_main_hg:
+            total_qctwo = len(df_haplogroup.loc[df_haplogroup["haplogroup"] == putative_hg])
+            Ahg = np.sum("A" == df_haplogroup.loc[df_haplogroup["haplogroup"] == putative_hg]["state"])
+            qc_tmp = round((total_qctwo-Ahg)/total_qctwo,3)
+            #print(qc_tmp)
+            if qc_tmp > 0.70:
+                list_putative_hg.append(putative_hg)
+                #print(putative_hg)
+                qc_two = qc_tmp
+                #print("{}: {}".format(putative_hg, qc_two))
+            #else:
+            #    print("{}: {}".format(putative_hg, qc_tmp))
+        if len(list_putative_hg) > 0:
+            putative_hg = max(list_putative_hg)
+        #print("--------------")
+        #print("{}: {}".format(putative_hg, qc_two))        
 
         """
         QC.3
