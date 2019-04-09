@@ -1,11 +1,47 @@
 #!/usr/bin/env python
 
+#!/usr/bin/env python
+
+#-- Diego Montiel 2019
+#-- Genetics Identificacion Group @ Erasmus MC  --
+#-- Haplogroup prediction
+
 
 import pandas as pd
 import numpy as np
 import collections
 import operator
 import os
+from argparse   import ArgumentParser
+
+def get_arguments():
+
+    parser = ArgumentParser(description="ERASMUS MC \n Preddicts Haplogroup from Yleaf/CleanTree output")    
+    
+    parser.add_argument("-input", "--Input",
+        dest="Input", required=True, type=file_exists,
+        help="Output file or path produced from Clean tree or Yleaf", metavar="FILE")    
+    
+    parser.add_argument("-int", "--Intermediate",
+        dest="Intermediate", required=True, type=file_exists,
+        help="Path with intermediate haplogroups root", metavar="FILE")    
+        
+    parser.add_argument("-out", "--Outfile",
+            dest="Outputfile", required=True,                        
+            help="Output file name", metavar="FILE")        
+                   
+    args = parser.parse_args()    
+    return args
+
+def file_exists(x):
+    """
+    'Type' for argparse - checks that file exists but does not open.
+    """
+    if not os.path.exists(x):
+        # Argparse uses the ArgumentTypeError to give a rejection message like:
+        # error: argument input: x does not exist
+        raise argparse.ArgumentTypeError("{0} does not exist".format(x))
+    return x
 
 def check_if_folder(path,ext):
     
@@ -22,21 +58,24 @@ def check_if_folder(path,ext):
 
 if __name__ == "__main__":
     
-    path_samples = "Output_example_datasets/"    
-    samples = check_if_folder(path_samples,'.out')                                 
-    
-    #sample_name = "Output_example_datasets/Modern_DNA_WGS/HG00190/HG00190.out"
-    
-    out_file = "yleaf_all_samples_updated_5_april.txt"
-    
-    intermediate_tree_table = "Hg_Prediction_tables/Intermediates.txt"
-    path_hg_prediction_tables = "Hg_Prediction_tables/"    
-    h_flag = True
+    print("\tErasmus MC Department of Genetic Identification \n\n Haplogroup Prediction")
+
+    args = get_arguments()                
+    path_samples = args.Input
+    samples = check_if_folder(path_samples,'.out')                                             
+    #out_file = "yleaf_all_samples_updated.txt"    
+    out_file = args.Outputfile
+    #intermediate_tree_table = "Hg_Prediction_tables/Intermediates.txt"
+    intermediate_tree_table = args.Intermediate+"Intermediates.txt"
+    #path_hg_prediction_tables = "Hg_Prediction_tables/"    
+    path_hg_prediction_tables = args.Intermediate
+    h_flag = True    
+        
     for sample_name in samples:
         
-        df_intermediate = pd.read_csv(intermediate_tree_table, header=None)
+        df_intermediate = pd.read_csv(intermediate_tree_table, header=None, engine='python')
         intermediates = df_intermediate[0].values            
-        df_haplogroup = pd.read_csv(sample_name, sep="\t")    
+        df_haplogroup = pd.read_csv(sample_name, sep="\t", engine='python')    
         df_haplogroup = df_haplogroup.sort_values(by=['haplogroup'])        
         ## Removes the intermediate haplogroups temporally    
         df_derived = df_haplogroup[df_haplogroup["state"] == "D"]
@@ -57,7 +96,7 @@ if __name__ == "__main__":
         init_hg = init_hg[0]
         tmp_init_hg = init_hg+"_int.txt"
         hg_intermediate_file = path_hg_prediction_tables+tmp_init_hg
-        df_intermediate = pd.read_csv(hg_intermediate_file, header=None, sep="\t")
+        df_intermediate = pd.read_csv(hg_intermediate_file, header=None, sep="\t", engine='python')
 
         """
         QC.1
@@ -66,8 +105,8 @@ if __name__ == "__main__":
         does not match with the correct state and store it a error. Give the estimate of the  correct_count/total  
         """    
         
-        total = 0
-        correct_state = 0
+        total = 0.0
+        correct_state = 0.0
         for i in df_intermediate.values:
             tmp = df_derived.loc[df_derived["haplogroup"] == i[0]]
             if not tmp.empty:        
@@ -79,8 +118,10 @@ if __name__ == "__main__":
                     correct_state += np.sum(i[1] == tmp["state"])                                                
                     total += len(tmp)                  
         #qc_one = round((correct_state / total),3)
-        qc_one = round((correct_state / total),3) if total != 0 else 0
-
+        try:
+            qc_one = float(round((correct_state / total),3)) if total != 0 else 0
+        except ZeroDivisionError as error:                        
+            qc_one = 0.0
         """ 
         Removes all haplogroup but the main one
         Check if the preffix of all main haplogroup with D state by allowing one haplogroup that does not match 
@@ -93,8 +134,9 @@ if __name__ == "__main__":
         Check if the same name of the main haplogroup appears as an Ancestral State and 
         save the number of count and calculate QC2
         """
-        qc_two = 0
-        qc_tmp = 0        
+        qc_two = 0.0
+        qc_tmp = 0.0
+        haplogroup_threshold = 0.70
         list_main_hg = []
         for i in hg:    
             if i.startswith(init_hg):
@@ -103,11 +145,14 @@ if __name__ == "__main__":
         list_main_hg = sorted(list(set(list_main_hg)), reverse=False)        
         list_putative_hg = []        
         for putative_hg in list_main_hg:
-            total_qctwo = len(df_haplogroup.loc[df_haplogroup["haplogroup"] == putative_hg])
+            total_qctwo = float(len(df_haplogroup.loc[df_haplogroup["haplogroup"] == putative_hg]))
             Ahg = np.sum("A" == df_haplogroup.loc[df_haplogroup["haplogroup"] == putative_hg]["state"])
-            qc_tmp = round((total_qctwo-Ahg)/total_qctwo,3)
+            try:
+                qc_tmp = float(round((total_qctwo-Ahg)/total_qctwo,3))
+            except ZeroDivisionError as error:                            
+                qc_tmp = 0.0
             #print(qc_tmp)
-            if qc_tmp > 0.70:
+            if qc_tmp > haplogroup_threshold:
                 list_putative_hg.append(putative_hg)
                 #print(putative_hg)
                 qc_two = qc_tmp
@@ -137,7 +182,7 @@ if __name__ == "__main__":
         df_main_hg_all = df_main_hg_all[["haplogroup","state","marker_name"]]
         df_main_hg_all = df_main_hg_all.sort_values(by="haplogroup", ascending=False).values
         a_match = 0 #ancestral state
-        total_match = 0
+        total_match = 0.0
         for i in df_main_hg_all:
             tmp_hg = i[0].replace("~","")
             if tmp_hg in putative_hg:
@@ -145,7 +190,10 @@ if __name__ == "__main__":
                 if i[1] == "A":
                     a_match += 1
         #qc_three = round((total_match - a_match) / total_match,3)
-        qc_three = round((total_match - a_match)/total_match,3) if total_match != 0 else 0
+        try:
+            qc_three = float(round((total_match - a_match)/total_match,3)) if total_match != 0 else 0
+        except ZeroDivisionError as error:                        
+            qc_three = 0.0 
 
         """
         Haplogroup and marker name
@@ -193,6 +241,7 @@ if __name__ == "__main__":
                 out_marker += pahg[2]+","
             out_marker += ")"
         output = "{}\t{}\t{}\t{}\t{}\t{}\t{}".format(out_name,out_hg,out_marker,round((qc_one*qc_two*qc_three),3),qc_one,qc_two,qc_three)
+        print(output)
         w_file = open(out_file, "a")    
         if h_flag:                
             h_flag = False
@@ -200,3 +249,5 @@ if __name__ == "__main__":
         w_file.write("\n")
         w_file.write(output)
     w_file.close()
+    
+    
