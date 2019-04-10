@@ -81,10 +81,12 @@ if __name__ == "__main__":
         ## Removes the intermediate haplogroups temporally    
         df_derived = df_haplogroup[df_haplogroup["state"] == "D"]
         ## instance with only D state
+        
+        ## instance with only D state
         df_tmp = df_derived
         for hg in intermediates:    
             df_tmp = df_tmp.drop(df_tmp[df_tmp.haplogroup == hg].index)
-        hg = df_tmp["haplogroup"].values
+        hg = df_tmp["haplogroup"].values                
 
         """
         Choose the haplogroup based on the highest count in the first letter (E.x. J2a21 = J)
@@ -108,23 +110,27 @@ if __name__ == "__main__":
         does not match with the correct state and store it a error. Give the estimate of the  correct_count/total  
         """    
         
-        total = 0.0
-        correct_state = 0.0
-        for i in df_intermediate.values:
-            tmp = df_derived.loc[df_derived["haplogroup"] == i[0]]
-            if not tmp.empty:        
+        total = 0
+        correct_state = 0
+        for i in df_intermediate.values:           
+            tmp = df_haplogroup.loc[df_haplogroup["haplogroup"] == i[0]]    
+            if not tmp.empty:               
                 if "/" in i[1]:
                     #i = i[1].split("/")[-1] 
                     correct_state += len(tmp) 
                     total += len(tmp)                           
                 else:        
                     correct_state += np.sum(i[1] == tmp["state"])                                                
-                    total += len(tmp)                  
-        #qc_one = round((correct_state / total),3)
+                    total += len(tmp)        
         try:
-            qc_one = float(round((correct_state / total),3)) if total != 0 else 0
-        except ZeroDivisionError as error:                        
+            qc_one = round((correct_state / total),3)
+        except ZeroDivisionError as error:
             qc_one = 0.0
+            
+        ## Removes intermediate branches
+        df_haplogroup = df_haplogroup[~df_haplogroup.haplogroup.isin(intermediates)]
+        hg = df_derived[(df_derived.haplogroup.str.startswith(init_hg))].haplogroup.values
+        
         """ 
         Removes all haplogroup but the main one
         Check if the preffix of all main haplogroup with D state by allowing one haplogroup that does not match 
@@ -137,15 +143,12 @@ if __name__ == "__main__":
         Check if the same name of the main haplogroup appears as an Ancestral State and 
         save the number of count and calculate QC2
         """
+        list_main_hg = sorted(list(set(hg)), reverse=False)
+        haplogroup_threshold = 0.70
         qc_two = 0.0
         qc_tmp = 0.0
         dict_hg = {}
-        haplogroup_threshold = 0.70
-        list_main_hg = sorted(list(set(hg)), reverse=False)                
 
-        df_haplogroup = df_haplogroup[~df_haplogroup.haplogroup.isin(intermediates)]
-        hg = df_haplogroup[(df_haplogroup.haplogroup.str.startswith(init_hg))].haplogroup.values
-        
         for putative_hg in list_main_hg:
             total_qctwo = len(df_haplogroup.loc[df_haplogroup["haplogroup"] == putative_hg])
             Ahg = np.sum("A" == df_haplogroup.loc[df_haplogroup["haplogroup"] == putative_hg]["state"])
@@ -156,18 +159,27 @@ if __name__ == "__main__":
             if qc_tmp >= haplogroup_threshold:
                 qc_two = qc_tmp                
                 dict_hg[putative_hg] = qc_two    
-                
+                #print("{} {} ({} - {} / {})".format(putative_hg,qc_tmp, total_qctwo,Ahg,total_qctwo))
+                #print(putative_hg)
+            #else:
+            #    print("{} {} ({} - {} / {})".format(putative_hg,qc_tmp, total_qctwo,Ahg,total_qctwo))
+            
         list_putative_hg = list(dict_hg.keys())
+        list_putative_hg.sort(reverse=True)
+        #print(list_putative_hg)
+        ## Check for same pattern in the derive state
         for i in range(len(list_putative_hg)-1):    
-            if list_putative_hg[i] not in list_putative_hg[i+1]:                
+            if list_putative_hg[i+1] not in list_putative_hg[i]:                
                 dict_hg.pop(list_putative_hg[i],None)
+                #print(list_putative_hg[i])
+
         if len(list_putative_hg) > 0:
             list_putative_hg = list(dict_hg.keys())
-            putative_hg = max(dict_hg.keys())
+            putative_hg = max(dict_hg.keys(), key=len)    
             qc_two = dict_hg[putative_hg]
         else:
             putative_hg = "NA"
-            qc_two = 0.0                        
+            qc_two = 0.0
 
         """
         QC.3
@@ -229,32 +241,36 @@ if __name__ == "__main__":
 
         """
         Print outputfile
-        """                
+        """         
         out_name = sample_name.split("/")[-1]
         out_name = out_name.split(".")[0]
         marker_name = (df_haplogroup.loc[df_haplogroup["haplogroup"] == putative_hg]["marker_name"].values)
         if putative_hg == "NA":
             out_hg = "NA"
         else:
-            out_hg = init_hg
-        if len(marker_name) > 1:
-            out_hg = init_hg+"-"+marker_name[0]+"/etc"
-        elif len(marker_name) > 2:
-            out_hg = init_hg+"-"+marker_name
+            if len(marker_name) > 1:
+                out_hg = putative_hg[0]+"-"+marker_name[0]+"/etc"
+            elif len(marker_name) == 1:
+                out_hg = putative_hg[0]+"-"+marker_name[0]
+            
         header = "Sample_name\tHg\tHg_marker\tQC-score\tQC-1\tQC-2\tQC-3"
-        out_marker = out_hg
+
         if len(putative_ancestral_hg) > 0:
-            out_marker += "*(x"
+            out_hg += "*(x"
             for i in putative_ancestral_hg.index:        
-                out_marker += putative_ancestral_hg.loc[i]["marker_name"]+","
-            out_marker += ")"
-        output = "{}\t{}\t{}\t{}\t{}\t{}\t{}".format(out_name,putative_hg,out_marker,round((qc_one*qc_two*qc_three),3),qc_one,qc_two,qc_three)                        
-        print(output)
+                out_hg += putative_ancestral_hg.loc[i]["marker_name"]+","
+            out_hg += ")"
+
+        output = "{}\t{}\t{}\t{}\t{}\t{}\t{}".format(out_name,putative_hg,out_hg,round((qc_one*qc_two*qc_three),3),qc_one,qc_two,qc_three)
+        
+        
         w_file = open(out_file, "a")    
         if h_flag:                
             h_flag = False
             w_file.write(header)
+            print(header)
         w_file.write("\n")
+        print(output)
         w_file.write(output)
         w_file.close()
     
