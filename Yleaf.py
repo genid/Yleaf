@@ -16,16 +16,26 @@ from subprocess import Popen
 def get_arguments():
 
     parser = ArgumentParser(description="ERASMUS MC \n Y-Leaf for Human Genome ")    
+
     parser.add_argument("-bam", "--Bamfile",
-        dest="Bamfile", required=False, type=extant_file,
-        help="input BAM file", metavar="FILE")    
+        dest="Bamfile", required=False, type=file_exists,
+        help="input BAM file", metavar="PATH")    
+
     parser.add_argument("-fastq", "--Fastq",
-            dest="Fastq", required=False, type=extant_file,                        
-            help="Use raw FastQ files", metavar="FILE")
+            dest="Fastq", required=False, type=file_exists,
+            help="Use raw FastQ files", metavar="PATH")
     
-    parser.add_argument("-out", "--Outfile",
+    parser.add_argument("-out", "--output",
             dest="Outputfile", required=True,                        
-            help="Output file name", metavar="FILE")
+            help="Output file name", metavar="STRING")
+
+    parser.add_argument("-hg", "--HG_out",
+            dest="HG_out", required=True,                        
+            help="Table with HG predictions", metavar="STRING")
+
+    parser.add_argument("-int", "--Intermediate",
+        dest="Intermediate", required=True, type=file_exists,
+        help="Path with intermediate haplogroups branches", metavar="DIR")    
     
     parser.add_argument("-r", "--Reads_thresh",
             help="The minimum number of reads for each base",
@@ -48,15 +58,15 @@ def get_arguments():
     args = parser.parse_args()    
     return args
 
-def extant_file(x):
+def file_exists(file):
     """
     'Type' for argparse - checks that file exists but does not open.
     """
-    if not os.path.exists(x):
+    if not os.path.exists(file):
         # Argparse uses the ArgumentTypeError to give a rejection message like:
         # error: argument input: x does not exist
-        raise argparse.ArgumentTypeError("{0} does not exist".format(x))
-    return x
+        raise argparse.ArgumentTypeError("{0} does not exist".format(file))
+    return file
     
         
 def execute_mpileup(header, bam_file, pileupfile, Quality_thresh):
@@ -129,9 +139,26 @@ def get_folder_name(path_file):
 
 def create_tmp_dirs(folder):
 
-    if os.path.isdir(folder):            
-            print("Error!, "+folder+" folder already exists! This sample was ignored")
-            return True
+    flag = True
+    if os.path.isdir(folder):    
+        while(flag):
+            print("WARNING! File "+folder+" already exists, \nWould you like to remove it?")
+            choice = input("y/n: ")            
+            if str(choice) == "y":
+                
+                cmd = 'rm -r '+folder
+                subprocess.call(cmd, shell=True)
+                cmd = 'mkdir '+folder
+                subprocess.call(cmd, shell=True)                
+                flag = False
+                return True
+                
+            elif str(choice) == "n":                
+                flag = False                
+                return False
+                                  
+            else:
+                print("Please type y or n")                               
     else:
         cmd = 'mkdir '+folder
         subprocess.call(cmd, shell=True)
@@ -143,7 +170,8 @@ def create_tmp_dirs(folder):
         else:
             cmd = 'mkdir tmp'
             subprocess.call(cmd, shell=True)        
-        return False
+        return True
+
     
 def samtools(threads, folder, folder_name, bam_file, Quality_thresh):
     
@@ -174,7 +202,10 @@ def samtools(threads, folder, folder_name, bam_file, Quality_thresh):
     file_name = folder_name
     header,total_reads = chromosome_table(bam_file,folder,file_name)
     execute_mpileup(header, bam_file, pileupfile, Quality_thresh)    
+    
+
     print("--- %s seconds in run PileUp ---" % (time.time() - start_time))
+    
     
     start_time = time.time()
     args.Outputfile = folder+"/"+folder_name+".out"
@@ -194,10 +225,22 @@ def samtools(threads, folder, folder_name, bam_file, Quality_thresh):
     subprocess.call(rcmd, shell=True)
     
     print("--- %s seconds in extracting haplogroups ---" % (time.time() - start_time))
-    print("--- %s seconds to run Yleaf  ---" % (time.time() - whole_time))
-    
-"""
+    print("--- %s seconds to run Yleaf  ---" % (time.time() - whole_time))    
+
 def logo():
+    """
+    print("        
+   |
+  /|\          
+ /\|/\    
+\\\|///   
+ \\|//  
+  |||   
+  |||    
+  |||    
+  ")
+    
+    
     print("20"*6+"7C").decode("hex")
     print("20"*5+"2F7C5C").decode("hex")
     print("20"*4+"2F5C7C2F5C").decode("hex")
@@ -206,54 +249,71 @@ def logo():
     print("20"*5+"7C"*3).decode("hex")
     print("20"*5+"7C"*3).decode("hex")
     print("20"*5+"7C"*3).decode("hex")
-"""   
+    """   
+
+def identify_haplogroup(path_file, intermediate, output):
+    
+    cmd = "python predict_haplogroup.py -input {} -int {} -out {}".format(path_file, intermediate, output)
+    print(cmd)
+    subprocess.call(cmd, shell=True)                    
+
 
 if __name__ == "__main__":
 
     whole_time = time.time()
     print("\tErasmus MC Department of Genetic Identification \n\n\tYleaf: software tool for human Y-chromosomal \n\tphylogenetic analysis and haplogroup inference v1.0\n")
-
+    #logo()    
     args = get_arguments()    
     app_folder = os.path.dirname(os.path.realpath(__file__))
     sam_file = ''
     threads = args.Threads
     folder_name = ''
     folder      = ''
-    #logo()    
-    if args.Fastq:                        
-            files = check_if_folder(args.Fastq,'.fastq')         
-            for path_file in files: 
-                print("Starting...")
-                print(path_file)
-                folder_name = get_folder_name(path_file)
-                folder = os.path.join(app_folder,folder_name)        
-                if create_tmp_dirs(folder):
-                    continue
-                start_time = time.time()
-                sam_file = folder+"/"+folder_name+".sam"                                    
-                fastq_cmd = "bwa mem -t {} {}/index_hg19/hg19.fa {} > {}".format(threads, app_folder, path_file, sam_file)                                    
-                print(fastq_cmd)
-                subprocess.call(fastq_cmd, shell=True)
-                print("--- %s seconds in Indexing reads to reference ---" % (time.time()-start_time))                
-                start_time = time.time()
-                bam_file = folder+"/"+folder_name+".bam"                        
-                cmd = "samtools view -@ {} -bS {} | samtools sort -@ {} -m 2G -o {}".format(threads, sam_file, threads, bam_file)
-                print(cmd)
-                subprocess.call(cmd, shell=True)
-                print("--- %s seconds in convertin Sam to Bam ---" % (time.time()-start_time))                                
-                cmd = "samtools index -@ {} {}".format(threads, bam_file)
-                subprocess.call(cmd, shell=True)        
-                samtools(threads, folder, folder_name, bam_file, args.Quality_thresh)
-            
-    elif args.Bamfile:
-            files = check_if_folder(args.Bamfile,'.bam')
-            for path_file in files:            
-                print("Starting...")
-                print(path_file)
-                bam_file = path_file
-                folder_name = get_folder_name(path_file)
-                folder = os.path.join(app_folder,folder_name)        
-                if create_tmp_dirs(folder):
-                    continue                
-                samtools(threads, folder, folder_name, bam_file, args.Quality_thresh)
+    out_path    = args.Outputfile    
+    cwd         = os.getcwd()    
+    if os.path.isabs(out_path):
+        out_folder = out_path
+    else:
+        if cwd == "/":
+            out_folder = out_path
+        else:
+            out_folder = cwd+"/"+out_path        
+    if create_tmp_dirs(out_folder):        
+        if args.Fastq:                        
+                files = check_if_folder(args.Fastq,'.fastq')         
+                for path_file in files: 
+                    print("Starting...")
+                    print(path_file)
+                    folder_name = get_folder_name(path_file)                    
+                    folder = os.path.join(app_folder,out_folder,folder_name)                            
+                    if create_tmp_dirs(folder):
+                        start_time = time.time()
+                        sam_file = folder+"/"+folder_name+".sam"               
+                        fastq_cmd = "bwa mem -t {} {}/index_hg19/hg19.fa {} > {}".format(threads, app_folder, path_file, sam_file)
+                        print(fastq_cmd)
+                        subprocess.call(fastq_cmd, shell=True)
+                        print("--- %s seconds in Indexing reads to reference ---" % (time.time()-start_time))                
+                        start_time = time.time()
+                        bam_file = folder+"/"+folder_name+".bam"             
+                        cmd = "samtools view -@ {} -bS {} | samtools sort -@ {} -m 2G -o {}".format(threads, sam_file, threads, bam_file)
+                        print(cmd)
+                        subprocess.call(cmd, shell=True)
+                        print("--- %s seconds in convertin Sam to Bam ---" % (time.time()-start_time))                                
+                        cmd = "samtools index -@ {} {}".format(threads, bam_file)
+                        subprocess.call(cmd, shell=True)        
+                        samtools(threads, folder, folder_name, bam_file, args.Quality_thresh)                
+        elif args.Bamfile:
+                files = check_if_folder(args.Bamfile,'.bam')
+                for path_file in files:            
+                    print("Starting...")
+                    print(path_file)
+                    bam_file = path_file
+                    folder_name = get_folder_name(path_file)                    
+                    folder = os.path.join(app_folder,out_folder,folder_name)                            
+                    if create_tmp_dirs(folder):                 
+                        samtools(threads, folder, folder_name, bam_file, args.Quality_thresh)        
+        identify_haplogroup(out_folder, args.Intermediate, args.HG_out)
+
+    else:
+        print("--- Failed: Yleaf stopped ---")
     
