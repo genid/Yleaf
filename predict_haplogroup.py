@@ -130,7 +130,7 @@ def get_putative_hg_list(init_hg, hg, df_haplogroup, df_derived):
                 dict_hg[putative_hg] = [qc_two,calc_score_three(df_haplogroup,putative_hg)]                            
     ## in case of a A haplogroup                    
     #print(dict_hg)
-    for i in dict_hg:        
+    
     if init_hg == 'A':                        
         key = max(dict_hg)
         dict_hg.update({key: [dict_hg[key][0], 1]})        
