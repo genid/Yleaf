@@ -17,7 +17,7 @@
 1. Install dependencies, you can skip this step if these packages are already installed on your system
 
             apt-get install git-core            
-	    apt-get install python2.7
+	    apt-get install python3.6
             apt-get install r-base
             apt-get install mawk
             apt-get install p7zip-full

@@ -102,7 +102,7 @@ def calc_score_one(df_intermediate,df_haplogroup):
         qc_one =  0.0
     return qc_one
 
-def get_putative_hg_list(init_hg, hg, df_haplogroup, df_derived):
+def get_putative_hg_list(init_hg, hg, df_haplogroup_trimmed, df_haplogroup_all):
     """ 
     Removes all haplogroup but the main one
     Check if the preffix of all main haplogroup with D state by allowing one haplogroup that does not match 
@@ -115,24 +115,31 @@ def get_putative_hg_list(init_hg, hg, df_haplogroup, df_derived):
     Check if the same name of the main haplogroup appears as an Ancestral State and 
     save the number of count and calculate QC2
     """
-    list_main_hg = sorted(list(set(hg)), reverse=False)    
+    
     dict_hg = {}
     list_hg_remove = []
     hg_threshold = 0.8
-    for putative_hg in list_main_hg:        
-        total_qctwo = len(df_derived.loc[df_derived["haplogroup"] == putative_hg])
-        Ahg = np.sum("A" == df_derived.loc[df_derived["haplogroup"] == putative_hg]["state"])        
-        if total_qctwo == 0:            
-            return dict_hg
-        else:            
-            qc_two = round((total_qctwo-Ahg)/total_qctwo,2)                
-            if qc_two >= hg_threshold:                            
-                dict_hg[putative_hg] = [qc_two,calc_score_three(df_haplogroup,putative_hg)]                            
-    ## in case of a A haplogroup                    
-    #print(dict_hg)
-    
-    if init_hg == 'A':                        
-        key = max(dict_hg)
+    list_main_hg = sorted(list(set(hg)), reverse=False)    
+    for putative_hg in list_main_hg:
+        #print(putative_hg)
+        total_qctwo = len(df_haplogroup_all.loc[df_haplogroup_all["haplogroup"] == putative_hg])        
+        Ahg = np.sum("A" == df_haplogroup_all.loc[df_haplogroup_all["haplogroup"] == putative_hg]["state"])                
+        try:
+            qc_two = round((total_qctwo-Ahg)/total_qctwo,3)      
+        except ZeroDivisionError as error:
+            qc_two = 0.0
+        if qc_two >= hg_threshold:         
+            try:
+                qc_three = calc_score_three(df_haplogroup_trimmed,putative_hg)
+            except ZeroDivisionError as error:
+                qc_three = 0.0
+            dict_hg[putative_hg] = [qc_two,qc_three]                                        
+    # if dictionary empty
+    if not bool(dict_hg):
+        return dict_hg
+    ## in case of a A haplogroup 
+    if init_hg == 'A':                                        
+        key = max(dict_hg)    
         dict_hg.update({key: [dict_hg[key][0], 1]})        
     else:
         ## removes hg with lower qc    
@@ -197,7 +204,6 @@ def calc_score_three(df_haplogroup,putative_hg):
             qc_three = round((total_match - a_match) / total_match,3)        
         except ZeroDivisionError as error:
             qc_three = 0.0
-    
     return qc_three
 
 def get_putative_ancenstral_hg(df_haplogroup, putative_hg):
@@ -248,10 +254,13 @@ if __name__ == "__main__":
         
         df_intermediate = pd.read_csv(intermediate_tree_table, header=None, engine='python')
         intermediates = df_intermediate[0].values            
-        df_haplogroup = pd.read_csv(sample_name, sep="\t", engine='python')    
-        df_haplogroup = df_haplogroup.sort_values(by=['haplogroup'])        
-        df_derived = df_haplogroup[df_haplogroup["state"] == "D"]
-        df_haplogroup['haplogroup'] = df_haplogroup['haplogroup'].str.replace('~', '')        
+        df_haplogroup_all = pd.read_csv(sample_name, sep="\t", engine='python')    
+        df_haplogroup_all = df_haplogroup_all.sort_values(by=['haplogroup'])        
+        
+        df_haplogroup_trimmed = df_haplogroup_all.copy()        
+        df_derived = df_haplogroup_all[df_haplogroup_all["state"] == "D"]        
+        
+        df_haplogroup_trimmed['haplogroup'] = df_haplogroup_trimmed['haplogroup'].str.replace('~', '')        
         ## instance with only D state                        
         df_tmp = df_derived
         for hg in intermediates:    
@@ -262,13 +271,13 @@ if __name__ == "__main__":
         init_hg = get_hg_root(hg)           
         
         df_intermediate = get_intermediate_branch(init_hg,hg_intermediate)        
-        qc_one = calc_score_one(df_intermediate,df_haplogroup)   
+        qc_one = calc_score_one(df_intermediate,df_haplogroup_trimmed)   
         
-        df_haplogroup = df_haplogroup[~df_haplogroup.haplogroup.isin(intermediates)]        
-        df_derived = df_haplogroup[df_haplogroup["state"] == "D"]
+        df_haplogroup_trimmed = df_haplogroup_trimmed[~df_haplogroup_trimmed.haplogroup.isin(intermediates)]        
+        df_derived = df_haplogroup_trimmed[df_haplogroup_trimmed["state"] == "D"]
         hg = df_derived[(df_derived.haplogroup.str.startswith(init_hg))].haplogroup.values        
         
-        dict_hg = get_putative_hg_list(init_hg, hg, df_haplogroup, df_derived)            
+        dict_hg = get_putative_hg_list(init_hg, hg, df_haplogroup_trimmed, df_haplogroup_all)            
         keys = sorted(dict_hg.keys(), reverse=True)        
         mismatches = []        
         t = 2    #max mismatch for preffix
@@ -284,11 +293,11 @@ if __name__ == "__main__":
                 qc_three = dict_hg[keys[k]][1]                
                 break
             mismatches.append(mismatch)                                        
-        putative_ancestral_hg = get_putative_ancenstral_hg(df_haplogroup, putative_hg )
+        putative_ancestral_hg = get_putative_ancenstral_hg(df_haplogroup_trimmed, putative_hg )
         
         ### Output        
         header = "Sample_name\tHg\tHg_marker\tQC-score\tQC-1\tQC-2\tQC-3"
-        marker_name = (df_haplogroup.loc[df_haplogroup["haplogroup"] == putative_hg]["marker_name"].values)
+        marker_name = (df_haplogroup_trimmed.loc[df_haplogroup_trimmed["haplogroup"] == putative_hg]["marker_name"].values)
         if putative_hg == "NA":
             out_hg = "NA"            
             output = "{}\tNA\tNA\t0\t0\t0\t0".format(out_name)
@@ -312,7 +321,7 @@ if __name__ == "__main__":
             else:
                 log_output.append(out_name)                        
                 #output = "{}\tNA\tNA\t0\t0\t0\t0".format(out_name)                                
-                output = "{}\tNA\tNA\t{}\t{}\t{}\t{}".format(out_name,qc_score,qc_one,qc_two,qc_three)                                                            
+                output = "{}\tNA\tNA\t{}\t{}\t{}\t{}".format(out_name,qc_score,qc_one,qc_two,qc_three)                                                                    
         #print(output)    
     
         with open(out_file, "a") as w_file:

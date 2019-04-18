@@ -25,10 +25,8 @@ def get_arguments():
         dest="Bamfile", required=False, type=file_exists,
         help="input BAM file", metavar="PATH")    
     
-    parser.add_argument("-ref", "--reference",
-            dest="reference",
-            help="Build Genome Assembly \n [hg19-hg38]",
-            type=file_exists, metavar="PATH", required=True)    
+    parser.add_argument("-ref", "--reference",  dest="reference",
+            help="Build Genome Assembly \n [hg19-hg38]", metavar="STRING", required=True)    
 
     parser.add_argument("-out", "--output",
             dest="Outputfile", required=True,                        
