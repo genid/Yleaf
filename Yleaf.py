@@ -248,15 +248,13 @@ def create_tmp_dirs(folder):
         while(flag):
             print("WARNING! File "+folder+" already exists, \nWould you like to remove it?")
             choice = input("y/n: ")            
-            if str(choice) == "y":
-                
+            if str(choice) == "y":                
                 cmd = 'rm -r '+folder
                 subprocess.call(cmd, shell=True)
                 cmd = 'mkdir '+folder
                 subprocess.call(cmd, shell=True)                
                 flag = False
-                return True
-                
+                return True                
             elif str(choice) == "n":                
                 flag = False                
                 return False                                  
@@ -491,4 +489,4 @@ if __name__ == "__main__":
                 hg_out = out_folder+"/"+out_path+".hg"
                 identify_haplogroup(out_folder, hg_out)                                                                        
     else:
-        print("--- Clean tree finished... ---")
+        print("--- Clean tree failed! please check inputs... ---")
