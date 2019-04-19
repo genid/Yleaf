@@ -179,21 +179,15 @@ def file_exists(file):
     return file
         
 def execute_mpileup(header, bam_file, pileupfile, Quality_thresh, folder):
-    
-    if header == "Y":
-        tmp_pu = folder+"/tmp.pu"        
-        cmd = "samtools mpileup -AQ{} -r {} {} > {}".format(Quality_thresh, header, bam_file, tmp_pu)
-        #print cmd
-        subprocess.call(cmd, shell=True)                
-        cmd = " awk  '{{$1="'"chrY"'"; print}}' {} > {}".format(tmp_pu, pileupfile)
-        print("Converting header...")    
-        subprocess.call(cmd, shell=True)        
-        cmd = "rm "+tmp_pu
-        subprocess.call(cmd, shell=True)
-    else:
-        cmd = "samtools mpileup -AQ{} -r {} {} > {}".format(Quality_thresh, header, bam_file, pileupfile)
-        #print cmd
-        subprocess.call(cmd, shell=True)
+        
+    tmp_pu = folder+"/tmp.pu"        
+    cmd = "samtools mpileup -AQ{} -r {} {} > {}".format(Quality_thresh, header, bam_file, tmp_pu)    
+    subprocess.call(cmd, shell=True)                
+    cmd = " awk  '{{$1="'"chrY"'"; print}}' {} > {}".format(tmp_pu, pileupfile)
+    print("Converting header...")    
+    subprocess.call(cmd, shell=True)        
+    cmd = "rm "+tmp_pu
+    subprocess.call(cmd, shell=True)
     
 def chromosome_table(bam_file,bam_folder,file_name):
     
