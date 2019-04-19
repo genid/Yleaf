@@ -18,7 +18,7 @@ def get_arguments():
     
     parser.add_argument("-input", "--Input",
         dest="Input", required=True, type=file_exists,
-        help="Output file or path produced from Clean tree or Yleaf", metavar="FILE")    
+        help="Output file or path produced from Yleaf", metavar="FILE")    
         
     parser.add_argument("-out", "--Outfile",
             dest="Outputfile", required=True,                        
@@ -324,10 +324,8 @@ if __name__ == "__main__":
             if qc_score >= 0.7:                     
                 output = "{}\t{}\t{}\t{}\t{}\t{}\t{}".format(out_name,putative_hg,out_hg,qc_score,qc_one,qc_two,qc_three)                                                            
             else:
-                log_output.append(out_name)                        
-                #output = "{}\tNA\tNA\t0\t0\t0\t0".format(out_name)                                
-                output = "{}\tNA\tNA\t{}\t{}\t{}\t{}".format(out_name,qc_score,qc_one,qc_two,qc_three)                                                                    
-        #print(output)    
+                log_output.append(out_name)                                                                  
+                output = "{}\tNA\tNA\t{}\t{}\t{}\t{}".format(out_name,qc_score,qc_one,qc_two,qc_three)                                                                            
     
         with open(out_file, "a") as w_file:
             if h_flag:                
@@ -340,5 +338,5 @@ if __name__ == "__main__":
         print("Warning: Following sample(s) showed discrepancies, please check output(s) manually: ")        
         print("\n".join(log_output))
     
-    print("--- Clean tree 'Y-Haplogroup Extraction' finished... ---")
+    print("--- Yleaf 'Y-Haplogroup prediction' finished... ---")
     
