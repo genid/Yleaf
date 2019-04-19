@@ -114,12 +114,12 @@ def get_putative_hg_list(init_hg, hg, df_haplogroup_trimmed, df_haplogroup_all):
     QC.2
     Check if the same name of the main haplogroup appears as an Ancestral State and 
     save the number of count and calculate QC2
-    """
-    
+    """    
     dict_hg = {}
     list_hg_remove = []
     hg_threshold = 0.8
     list_main_hg = sorted(list(set(hg)), reverse=False)    
+    
     for putative_hg in list_main_hg:
         #print(putative_hg)
         total_qctwo = len(df_haplogroup_all.loc[df_haplogroup_all["haplogroup"] == putative_hg])        
@@ -135,6 +135,7 @@ def get_putative_hg_list(init_hg, hg, df_haplogroup_trimmed, df_haplogroup_all):
                 qc_three = 0.0
             dict_hg[putative_hg] = [qc_two,qc_three]                                        
     # if dictionary empty
+    #print(dict_hg)
     if not bool(dict_hg):
         return dict_hg
     ## in case of a A haplogroup 
@@ -195,7 +196,8 @@ def calc_score_three(df_haplogroup,putative_hg):
     for putative_hg in [putative_hg]:
         #print(putative_hg)
         for i in df_main_hg_all:
-            tmp_hg = i[0].replace("~","")
+            #tmp_hg = i[0].replace("~","")
+            tmp_hg = i[0]
             if tmp_hg in putative_hg and tmp_hg != putative_hg:
                 total_match +=1        
                 if i[1] == "A":
@@ -257,8 +259,10 @@ if __name__ == "__main__":
         df_haplogroup_all = pd.read_csv(sample_name, sep="\t", engine='python')    
         df_haplogroup_all = df_haplogroup_all.sort_values(by=['haplogroup'])        
         
-        df_haplogroup_trimmed = df_haplogroup_all.copy()        
-        df_derived = df_haplogroup_all[df_haplogroup_all["state"] == "D"]        
+        df_haplogroup_trimmed = df_haplogroup_all.copy()     
+        
+        df_derived = df_haplogroup_all.copy()
+        df_derived = df_derived[df_derived["state"] == "D"]        
         
         df_haplogroup_trimmed['haplogroup'] = df_haplogroup_trimmed['haplogroup'].str.replace('~', '')        
         ## instance with only D state                        
@@ -274,8 +278,9 @@ if __name__ == "__main__":
         qc_one = calc_score_one(df_intermediate,df_haplogroup_trimmed)   
         
         df_haplogroup_trimmed = df_haplogroup_trimmed[~df_haplogroup_trimmed.haplogroup.isin(intermediates)]        
-        df_derived = df_haplogroup_trimmed[df_haplogroup_trimmed["state"] == "D"]
-        hg = df_derived[(df_derived.haplogroup.str.startswith(init_hg))].haplogroup.values        
+        
+        df_derived =  df_derived[~df_derived.haplogroup.isin(intermediates)] 
+        hg = df_derived[(df_derived.haplogroup.str.startswith(init_hg))].haplogroup.values
         
         dict_hg = get_putative_hg_list(init_hg, hg, df_haplogroup_trimmed, df_haplogroup_all)            
         keys = sorted(dict_hg.keys(), reverse=True)        
@@ -293,11 +298,11 @@ if __name__ == "__main__":
                 qc_three = dict_hg[keys[k]][1]                
                 break
             mismatches.append(mismatch)                                        
-        putative_ancestral_hg = get_putative_ancenstral_hg(df_haplogroup_trimmed, putative_hg )
-        
+        putative_ancestral_hg = get_putative_ancenstral_hg(df_haplogroup_all, putative_hg )
+        #print(putative_hg)
         ### Output        
         header = "Sample_name\tHg\tHg_marker\tQC-score\tQC-1\tQC-2\tQC-3"
-        marker_name = (df_haplogroup_trimmed.loc[df_haplogroup_trimmed["haplogroup"] == putative_hg]["marker_name"].values)
+        marker_name = (df_haplogroup_all.loc[df_haplogroup_all["haplogroup"] == putative_hg]["marker_name"].values)
         if putative_hg == "NA":
             out_hg = "NA"            
             output = "{}\tNA\tNA\t0\t0\t0\t0".format(out_name)

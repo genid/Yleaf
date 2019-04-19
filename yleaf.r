@@ -1,5 +1,6 @@
 require(mice, quietly = T)
 require(plyr, quietly = T)
+require(data.table, quietly = T)
 
 options(stringsAsFactors = FALSE)
 df_no_informative <- data.frame()
@@ -26,7 +27,8 @@ write(tmp, filelog, append= T)
 # Create a table/dataframe with the PileUp
 header_names = c('chr', 'pos', 'refbase', 'reads', 'align', 'quality')
 
-pileup_table = read.table(Pileupfile, col.names=header_names, fill=TRUE, na.strings='', comment.char="", quote="")
+#pileup_table = read.table(Pileupfile, col.names=header_names, fill=TRUE, na.strings='', comment.char="", quote="")
+pileup_table = fread(Pileupfile, col.names=header_names, nThread=10)
 
 
 comb_indel_begin = function(align)
