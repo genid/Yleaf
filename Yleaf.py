@@ -268,6 +268,7 @@ def create_tmp_dirs(folder):
 def extract_haplogroups(path_Markerfile, Reads_thresh, Base_majority, 
                         path_Pileupfile, log_output, fmf_output, Outputfile):    
 
+    print("Extracting haplogroups...")
     Markerfile = pd.read_csv(path_Markerfile, header=None, sep="\t")
     Markerfile.columns = ["chr", "marker_name", "haplogroup", "pos", "mutation", "anc", "der"]
     Markerfile = Markerfile.drop_duplicates(subset='pos', keep='first', inplace=False)    
@@ -372,7 +373,8 @@ def extract_haplogroups(path_Markerfile, Reads_thresh, Base_majority,
     df_readsthreshold=pd.DataFrame()
     df_freq_table=pd.DataFrame()
     df = pd.DataFrame()
-
+        
+    df_out = df_out[["chr","pos","marker_name","haplogroup","mutation","anc","der","reads","called_perc","called_base","state"]]
     df_fmf.to_csv(fmf_output, sep="\t", index=False)
     df_out.to_csv(Outputfile, sep="\t", index=False)
 
@@ -406,7 +408,7 @@ def samtools(threads, folder, folder_name, bam_file, Quality_thresh):
     extract_haplogroups(args.Markerfile, args.Reads_thresh, args.Base_majority, 
                             pileupfile, log_output, fmf_output, Outputfile)
     print("--- %.2f seconds in extracting haplogroups --- " % (time.time() - start_time) )
-    print("--- %.2f seconds to run clean_tree  ---" % (time.time() - whole_time))
+    print("--- %.2f seconds to run Yleaf  ---" % (time.time() - whole_time))
     return Outputfile
 
 def logo():
@@ -489,4 +491,4 @@ if __name__ == "__main__":
                 hg_out = out_folder+"/"+out_path+".hg"
                 identify_haplogroup(out_folder, hg_out)                                                                        
     else:
-        print("--- Clean tree failed! please check inputs... ---")
+        print("--- Yleaf failed! please check inputs... ---")
