@@ -17,7 +17,7 @@
 1. Install dependencies, you can skip this step if these packages are already installed on your system
 
             apt-get install git-core            
-	    apt-get install python3.6
+	    	apt-get install python3.6
             apt-get install r-base
             apt-get install mawk
             apt-get install p7zip-full
@@ -49,11 +49,11 @@
 
 ### FASTQ
     
-python Yleaf.py -fastq raw_reads.fastq -out out -r 1 -q 20 -b 90 -t 16
+python Yleaf.py -fastq raw_reads.fastq -out out -r 1 -q 20 -b 90 -t 16 -ref [hg19-hg38]
         
 ### BAM
     
-python Yleaf.py -bam file.bam -out out -r 1 -q 20 -b 90 -t 1
+python Yleaf.py -bam file.bam -out out -r 1 -q 20 -b 90 -t 1 -ref [hg19-hg38]
 
 
 6. Bug report
