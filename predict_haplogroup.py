@@ -219,7 +219,8 @@ def get_putative_ancenstral_hg(df_haplogroup, putative_hg):
     Should report all of them only if there are different haplogroup name with the resolution
     """    
     putative_ancestral_hg = []        
-    df_putative_ancestral_hg = df_haplogroup[df_haplogroup.haplogroup.str.startswith(putative_hg)]
+    df_putative_ancestral_hg = df_haplogroup[~df_haplogroup.haplogroup.isin([putative_hg])]
+    df_putative_ancestral_hg = df_putative_ancestral_hg[df_putative_ancestral_hg.haplogroup.str.startswith(putative_hg)]
     df_putative_ancestral_hg = df_putative_ancestral_hg[df_putative_ancestral_hg.state == "A"]
     
     for i in df_putative_ancestral_hg.index:    
@@ -304,6 +305,7 @@ if __name__ == "__main__":
                 break
             mismatches.append(mismatch)                                        
         putative_ancestral_hg = get_putative_ancenstral_hg(df_haplogroup_all, putative_hg )
+    
         #print(putative_hg)
         ### Output        
         header = "Sample_name\tHg\tHg_marker\tTotal_reads\tValid_markers\tQC-score\tQC-1\tQC-2\tQC-3"
