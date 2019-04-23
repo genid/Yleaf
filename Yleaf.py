@@ -179,15 +179,9 @@ def file_exists(file):
     return file
         
 def execute_mpileup(header, bam_file, pileupfile, Quality_thresh, folder):
-        
-    tmp_pu = folder+"/tmp.pu"        
-    cmd = "samtools mpileup -AQ{} -r {} {} > {}".format(Quality_thresh, header, bam_file, tmp_pu)    
-    subprocess.call(cmd, shell=True)                
-    cmd = " awk  '{{$1="'"chrY"'"; print}}' {} > {}".format(tmp_pu, pileupfile)
-    print("Converting header...")    
-    subprocess.call(cmd, shell=True)        
-    cmd = "rm "+tmp_pu
-    subprocess.call(cmd, shell=True)
+            
+    cmd = "samtools mpileup -AQ{} -r {} {} > {}".format(Quality_thresh, header, bam_file, pileupfile)        
+    subprocess.call(cmd, shell=True)                    
     
 def chromosome_table(bam_file,bam_folder,file_name):
     
@@ -267,7 +261,7 @@ def extract_haplogroups(path_Markerfile, Reads_thresh, Base_majority,
     Markerfile.columns = ["chr", "marker_name", "haplogroup", "pos", "mutation", "anc", "der"]
     Markerfile = Markerfile.drop_duplicates(subset='pos', keep='first', inplace=False)    
 
-    Pileupfile = pd.read_csv(path_Pileupfile, header=None, sep=" ", dtype = {0:str,1:int,2:str,3:int,4:str,5:str})
+    Pileupfile = pd.read_csv(path_Pileupfile, header=None, sep="\t", dtype = {0:str,1:int,2:str,3:int,4:str,5:str})
     Pileupfile.columns = ['chr', 'pos', 'refbase', 'reads', 'align', 'quality']
     
     log_output_list = []
