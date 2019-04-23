@@ -395,6 +395,10 @@ def samtools(threads, folder, folder_name, bam_file, Quality_thresh):
     start_time = time.time()            
     extract_haplogroups(args.Markerfile, args.Reads_thresh, args.Base_majority, 
                             pileupfile, log_output, fmf_output, Outputfile)
+    
+    cmd = "rm {};".format(pileupfile)
+    subprocess.call(cmd, shell=True)
+
     print("--- %.2f seconds in extracting haplogroups --- " % (time.time() - start_time) )
     print("--- %.2f seconds to run Yleaf  ---" % (time.time() - whole_time))
     return Outputfile
