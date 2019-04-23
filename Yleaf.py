@@ -21,7 +21,7 @@ pd.options.mode.chained_assignment = None  # default='warn'
 def get_arguments():
 
     parser = ArgumentParser()    
-    
+
     parser.add_argument("-fastq", "--Fastq",
             dest="Fastq", required=False, type=file_exists,
             help="Use raw FastQ files", metavar="PATH")

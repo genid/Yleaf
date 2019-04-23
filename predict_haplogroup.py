@@ -239,10 +239,8 @@ if __name__ == "__main__":
     args = get_arguments()                
     
     path_samples = args.Input
-    samples = check_if_folder(path_samples,'.out')                                                 
-    
-    out_file = args.Outputfile    
-        
+    samples = check_if_folder(path_samples,'.out')                                                     
+    out_file = args.Outputfile        
     hg_intermediate = "Hg_Prediction_tables/"    
     intermediate_tree_table = hg_intermediate+"Intermediates.txt"    
     
@@ -253,6 +251,13 @@ if __name__ == "__main__":
         putative_hg = "NA"
         out_name = sample_name.split("/")[-1]
         out_name = out_name.split(".")[0]
+                
+        log_file = sample_name[:-3]                
+        log_file += "log"                        
+        df_log = pd.read_csv(log_file, sep=":", header=None)
+        log_array = df_log[1].values
+        total_reads = log_array[0]
+        valid_markers = log_array[-1]
         
         df_intermediate = pd.read_csv(intermediate_tree_table, header=None, engine='python')
         intermediates = df_intermediate[0].values            
@@ -301,11 +306,11 @@ if __name__ == "__main__":
         putative_ancestral_hg = get_putative_ancenstral_hg(df_haplogroup_all, putative_hg )
         #print(putative_hg)
         ### Output        
-        header = "Sample_name\tHg\tHg_marker\tQC-score\tQC-1\tQC-2\tQC-3"
+        header = "Sample_name\tHg\tHg_marker\tTotal_reads\tValid_markers\tQC-score\tQC-1\tQC-2\tQC-3"
         marker_name = (df_haplogroup_all.loc[df_haplogroup_all["haplogroup"] == putative_hg]["marker_name"].values)
         if putative_hg == "NA":
             out_hg = "NA"            
-            output = "{}\tNA\tNA\t0\t0\t0\t0".format(out_name)
+            output = "{}\tNA\tNA\t{}\t{}\t0\t0\t0\t0".format(out_name,total_reads,valid_markers)
             log_output.append(out_name)                        
         else:
             if len(marker_name) > 1:
@@ -322,10 +327,10 @@ if __name__ == "__main__":
                 out_hg = "".join(out_hg)                
             qc_score = (qc_one*qc_two*qc_three)                            
             if qc_score >= 0.7:                     
-                output = "{}\t{}\t{}\t{}\t{}\t{}\t{}".format(out_name,putative_hg,out_hg,qc_score,qc_one,qc_two,qc_three)                                                            
+                output = "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}".format(out_name,putative_hg,out_hg,total_reads,valid_markers,qc_score,qc_one,qc_two,qc_three)                                                            
             else:
                 log_output.append(out_name)                                                                  
-                output = "{}\tNA\tNA\t{}\t{}\t{}\t{}".format(out_name,qc_score,qc_one,qc_two,qc_three)                                                                            
+                output = "{}\tNA\tNA\t{}\t{}\t{}\t{}\t{}\t{}".format(out_name,total_reads,valid_markers,qc_score,qc_one,qc_two,qc_three)                                                                            
     
         with open(out_file, "a") as w_file:
             if h_flag:                
