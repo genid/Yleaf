@@ -38,14 +38,20 @@
 
 ### FASTQ
     
-python Yleaf.py -fastq raw_reads.fastq -out out -r 1 -q 20 -b 90 -t 16 -ref [hg19-hg38]
+    python Yleaf.py -fastq raw_reads.fastq -out out -r 1 -q 20 -b 90 -t 16 -ref [hg19-hg38]
         
 ### BAM
     
-python Yleaf.py -bam file.bam -out out -r 1 -q 20 -b 90 -t 1 -ref [hg19-hg38]
+    python Yleaf.py -bam file.bam -out out -r 1 -q 20 -b 90 -t 1 -ref [hg19-hg38]
 
+3. Usage for haplogroup prediction
 
-3. Bug report
+    python predict_haplogroup.py -input Output_files/ -out output.hg
+
+4. See complete manual at the website:
+    https://www.erasmusmc.nl/genetic_identification/resources/
+
+5. Bug report
 
 Please send an email at d.montielgonzalez@erasmusmc.nl if there is a problem getting the software up and running.
 
