@@ -218,11 +218,15 @@ def get_putative_ancenstral_hg(df_haplogroup, putative_hg):
     Could be that that there are more than one contain as a preffix from an ancestral state haplogroup. 
     Should report all of them only if there are different haplogroup name with the resolution
     """    
-    putative_ancestral_hg = []        
-    df_putative_ancestral_hg = df_haplogroup[~df_haplogroup.haplogroup.isin([putative_hg])]
+    putative_ancestral_hg = []
+    putative_hg = putative_hg.replace("~","")
+    df_putative_ancestral_hg = df_haplogroup.copy()
     df_putative_ancestral_hg = df_putative_ancestral_hg[df_putative_ancestral_hg.haplogroup.str.startswith(putative_hg)]
+    df_putative_ancestral_hg['haplogroup'] = df_putative_ancestral_hg['haplogroup'].str.replace('~','') 
+    df_putative_ancestral_hg = df_putative_ancestral_hg[~df_putative_ancestral_hg.haplogroup.isin([putative_hg])]
     df_putative_ancestral_hg = df_putative_ancestral_hg[df_putative_ancestral_hg.state == "A"]
-    
+    df_putative_ancestral_hg = df_putative_ancestral_hg.sort_values(by=['haplogroup'])
+
     for i in df_putative_ancestral_hg.index:    
         if putative_ancestral_hg == []:        
             putative_ancestral_hg.append(df_putative_ancestral_hg.loc[i])                    
@@ -327,7 +331,7 @@ if __name__ == "__main__":
                 out_hg = list(out_hg)
                 del out_hg[-2]
                 out_hg = "".join(out_hg)                
-            qc_score = (qc_one*qc_two*qc_three)                            
+            qc_score = round((qc_one*qc_two*qc_three),3)                            
             if qc_score >= 0.7:                     
                 output = "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}".format(out_name,putative_hg,out_hg,total_reads,valid_markers,qc_score,qc_one,qc_two,qc_three)                                                            
             else:
