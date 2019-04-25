@@ -34,7 +34,7 @@ def get_arguments():
             help="fasta reference genome sequence ", metavar="PATH", required=False)    
 
     parser.add_argument("-ref", "--reference",  dest="reference",
-            help="Build Genome Assembly [hg19-hg38]", metavar="STRING", required=True)    
+            help="Build Genome Assembly [hg19-hg38]", metavar="PATH", required=True)    
 
     parser.add_argument("-out", "--output",
             dest="Outputfile", required=True,                        
@@ -420,9 +420,9 @@ def logo():
 
         """)
 
-def identify_haplogroup(home_source,path_file, output):
+def identify_haplogroup(app_folder,path_file, output):
     
-    script = home_source+"/predict_haplogroup.py"
+    script = app_folder+"/predict_haplogroup.py"
     cmd = "python {} -input {} -out {}".format(script, path_file, output)
     print(cmd)
     subprocess.call(cmd, shell=True)                    
@@ -440,7 +440,9 @@ if __name__ == "__main__":
     threads     = args.threads 
     cwd         = os.getcwd()                
     
-    Markerfile = app_folder+'/Position_files/'+args.reference+'.txt'                                
+    #Markerfile = app_folder+'/Position_files/'+args.reference+'.txt'                                
+    Markerfile = args.reference
+    
     if os.path.isabs(out_path):
         out_folder = out_path
     else:
@@ -477,7 +479,7 @@ if __name__ == "__main__":
                         subprocess.call(cmd, shell=True)        
                         output_file = samtools(threads, folder, folder_name, bam_file, args.Quality_thresh, Markerfile)                                    
                 hg_out = out_folder+"/"+out_path+".hg"
-                identify_haplogroup(home_source, out_folder, hg_out)                                                                        
+                identify_haplogroup(app_folder, out_folder, hg_out)                                                                        
         elif args.Bamfile:                
                 files = check_if_folder(args.Bamfile,'.bam')
                 for path_file in files:            
@@ -489,6 +491,6 @@ if __name__ == "__main__":
                     if create_tmp_dirs(folder):                                            
                         output_file = samtools(threads, folder, folder_name, bam_file, args.Quality_thresh, Markerfile)                        
                 hg_out = out_folder+"/"+out_path+".hg"
-                identify_haplogroup(home_source, out_folder, hg_out)                                                                        
+                identify_haplogroup(app_folder, out_folder, hg_out)                                                                        
     else:
         print("--- Yleaf failed! please check inputs... ---")
