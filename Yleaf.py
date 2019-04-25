@@ -28,10 +28,13 @@ def get_arguments():
 
     parser.add_argument("-bam", "--Bamfile",
         dest="Bamfile", required=False, type=file_exists,
-        help="input BAM file", metavar="PATH")    
-    
+        help="input BAM file", metavar="PATH")            
+
+    parser.add_argument("-f", "--fasta-ref",  dest="fasta",
+            help="fasta reference genome sequence ", metavar="PATH", required=False)    
+
     parser.add_argument("-ref", "--reference",  dest="reference",
-            help="Build Genome Assembly \n [hg19-hg38]", metavar="STRING", required=True)    
+            help="Build Genome Assembly [hg19-hg38]", metavar="STRING", required=True)    
 
     parser.add_argument("-out", "--output",
             dest="Outputfile", required=True,                        
@@ -255,7 +258,7 @@ def create_tmp_dirs(folder):
     
 def extract_haplogroups(path_Markerfile, Reads_thresh, Base_majority, 
                         path_Pileupfile, log_output, fmf_output, Outputfile):    
-
+    
     print("Extracting haplogroups...")
     Markerfile = pd.read_csv(path_Markerfile, header=None, sep="\t")
     Markerfile.columns = ["chr", "marker_name", "haplogroup", "pos", "mutation", "anc", "der"]
@@ -366,11 +369,11 @@ def extract_haplogroups(path_Markerfile, Reads_thresh, Base_majority,
     df_fmf.to_csv(fmf_output, sep="\t", index=False)
     df_out.to_csv(Outputfile, sep="\t", index=False)
 
-def samtools(threads, folder, folder_name, bam_file, Quality_thresh):
+def samtools(threads, folder, folder_name, bam_file, Quality_thresh, Markerfile):
     
     #Change this file to Concatenate from the parameter you give    
-    args.Markerfile =  'Position_files/'+args.reference+'.txt'                    
-        
+    
+    
     start_time = time.time()    
     if not os.path.exists(bam_file+'.bai'): 
         
@@ -393,7 +396,7 @@ def samtools(threads, folder, folder_name, bam_file, Quality_thresh):
     print("--- %.2f seconds in run PileUp ---" % (time.time() - start_time))    
     
     start_time = time.time()            
-    extract_haplogroups(args.Markerfile, args.Reads_thresh, args.Base_majority, 
+    extract_haplogroups(Markerfile, args.Reads_thresh, args.Base_majority, 
                             pileupfile, log_output, fmf_output, Outputfile)
     
     cmd = "rm {};".format(pileupfile)
@@ -417,9 +420,10 @@ def logo():
 
         """)
 
-def identify_haplogroup(path_file, output):
+def identify_haplogroup(home_source,path_file, output):
     
-    cmd = "python predict_haplogroup.py -input {} -out {}".format(path_file, output)
+    script = home_source+"/predict_haplogroup.py"
+    cmd = "python {} -input {} -out {}".format(script, path_file, output)
     print(cmd)
     subprocess.call(cmd, shell=True)                    
     
@@ -434,7 +438,9 @@ if __name__ == "__main__":
     folder_name = ''                    
     out_path    = args.Outputfile   
     threads     = args.threads 
-    cwd         = os.getcwd()        
+    cwd         = os.getcwd()                
+    
+    Markerfile = app_folder+'/Position_files/'+args.reference+'.txt'                                
     if os.path.isabs(out_path):
         out_folder = out_path
     else:
@@ -447,14 +453,16 @@ if __name__ == "__main__":
                 files = check_if_folder(args.Fastq,'.fastq')
                 for path_file in files:            
                     print("Starting...")
-                    print(path_file)
+                    #print(path_file)
                     bam_file = path_file
                     folder_name = get_folder_name(path_file)
                     folder = os.path.join(app_folder,out_folder,folder_name)                                                
                     if create_tmp_dirs(folder):                                            
                         start_time = time.time()
                         sam_file = folder+"/"+folder_name+".sam"               
-                        reference = app_folder+"/"+args.reference +"/"+args.reference+".fa"
+                        #reference = app_folder+"/"+args.reference +"/"+args.reference+".fa"
+                        reference = args.fasta
+
                         fastq_cmd = "bwa mem -t {} {} {} > {}".format(threads, reference, path_file, sam_file)
                         print(fastq_cmd)
                         subprocess.call(fastq_cmd, shell=True)
@@ -467,9 +475,9 @@ if __name__ == "__main__":
                         print("--- %s seconds in convertin Sam to Bam ---" % (time.time()-start_time))                                
                         cmd = "samtools index -@ {} {}".format(threads, bam_file)
                         subprocess.call(cmd, shell=True)        
-                        output_file = samtools(threads, folder, folder_name, bam_file, args.Quality_thresh)                                    
+                        output_file = samtools(threads, folder, folder_name, bam_file, args.Quality_thresh, Markerfile)                                    
                 hg_out = out_folder+"/"+out_path+".hg"
-                identify_haplogroup(out_folder, hg_out)                                                                        
+                identify_haplogroup(home_source, out_folder, hg_out)                                                                        
         elif args.Bamfile:                
                 files = check_if_folder(args.Bamfile,'.bam')
                 for path_file in files:            
@@ -479,8 +487,8 @@ if __name__ == "__main__":
                     folder_name = get_folder_name(path_file)
                     folder = os.path.join(app_folder,out_folder,folder_name)                            
                     if create_tmp_dirs(folder):                                            
-                        output_file = samtools(threads, folder, folder_name, bam_file, args.Quality_thresh)                        
+                        output_file = samtools(threads, folder, folder_name, bam_file, args.Quality_thresh, Markerfile)                        
                 hg_out = out_folder+"/"+out_path+".hg"
-                identify_haplogroup(out_folder, hg_out)                                                                        
+                identify_haplogroup(home_source, out_folder, hg_out)                                                                        
     else:
         print("--- Yleaf failed! please check inputs... ---")
