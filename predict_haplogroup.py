@@ -1,8 +1,13 @@
 #!/usr/bin/env python
 
-#-- Diego Montiel 2019
-#-- Genetics Identificacion Group @ Erasmus MC  --
-#-- Haplogroup prediction
+# Copyright (C) 2018-2019 Diego Montiel Gonzalez
+# Erasmus Medical Center
+# Department of Genetic Identification
+#
+# License: GNU General Public License v3 or later
+# A copy of GNU GPL v3 should have been included in this software package in LICENSE.txt.
+
+# Script for Haplogroup prediction
 
 import pandas as pd
 import numpy as np
@@ -10,6 +15,7 @@ import collections
 import operator
 import os
 import re
+import argparse, os
 from argparse import ArgumentParser
 
 def get_arguments():
@@ -237,6 +243,20 @@ def get_putative_ancenstral_hg(df_haplogroup, putative_hg):
         putative_ancestral_hg = pd.DataFrame(putative_ancestral_hg)
     return putative_ancestral_hg
 
+def process_log(log_file):
+    log_file += "log"                        
+    total_reads = "NA"
+    valid_markers = "NA"
+    
+    try:
+        df_log = pd.read_csv(log_file, sep=":", header=None)
+        log_array = df_log[1].values
+        total_reads = log_array[0]
+        valid_markers = log_array[-1]
+    except FileNotFoundError:
+        print("Warning: log file not found!")        
+    return total_reads, valid_markers
+
 if __name__ == "__main__":
     
     print("\tY-Haplogroup Prediction")
@@ -257,13 +277,8 @@ if __name__ == "__main__":
         putative_hg = "NA"
         out_name = sample_name.split("/")[-1]
         out_name = out_name.split(".")[0]
-                
-        log_file = sample_name[:-3]                
-        log_file += "log"                        
-        df_log = pd.read_csv(log_file, sep=":", header=None)
-        log_array = df_log[1].values
-        total_reads = log_array[0]
-        valid_markers = log_array[-1]
+                        
+        total_reads, valid_markers = process_log(sample_name[:-3])        
         
         df_intermediate = pd.read_csv(intermediate_tree_table, header=None, engine='python')
         intermediates = df_intermediate[0].values            

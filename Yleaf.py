@@ -1,8 +1,13 @@
 #!/usr/bin/env python
 
-#-- Diego Montiel 2019
-#-- Genetics Identificacion Group @ Erasmus MC  --
-#-- YLeaf detection of Y-Haplogroups in Human genome DNA 
+# Copyright (C) 2018-2019 Diego Montiel Gonzalez
+# Erasmus Medical Center
+# Department of Genetic Identification
+#
+# License: GNU General Public License v3 or later
+# A copy of GNU GPL v3 should have been included in this software package in LICENSE.txt.
+
+# YLeaf detection of Y-Haplogroups in Human DNA
 
 import time
 import subprocess
@@ -34,7 +39,7 @@ def get_arguments():
             help="fasta reference genome sequence ", metavar="PATH", required=False)    
 
     parser.add_argument("-ref", "--reference",  dest="reference",
-            help="Build Genome Assembly [hg19-hg38]", metavar="PATH", required=True)    
+            help="Build Version Position file [hg19.txt/hg38.txt]", metavar="PATH", required=True)    
 
     parser.add_argument("-out", "--output",
             dest="Outputfile", required=True,                        
@@ -210,8 +215,6 @@ def chromosome_table(bam_file,bam_folder,file_name):
     elif 'chrY' in df_chromosome["chr"].values:
         return "chrY", total_reads    
     
-def id_generator(size=6, chars=string.ascii_uppercase + string.digits):
-    return ''.join(random.choice(chars) for x in range(size))
 
 def check_if_folder(path,ext):
     
@@ -429,7 +432,8 @@ def identify_haplogroup(app_folder,path_file, output):
     
 if __name__ == "__main__":
             
-    whole_time = time.time()
+    whole_time = time.time()    
+
     print("\tErasmus MC Department of Genetic Identification \n\n\tYleaf: software tool for human Y-chromosomal \n\tphylogenetic analysis and haplogroup inference v2.0\n")
     logo()
     args = get_arguments()    
@@ -442,7 +446,7 @@ if __name__ == "__main__":
     
     #Markerfile = app_folder+'/Position_files/'+args.reference+'.txt'                                
     Markerfile = args.reference
-    
+
     if os.path.isabs(out_path):
         out_folder = out_path
     else:
@@ -464,7 +468,6 @@ if __name__ == "__main__":
                         sam_file = folder+"/"+folder_name+".sam"               
                         #reference = app_folder+"/"+args.reference +"/"+args.reference+".fa"
                         reference = args.fasta
-
                         fastq_cmd = "bwa mem -t {} {} {} > {}".format(threads, reference, path_file, sam_file)
                         print(fastq_cmd)
                         subprocess.call(fastq_cmd, shell=True)
@@ -477,7 +480,9 @@ if __name__ == "__main__":
                         print("--- %s seconds in convertin Sam to Bam ---" % (time.time()-start_time))                                
                         cmd = "samtools index -@ {} {}".format(threads, bam_file)
                         subprocess.call(cmd, shell=True)        
-                        output_file = samtools(threads, folder, folder_name, bam_file, args.Quality_thresh, Markerfile)                                    
+                        output_file = samtools(threads, folder, folder_name, bam_file, args.Quality_thresh, Markerfile)                                                            
+                        cmd = "rm {}".format(sam_file)
+                        subprocess.call(cmd, shell=True)                                
                 hg_out = out_folder+"/"+out_path+".hg"
                 identify_haplogroup(app_folder, out_folder, hg_out)                                                                        
         elif args.Bamfile:                
