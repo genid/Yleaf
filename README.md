@@ -34,11 +34,11 @@
 
 ### Yleaf: FASTQ (raw reads)
     
-    python Yleaf.py -fastq raw_reads.fastq -out out -f [reference.fasta] -r 1 -q 20 -b 90 -t 16 -ref Position_files/[hg19.txt-hg38.txt]
+    python Yleaf.py -fastq raw_reads.fastq -out out -f [reference.fasta] -pos Position_files/[hg19.txt-hg38.txt] -r 1 -q 20 -b 90 -t 16 
         
 ### Yleaf: BAM format
     
-    python Yleaf.py -bam file.bam -out out -r 1 -q 20 -b 90 -t 1 -ref Position_files/[hg19.txt-hg38.txt]
+    python Yleaf.py -bam file.bam -pos Position_files/[hg19.txt-hg38.txt] -out out -r 1 -q 20 -b 90
 
 ### Haplogroup prediction (w/output generated from Yleaf)
 
