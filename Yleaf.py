@@ -414,7 +414,7 @@ if __name__ == "__main__":
             
     whole_time = time.time()    
 
-    print("\tErasmus MC Department of Genetic Identification \n\n\tYleaf: software tool for human Y-chromosomal \n\tphylogenetic analysis and haplogroup inference v2.0\n")
+    print("\tErasmus MC Department of Genetic Identification \n\n\tYleaf: software tool for human Y-chromosomal \n\tphylogenetic analysis and haplogroup inference v2.1\n")
     logo()
     args = get_arguments()    
 
