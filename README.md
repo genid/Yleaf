@@ -1,5 +1,5 @@
 # Yleaf: software for human Y-chromosomal haplogroup inference from next generation sequencing data
-#
+
 #### Arwin Ralf, Diego Montiel Gonzalez, Kaiyin Zhong and Manfred Kayser
 
 ### Department of Genetic Identification 
@@ -8,7 +8,7 @@
 ## Requirements
 
     Operating system: Linux only. Tested on Ubuntu 16.04LTS, but should also work on newer version of Ubuntu. It should be easy to made it work on other Linux distributions. 
-    Python, wget
+    Python3 with pandas >= 0.23.0 and numpy >= 1.14.3
     Internet connection during installation (for downloading and extracting hg19 reference genome).
     Data storage: For installation we recommend a storage capacity of > 10 GB. 
 
@@ -17,9 +17,10 @@
 1. Install dependencies, you can skip this step if these packages are already installed on your system
             
             apt-get install python3.6            
-            apt-get install mawk
-            apt-get install p7zip-full
-            apt-get install bwa
+            pip3 install pandas --upgrade
+            pip3 install numpy  --upgrade            
+            apt-get install bwa            
+            
 
 	SAMtools: We recommend the newests versions of SAMtools (e.g. > 1.4.1)
 
@@ -34,11 +35,11 @@
 
 ### Yleaf: FASTQ (raw reads)
     
-    python Yleaf.py -fastq raw_reads.fastq -out out -f [reference.fasta] -pos Position_files/[hg19.txt-hg38.txt] -r 1 -q 20 -b 90 -t 16 
+    python Yleaf.py -fastq raw_reads.fastq -out out -r 1 -q 20 -b 90 -t 16 -ref [hg19-hg38]
         
 ### Yleaf: BAM format
     
-    python Yleaf.py -bam file.bam -pos Position_files/[hg19.txt-hg38.txt] -out out -r 1 -q 20 -b 90
+    python Yleaf.py -bam file.bam -out out -r 1 -q 20 -b 90 -t 1 -ref [hg19-hg38]
 
 ### Haplogroup prediction (w/output generated from Yleaf)
 
@@ -54,6 +55,5 @@ Please send an email at d.montielgonzalez@erasmusmc.nl if there is a problem get
 ### References and Supporting Information
 A. Ralf, et al., Yleaf: software for human Y-chromosomal haplogroup inference from next generation sequencing data (2018).
 
-https://doi.org/10.1093/molbev/msy032
-
+https://academic.oup.com/mbe/article/35/7/1820/4993044
 
