@@ -7,19 +7,15 @@
 # License: GNU General Public License v3 or later
 # A copy of GNU GPL v3 should have been included in this software package in LICENSE.txt.
 
-# YLeaf detection of Y-Haplogroups in Human DNA
+# YLeaf detection of Y-Haplogroups in Human DNA v2.2
 
+import os
+import re
 import time
 import subprocess
-import string
-import random
-import argparse, os
 import pandas as pd
 import numpy as np
 from argparse   import ArgumentParser
-from subprocess import Popen
-import collections
-import operator
 import gc
 pd.options.mode.chained_assignment = None  # default='warn'
 
@@ -27,13 +23,17 @@ def get_arguments():
 
     parser = ArgumentParser()    
 
-    parser.add_argument("-fastq", "--Fastq",
+    parser.add_argument("-fastq", "--fastq",
             dest="Fastq", required=False,
             help="Use raw FastQ files", metavar="PATH")
 
-    parser.add_argument("-bam", "--Bamfile",
+    parser.add_argument("-bam", "--bam",
         dest="Bamfile", required=False,
         help="input BAM file", metavar="PATH")            
+
+    parser.add_argument("-cram", "--cram",
+        dest="Cramfile", required=False,
+        help="input CRAM file", metavar="PATH")            
 
     parser.add_argument("-f", "--fasta-ref",  dest="reference",
             help="fasta reference genome sequence ", metavar="PATH", required=False)    
@@ -166,19 +166,27 @@ def trimm_caret(s):
     return sequence
 
             
-def execute_mpileup(header, bam_file, pileupfile, Quality_thresh, folder):
+def execute_mpileup(header, bam_file, pileupfile, Quality_thresh, folder, reference):
             
-    cmd = "samtools mpileup -AQ{} -r {} {} > {}".format(Quality_thresh, header, bam_file, pileupfile)        
+    if reference:
+        cmd = "samtools mpileup -f {} -AQ{} -r {} {} > {}".format(reference, 
+                                Quality_thresh, header, bam_file, pileupfile)  
+        
+    else:
+        cmd = "samtools mpileup -AQ{} -r {} {} > {}".format(Quality_thresh, 
+                                                header, bam_file, pileupfile)        
+    #print(cmd)
     subprocess.call(cmd, shell=True)                    
     
-def chromosome_table(bam_file,bam_folder,file_name):
+def chromosome_table(path_file,path_folder,file_name):
     
-    output = bam_folder+'/'+file_name+'.chr'
-    tmp_output = "tmp_bam.txt"
+    output = path_folder+'/'+file_name+'.chr'
+    tmp_output = path_folder+"/tmp.txt"
 
     f = open(tmp_output, "w")
-    subprocess.call(["samtools", "idxstats",bam_file], stdout=f)
+    subprocess.call(["samtools", "idxstats",path_file], stdout=f)
     df_chromosome = pd.read_table(tmp_output, header=None)
+        
     total_reads = sum(df_chromosome[2])
     df_chromosome["perc"] = (df_chromosome[2]/total_reads)*100
     df_chromosome = df_chromosome.round(decimals=2)
@@ -189,8 +197,9 @@ def chromosome_table(bam_file,bam_folder,file_name):
     
     cmd = "rm "+tmp_output
     subprocess.call(cmd, shell=True)
-
-    if 'Y' in df_chromosome["chr"].values:
+    #df_chromosome['chr'] = map(lambda x: x.upper(), df_chromosome['chr'])    
+    #print(df_chromosome["chr"])
+    if 'Y' in df_chromosome["chr"].values:        
         return "Y", total_reads    
     elif 'chrY' in df_chromosome["chr"].values:
         return "chrY", total_reads    
@@ -239,20 +248,47 @@ def create_tmp_dirs(folder):
         subprocess.call(cmd, shell=True)        
         return True
     
+
+def replace_with_bases(base, read_result):
+    
+    """    
+    Parameters
+    ----------
+    base : string
+        single character from the ref base ACGT.
+    result : string
+        line from the pileup read_result with commas and periods (,..).
+    Returns
+    -------
+    replace commas and periods from results using the ref base
+        DESCRIPTION.
+    """    
+    if re.search("^[ACTG]",base):    
+        return read_result.replace(",",base[0]).replace(".",base[0])
+    else:
+        return read_result
+    
+
 def extract_haplogroups(path_Markerfile, Reads_thresh, Base_majority, 
-                        path_Pileupfile, log_output, fmf_output, Outputfile):    
+                        path_Pileupfile, log_output, fmf_output, Outputfile, flag):    
     
     print("Extracting haplogroups...")
     Markerfile = pd.read_csv(path_Markerfile, header=None, sep="\t")
     Markerfile.columns = ["chr", "marker_name", "haplogroup", "pos", "mutation", "anc", "der"]
     Markerfile = Markerfile.drop_duplicates(subset='pos', keep='first', inplace=False)    
-
-    Pileupfile = pd.read_csv(path_Pileupfile, header=None, sep="\t", dtype = {0:str,1:int,2:str,3:int,4:str,5:str})
+    
+    Pileupfile = pd.read_csv(path_Pileupfile, header=None, sep="\t", dtype = {0:str,1:int,2:str,3:int,4:str,5:str})    
     Pileupfile.columns = ['chr', 'pos', 'refbase', 'reads', 'align', 'quality']
     
+    if flag == "cram":
+        ref_base = Pileupfile["refbase"].values        
+        read_results = Pileupfile["align"].values
+        new_read_results = list(map(replace_with_bases, ref_base, read_results))
+        Pileupfile["align"] = new_read_results
+                
     log_output_list = []
     log_output_list.append("Total of reads: "+str(len(Pileupfile))) #total of reads
-
+    
     intersect_pos = np.intersect1d(Pileupfile['pos'], Markerfile['pos'])
     Markerfile = Markerfile.loc[Markerfile['pos'].isin(intersect_pos)]
     Markerfile = Markerfile.sort_values(by=['pos'])
@@ -260,7 +296,8 @@ def extract_haplogroups(path_Markerfile, Reads_thresh, Base_majority,
 
     Pileupfile = Pileupfile.drop(['chr'], axis=1)
     df = pd.merge(Markerfile, Pileupfile, on='pos')
-
+    
+    
     del [[Pileupfile,Markerfile]]
     gc.collect()
     Pileupfile=pd.DataFrame()
@@ -352,42 +389,57 @@ def extract_haplogroups(path_Markerfile, Reads_thresh, Base_majority,
     df_fmf.to_csv(fmf_output, sep="\t", index=False)
     df_out.to_csv(Outputfile, sep="\t", index=False)
 
-def samtools(threads, folder, folder_name, bam_file, Quality_thresh, Markerfile):
+def samtools(threads, folder, folder_name, path_file, Quality_thresh, Markerfile, reference, flag):
     
-    #Change this file to Concatenate from the parameter you give    
-    
-    
-    start_time = time.time()    
-    if not os.path.exists(bam_file+'.bai'): 
-        
-        bam_file_order = folder+"/"+folder_name+".order.bam"                        
-        cmd = "samtools sort -m 2G -@ {} {} > {}".format(threads, bam_file, bam_file_order)        
-        print("\tSorting Bam file...")        
-        subprocess.call(cmd, shell=True)
-        cmd = "samtools index -@ {} {}".format(threads, bam_file_order)        
-        subprocess.call(cmd, shell=True)                
-        bam_file = bam_file_order
-                    
+    #Change this file to Concatenate from the parameter you give        
     file_name  = folder_name
     Outputfile = folder+"/"+folder_name+".out"    
     log_output = folder+"/"+folder_name+".log"
     fmf_output = folder+"/"+folder_name+".fmf"
     pileupfile = folder+"/"+folder_name+".pu" 
-
-    header,total_reads = chromosome_table(bam_file,folder,file_name)
-    execute_mpileup(header, bam_file, pileupfile, Quality_thresh, folder)                      
+    #pileupfile = folder_name+".pu" 
+            
+    start_time = time.time()    
+    if flag == "bam":    
+        if not os.path.exists(path_file+'.bai') :             
+            #bam_file_order = folder+"/"+folder_name+".order.bam"                        
+            #cmd = "samtools sort -m 2G -@ {} {} > {}".format(threads, path_file, bam_file_order)        
+            #print("\tSorting Bam file...")        
+            #subprocess.call(cmd, shell=True)
+            #cmd = "samtools index -@ {} {}".format(threads, bam_file_order)        
+            #print(cmd)
+            #subprocess.call(cmd, shell=True)                
+            #path_file = bam_file_order                              
+            cmd = "samtools index -@{} {}".format(threads, path_file)        
+            print(cmd)            
+            subprocess.call(cmd, shell=True)                                                 
+    
+    
+    elif flag == "cram":
+        #print(path_file)
+        if not os.path.exists(path_file+'.crai'):         
+            cmd = "samtools index -@{} {}".format(threads, path_file)        
+            print(cmd)            
+            subprocess.call(cmd, shell=True)                                                 
+    
+    header,total_reads = chromosome_table(path_file,folder,file_name)
+    
+    
+    execute_mpileup(header, path_file, pileupfile, Quality_thresh, folder, reference)                      
     print("--- %.2f seconds in run PileUp ---" % (time.time() - start_time))    
     
     start_time = time.time()            
     extract_haplogroups(Markerfile, args.Reads_thresh, args.Base_majority, 
-                            pileupfile, log_output, fmf_output, Outputfile)
+                            pileupfile, log_output, fmf_output, Outputfile, flag)
     
     cmd = "rm {};".format(pileupfile)
     subprocess.call(cmd, shell=True)
 
     print("--- %.2f seconds in extracting haplogroups --- " % (time.time() - start_time) )
     print("--- %.2f seconds to run Yleaf  ---" % (time.time() - whole_time))
+    
     return Outputfile
+    
 
 def logo():
     print(r"""
@@ -413,30 +465,30 @@ def identify_haplogroup(app_folder,path_file, output):
 if __name__ == "__main__":
             
     whole_time = time.time()    
-
-    print("\tErasmus MC Department of Genetic Identification \n\n\tYleaf: software tool for human Y-chromosomal \n\tphylogenetic analysis and haplogroup inference v2.1\n")
+    print("\tErasmus MC Department of Genetic Identification \n\n\tYleaf: software tool for human Y-chromosomal \n\tphylogenetic analysis and haplogroup inference v2.2\n")
     logo()
     args = get_arguments()    
-
-    app_folder = os.path.dirname(os.path.realpath(__file__))            
+    app_folder = os.path.dirname(os.path.realpath(__name__))            
     out_path   = args.Outputfile       
-    cwd        = os.getcwd()                            
-
+    cwd        = os.getcwd()               
+    
+    if not out_path.startswith("/"):
+        out_folder = os.path.abspath(out_path)
+        
+    '''    
     if os.path.isabs(out_path):
         out_folder = out_path
-    else:
-        if cwd == "/":
-            out_folder = out_path
-        else:
-            out_folder = cwd+"/"+out_path        
+    else:        
+        out_folder = out_path        
+    '''
+    hg_out = "hg_prediction.hg"
     if create_tmp_dirs(out_folder):        
         if args.Fastq:                                
                 files = check_if_folder(args.Fastq,'.fastq')
                 for path_file in files: 
                     print(args.reference)
                     if args.reference is None:                    
-                        raise FileNotFoundError("-f missing reference")                    
-                    
+                        raise FileNotFoundError("-f missing reference")                                        
                     print("Starting...")                    
                     bam_file = path_file
                     folder_name = get_folder_name(path_file)
@@ -458,8 +510,8 @@ if __name__ == "__main__":
                         subprocess.call(cmd, shell=True)        
                         output_file = samtools(args.threads, folder, folder_name, bam_file, args.Quality_thresh, args.position)                                                            
                         cmd = "rm {}".format(sam_file)
-                        subprocess.call(cmd, shell=True)                                
-                hg_out = out_folder+"/"+out_path+".hg"
+                        subprocess.call(cmd, shell=True)                                                
+                hg_out = out_folder +"/"+hg_out
                 identify_haplogroup(app_folder, out_folder, hg_out)                                                                        
         elif args.Bamfile:                
                 files = check_if_folder(args.Bamfile,'.bam')
@@ -470,8 +522,23 @@ if __name__ == "__main__":
                     folder_name = get_folder_name(path_file)
                     folder = os.path.join(app_folder,out_folder,folder_name)                            
                     if create_tmp_dirs(folder):                                            
-                        output_file = samtools(args.threads, folder, folder_name, bam_file, args.Quality_thresh, args.position)                        
-                hg_out = out_folder+"/"+out_path+".hg"
+                        output_file = samtools(args.threads, folder, folder_name, bam_file, args.Quality_thresh, args.position,False,"bam")                        
+                hg_out = out_folder +"/"+hg_out
                 identify_haplogroup(app_folder, out_folder, hg_out)                                                                        
+        elif args.Cramfile:                
+                if args.reference is None:                    
+                    raise FileNotFoundError("-f missing reference")                                        
+                files = check_if_folder(args.Cramfile,'.cram')
+                for path_file in files:            
+                    print("Starting...")
+                    print(path_file)
+                    cram_file = path_file
+                    folder_name = get_folder_name(path_file)
+                    folder = os.path.join(app_folder,out_folder,folder_name)                                                
+                    if create_tmp_dirs(folder):                                            
+                        output_file = samtools(args.threads, folder, folder_name, cram_file, args.Quality_thresh, args.position,args.reference, "cram")                        
+                hg_out = out_folder +"/"+hg_out
+                identify_haplogroup(app_folder, out_folder, hg_out)                                                                        
+                
     else:
         print("--- Yleaf failed! please check inputs... ---")

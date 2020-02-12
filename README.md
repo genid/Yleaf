@@ -1,5 +1,5 @@
 # Yleaf: software for human Y-chromosomal haplogroup inference from next generation sequencing data
-v2.2
+
 #### Arwin Ralf, Diego Montiel Gonzalez, Kaiyin Zhong and Manfred Kayser
 
 ### Department of Genetic Identification 
@@ -35,11 +35,11 @@ v2.2
 
 ### Yleaf: FASTQ (raw reads)
     
-    python Yleaf.py -fastq raw_reads.fastq -out out -r 1 -q 20 -b 90 -t 16 -ref [hg19-hg38]
+    python Yleaf.py -fastq raw_reads.fastq -ref reference.fasta -pos Position_files/[hg19.txt/hg38.txt] -out out -r 1 -q 20 -b 90 -t 4
         
 ### Yleaf: BAM format
     
-    python Yleaf.py -bam file.bam -out out -r 1 -q 20 -b 90 -t 1 -ref [hg19-hg38]
+    python Yleaf.py -bam file.bam -pos Position_files/[hg19.txt/hg38.txt] -out out -r 1 -q 20 -b 90 
 
 ### Haplogroup prediction (w/output generated from Yleaf)
 
