@@ -281,7 +281,7 @@ if __name__ == "__main__":
     out_file = args.Outputfile        
     home_source = os.path.dirname(os.path.realpath(__file__))
     hg_intermediate = home_source+"/Hg_Prediction_tables/"    
-    intermediate_tree_table = hg_intermediate+"Intermediates.txt"    
+    intermediate_tree_table = hg_intermediate+"Intermediates.txt"            
     
     h_flag = True            
     log_output = []
@@ -324,7 +324,7 @@ if __name__ == "__main__":
         dict_hg = get_putative_hg_list(init_hg, hg, df_haplogroup_trimmed, df_haplogroup_all)            
         keys = sorted(dict_hg.keys(), reverse=True)        
         
-        keys, tmp_hg = process_keys(keys)
+        keys, tmp_hg = process_keys(keys) #tmp_hg stores hg with tilde ~
 
         mismatches = []        
         t = 2    #max mismatch for preffix
@@ -342,10 +342,15 @@ if __name__ == "__main__":
             mismatches.append(mismatch)                                        
         putative_ancestral_hg = get_putative_ancenstral_hg(df_haplogroup_all, putative_hg )
     
-        for i in tmp_hg:
+        hg_list = []
+        flag = False
+        for i in tmp_hg:            
             if putative_hg in i:
-                putative_hg = i
-
+                hg_list.append(i)
+                flag = True                
+        if flag:
+            putative_hg = max(hg_list, key=len)
+        
         #print(putative_hg)
         ### Output        
         header = "Sample_name\tHg\tHg_marker\tTotal_reads\tValid_markers\tQC-score\tQC-1\tQC-2\tQC-3"
