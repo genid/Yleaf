@@ -1,13 +1,13 @@
 #!/usr/bin/env python
 
-# Copyright (C) 2018-2019 Diego Montiel Gonzalez
+# Copyright (C) 2018-2020 Diego Montiel Gonzalez
 # Erasmus Medical Center
 # Department of Genetic Identification
 #
 # License: GNU General Public License v3 or later
 # A copy of GNU GPL v3 should have been included in this software package in LICENSE.txt.
 
-# YLeaf detection of Y-Haplogroups in Human DNA v2.2
+# Yleaf detection of Y-Haplogroups in Human DNA v2.2
 
 import os
 import re
@@ -18,6 +18,8 @@ import numpy as np
 from argparse   import ArgumentParser
 import gc
 pd.options.mode.chained_assignment = None  # default='warn'
+
+
 
 def get_arguments():
 
@@ -66,6 +68,7 @@ def get_arguments():
     args = parser.parse_args()    
     return args
 
+
 def get_frequency_table(mpileup):
     
     bases = ["A","T","G","C","+","-"]
@@ -92,6 +95,7 @@ def get_frequency_table(mpileup):
     df_frequency_table.columns = bases      
     return df_frequency_table
 
+
 def find_all_indels(s):
     find_all = lambda c,s: [x for x in range(c.find(s), len(c)) if c[x] == s]
     list_pos = []
@@ -100,6 +104,7 @@ def find_all_indels(s):
     for i in find_all(s,"+"):
         list_pos.append(i)    
     return sorted(list_pos)
+
 
 def count_indels(s, pos):    
     dict_indel = {"+":0,"-":0}    
@@ -113,6 +118,7 @@ def count_indels(s, pos):
                 dict_indel[s[pos[i]]] += 1
                 continue                
     return dict_indel
+
 
 def trimm_indels(s, pos):    
     ## Receives a sequence and trimms indels            
@@ -142,6 +148,7 @@ def trimm_indels(s, pos):
     else:        
         u_sequence += s[end:]        
     return u_sequence
+
 
 def trimm_caret(s):       
     find_all = lambda c,s: [x for x in range(c.find(s), len(c)) if c[x] == s]
@@ -177,6 +184,7 @@ def execute_mpileup(header, bam_file, pileupfile, Quality_thresh, folder, refere
                                                 header, bam_file, pileupfile)        
     #print(cmd)
     subprocess.call(cmd, shell=True)                    
+    
     
 def chromosome_table(path_file,path_folder,file_name):
     
@@ -231,18 +239,18 @@ def create_tmp_dirs(folder):
         while(flag):
             print("WARNING! File "+folder+" already exists, \nWould you like to remove it?")
             choice = input("y/n: ")            
-            if str(choice) == "y":                
+            if str(choice).upper() == "Y":                
                 cmd = 'rm -r '+folder
                 subprocess.call(cmd, shell=True)
                 cmd = 'mkdir '+folder
                 subprocess.call(cmd, shell=True)                
                 flag = False
                 return True                
-            elif str(choice) == "n":                
+            elif str(choice).upper() == "N":                
                 flag = False                
                 return False                                  
             else:
-                print("Please type y or n")                               
+                print("Please type y/Y or n/N")                               
     else:
         cmd = 'mkdir '+folder
         subprocess.call(cmd, shell=True)        
@@ -297,13 +305,14 @@ def extract_haplogroups(path_Markerfile, Reads_thresh, Base_majority,
     Pileupfile = Pileupfile.drop(['chr'], axis=1)
     df = pd.merge(Markerfile, Pileupfile, on='pos')
     
-    
+    MarkerfileLen = len(Markerfile)
     del [[Pileupfile,Markerfile]]
     gc.collect()
     Pileupfile=pd.DataFrame()
     Markerfile=pd.DataFrame()
 
-    log_output_list.append("Valid markers: "+str(len(df))) #valid markers provided
+    #valid markers from positionsfile.txt
+    log_output_list.append("Valid markers: "+str(MarkerfileLen)) 
 
     index_belowzero = df[df["reads"] == 0].index
     df_belowzero = df[df.index.isin(index_belowzero)]
@@ -339,29 +348,29 @@ def extract_haplogroups(path_Markerfile, Reads_thresh, Base_majority,
     df["state"] = bool_list_anc
     df["bool_state"] = bool_list_state
 
+
+    ## discordant genotypes
     df_discordantgenotype = df[~bool_list_state]
     df_discordantgenotype = df_discordantgenotype.drop(["bool_state"], axis=1)
     df_discordantgenotype["state"] = "NA"
-    df_discordantgenotype["Description"] = "Discordant genotype"
-
+    df_discordantgenotype["Description"] = "Discordant genotype"    
     columns_fmf = df_discordantgenotype.columns
+    df = df[bool_list_state]
 
-    ## read threshold
-    df_readsthreshold = df[df["reads"] < Reads_thresh]
+    ## read threshold    
+    df_readsthreshold = df[df["reads"] < Reads_thresh]    
     df_readsthreshold["Description"] = "Below read threshold"
-
+    df = df[df["reads"] >= Reads_thresh]    
+        
     ## filter by base percentage 
     df_basemajority = df[df["called_perc"] < Base_majority]
     df_basemajority["Description"] = "Below base majority"
-
-    index_to_remove = np.concatenate((df_basemajority.index,df_readsthreshold.index, 
-                                      df_discordantgenotype.index), axis=None)
-
+    df = df[df["called_perc"] >= Base_majority]
+        
     df_fmf = pd.concat([df_belowzero,df_readsthreshold, df_basemajority, df_discordantgenotype], axis=0, sort=True)    
     df_fmf = df_fmf[columns_fmf]
-
-    df_out = df[~df.index.isin(index_to_remove)]
-    df_out = df_out.drop(["bool_state"], axis=1)
+    
+    df_out = df.drop(["bool_state"], axis=1)
     df_out = df_out.sort_values(by=['haplogroup'], ascending=True)
 
     log_output_list.append("Markers with zero reads: "+str(len(df_belowzero))) 
@@ -389,42 +398,30 @@ def extract_haplogroups(path_Markerfile, Reads_thresh, Base_majority,
     df_fmf.to_csv(fmf_output, sep="\t", index=False)
     df_out.to_csv(Outputfile, sep="\t", index=False)
 
+
 def samtools(threads, folder, folder_name, path_file, Quality_thresh, Markerfile, reference, flag):
     
-    #Change this file to Concatenate from the parameter you give        
+
     file_name  = folder_name
     Outputfile = folder+"/"+folder_name+".out"    
     log_output = folder+"/"+folder_name+".log"
     fmf_output = folder+"/"+folder_name+".fmf"
-    pileupfile = folder+"/"+folder_name+".pu" 
-    #pileupfile = folder_name+".pu" 
+    pileupfile = folder+"/"+folder_name+".pu"     
             
     start_time = time.time()    
     if flag == "bam":    
-        if not os.path.exists(path_file+'.bai') :             
-            #bam_file_order = folder+"/"+folder_name+".order.bam"                        
-            #cmd = "samtools sort -m 2G -@ {} {} > {}".format(threads, path_file, bam_file_order)        
-            #print("\tSorting Bam file...")        
-            #subprocess.call(cmd, shell=True)
-            #cmd = "samtools index -@ {} {}".format(threads, bam_file_order)        
-            #print(cmd)
-            #subprocess.call(cmd, shell=True)                
-            #path_file = bam_file_order                              
+        if not os.path.exists(path_file+'.bai') :                         
             cmd = "samtools index -@{} {}".format(threads, path_file)        
             print(cmd)            
-            subprocess.call(cmd, shell=True)                                                 
-    
-    
-    elif flag == "cram":
-        #print(path_file)
+            subprocess.call(cmd, shell=True)                                                         
+    elif flag == "cram":        
         if not os.path.exists(path_file+'.crai'):         
             cmd = "samtools index -@{} {}".format(threads, path_file)        
             print(cmd)            
             subprocess.call(cmd, shell=True)                                                 
     
     header,total_reads = chromosome_table(path_file,folder,file_name)
-    
-    
+        
     execute_mpileup(header, path_file, pileupfile, Quality_thresh, folder, reference)                      
     print("--- %.2f seconds in run PileUp ---" % (time.time() - start_time))    
     
@@ -455,32 +452,39 @@ def logo():
 
         """)
 
-def identify_haplogroup(app_folder,path_file, output):
+
+def predict_haplogroup(app_folder,path_file, output):
     
     script = app_folder+"/predict_haplogroup.py"
     cmd = "python {} -input {} -out {}".format(script, path_file, output)
     print(cmd)
     subprocess.call(cmd, shell=True)                    
+
+
     
 if __name__ == "__main__":
             
     whole_time = time.time()    
-    print("\tErasmus MC Department of Genetic Identification \n\n\tYleaf: software tool for human Y-chromosomal \n\tphylogenetic analysis and haplogroup inference v2.2\n")
+    print("""\tErasmus MC Department of Genetic Identification \n\n\tYleaf: 
+        software tool for human Y-chromosomal \n\tphylogenetic analysis and 
+        haplogroup inference v2.2\n""")
     logo()
     args = get_arguments()    
     app_folder = os.path.dirname(os.path.realpath(__name__))            
     out_path   = args.Outputfile       
     cwd        = os.getcwd()               
     
-    if not out_path.startswith("/"):
-        out_folder = os.path.abspath(out_path)
-        
-    '''    
+    out_folder = out_path
+    """
+    #if not out_path.startswith("/"):
+    #    out_folder = os.path.abspath(out_path)
+    
+    print(out_path)
     if os.path.isabs(out_path):
         out_folder = out_path
     else:        
         out_folder = out_path        
-    '''
+    """
     hg_out = "hg_prediction.hg"
     if create_tmp_dirs(out_folder):        
         if args.Fastq:                                
@@ -512,7 +516,7 @@ if __name__ == "__main__":
                         cmd = "rm {}".format(sam_file)
                         subprocess.call(cmd, shell=True)                                                
                 hg_out = out_folder +"/"+hg_out
-                identify_haplogroup(app_folder, out_folder, hg_out)                                                                        
+                predict_haplogroup(app_folder, out_folder, hg_out)                                                                        
         elif args.Bamfile:                
                 files = check_if_folder(args.Bamfile,'.bam')
                 for path_file in files:            
@@ -524,7 +528,7 @@ if __name__ == "__main__":
                     if create_tmp_dirs(folder):                                            
                         output_file = samtools(args.threads, folder, folder_name, bam_file, args.Quality_thresh, args.position,False,"bam")                        
                 hg_out = out_folder +"/"+hg_out
-                identify_haplogroup(app_folder, out_folder, hg_out)                                                                        
+                predict_haplogroup(app_folder, out_folder, hg_out)                                                                        
         elif args.Cramfile:                
                 if args.reference is None:                    
                     raise FileNotFoundError("-f missing reference")                                        
@@ -538,7 +542,8 @@ if __name__ == "__main__":
                     if create_tmp_dirs(folder):                                            
                         output_file = samtools(args.threads, folder, folder_name, cram_file, args.Quality_thresh, args.position,args.reference, "cram")                        
                 hg_out = out_folder +"/"+hg_out
-                identify_haplogroup(app_folder, out_folder, hg_out)                                                                        
-                
+                predict_haplogroup(app_folder, out_folder, hg_out)                                                                                    
     else:
         print("--- Yleaf failed! please check inputs... ---")
+        
+        

@@ -14,7 +14,7 @@ import numpy as np
 import collections
 import operator
 import os
-import re
+
 import argparse, os
 from argparse import ArgumentParser
 
@@ -281,7 +281,7 @@ if __name__ == "__main__":
     out_file = args.Outputfile        
     home_source = os.path.dirname(os.path.realpath(__file__))
     hg_intermediate = home_source+"/Hg_Prediction_tables/"    
-    intermediate_tree_table = hg_intermediate+"Intermediates.txt"            
+    intermediate_tree_table = hg_intermediate+"Intermediates.txt"                
     
     h_flag = True            
     log_output = []
@@ -340,7 +340,7 @@ if __name__ == "__main__":
                 qc_three = dict_hg[keys[k]][1]                
                 break
             mismatches.append(mismatch)                                        
-        putative_ancestral_hg = get_putative_ancenstral_hg(df_haplogroup_all, putative_hg )
+        
     
         hg_list = []
         flag = False
@@ -350,6 +350,8 @@ if __name__ == "__main__":
                 flag = True                
         if flag:
             putative_hg = max(hg_list, key=len)
+        
+        putative_ancestral_hg = get_putative_ancenstral_hg(df_haplogroup_all, putative_hg )
         
         #print(putative_hg)
         ### Output        
