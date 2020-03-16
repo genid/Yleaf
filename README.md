@@ -9,7 +9,7 @@
 
     Operating system: Linux only. Tested on Ubuntu 16.04LTS, but should also work on newer version of Ubuntu. It should be easy to made it work on other Linux distributions. 
     Python3 with pandas >= 0.23.0 and numpy >= 1.14.3
-    Internet connection during installation (for downloading and extracting hg19 reference genome).
+    Internet connection during installation (for downloading and extracting hg19/hg38 reference genome).
     Data storage: For installation we recommend a storage capacity of > 10 GB. 
 
 ## Installation
