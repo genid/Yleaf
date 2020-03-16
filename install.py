@@ -15,7 +15,7 @@ while(flag):
         if os.path.isdir("hg19"):
             print("Reference genome hg19 does exist, \
         I assume this is because you have installed \
-        this software before, before, and I will skip this step. \
+        this software before, this step will be skip. \
         In case of doubt, delete it and run install.py again.")
         else:
             if os.path.isfile("hg19.tar.gz"):
