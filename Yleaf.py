@@ -453,9 +453,9 @@ def logo():
         """)
 
 
-def predict_haplogroup(app_folder,path_file, output):
+def predict_haplogroup(source,path_file, output):
     
-    script = app_folder+"/predict_haplogroup.py"
+    script = source+"/predict_haplogroup.py"
     cmd = "python {} -input {} -out {}".format(script, path_file, output)
     print(cmd)
     subprocess.call(cmd, shell=True)                    
@@ -463,17 +463,16 @@ def predict_haplogroup(app_folder,path_file, output):
 
     
 if __name__ == "__main__":
-            
+    
+    
     whole_time = time.time()    
-    print("""\tErasmus MC Department of Genetic Identification \n\n\tYleaf: 
-        software tool for human Y-chromosomal \n\tphylogenetic analysis and 
-        haplogroup inference v2.2\n""")
+    print("""\tErasmus MC Department of Genetic Identification \n\n\tYleaf: software tool for human Y-chromosomal \n\tphylogenetic analysis and haplogroup inference v2.2\n""")
     logo()
-    args = get_arguments()    
+    args = get_arguments() 
+    #app_folder = os.getcwd()
     app_folder = os.path.dirname(os.path.realpath(__name__))            
     out_path   = args.Outputfile       
-    cwd        = os.getcwd()               
-    
+    source     = os.path.abspath(os.path.dirname(os.sys.argv[0]))          
     out_folder = out_path
     """
     #if not out_path.startswith("/"):
@@ -512,11 +511,11 @@ if __name__ == "__main__":
                         print("--- %s seconds in convertin Sam to Bam ---" % (time.time()-start_time))                                
                         cmd = "samtools index -@ {} {}".format(args.threads, bam_file)
                         subprocess.call(cmd, shell=True)        
-                        output_file = samtools(args.threads, folder, folder_name, bam_file, args.Quality_thresh, args.position)                                                            
+                        output_file = samtools(args.threads, folder, folder_name, bam_file, args.Quality_thresh, args.position,False,"bam")                                                            
                         cmd = "rm {}".format(sam_file)
                         subprocess.call(cmd, shell=True)                                                
                 hg_out = out_folder +"/"+hg_out
-                predict_haplogroup(app_folder, out_folder, hg_out)                                                                        
+                predict_haplogroup(source, out_folder, hg_out)                                                                        
         elif args.Bamfile:                
                 files = check_if_folder(args.Bamfile,'.bam')
                 for path_file in files:            
@@ -528,7 +527,7 @@ if __name__ == "__main__":
                     if create_tmp_dirs(folder):                                            
                         output_file = samtools(args.threads, folder, folder_name, bam_file, args.Quality_thresh, args.position,False,"bam")                        
                 hg_out = out_folder +"/"+hg_out
-                predict_haplogroup(app_folder, out_folder, hg_out)                                                                        
+                predict_haplogroup(source, out_folder, hg_out)                                                                        
         elif args.Cramfile:                
                 if args.reference is None:                    
                     raise FileNotFoundError("-f missing reference")                                        
@@ -542,7 +541,7 @@ if __name__ == "__main__":
                     if create_tmp_dirs(folder):                                            
                         output_file = samtools(args.threads, folder, folder_name, cram_file, args.Quality_thresh, args.position,args.reference, "cram")                        
                 hg_out = out_folder +"/"+hg_out
-                predict_haplogroup(app_folder, out_folder, hg_out)                                                                                    
+                predict_haplogroup(source, out_folder, hg_out)                                                                                    
     else:
         print("--- Yleaf failed! please check inputs... ---")
         
