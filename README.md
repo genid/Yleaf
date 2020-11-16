@@ -13,44 +13,23 @@
     Data storage: For installation we recommend a storage capacity of > 10 GB. 
 
 ## Installation
-    
-    Please be sure to have the following software installed
-    
-    Python >3.6: 
-        apt-get install python3.6          
-    
-    BWA-MEM (only for sequence alignment): 
-        apt-get install bwa      
-        
-    SAMtools: > 1.4.1)
 
-        1. wget https://github.com/samtools/samtools/releases/download/1.4.1/samtools-1.4.1.tar.bz2 -O samtools.tar.bz2
-        2. tar -xjvf samtools.tar.bz2 
-        3. cd samtools-1.4.1/
-        4. ./configure
-        5. make
-        6. make install
+1. Install dependencies, you can skip this step if these packages are already installed on your system
+            
+            apt-get install python3.6            
+            pip3 install pandas --upgrade
+            pip3 install numpy  --upgrade            
+            apt-get install bwa            
+            
 
-        
-1.1 Python dependencies using an environment
+	SAMtools: We recommend the newests versions of SAMtools (e.g. > 1.4.1)
 
-    1. Create and environment
-        python3 -m venv yleaf_env
-    2. Activate environment
-        source yleaf_env/bin/activate
-    3. Installation of libraries
-        pip install -r requirements
-    
-    Type "deactivate" to close the environment
-    
-
-1.2. Python dependencies manual installation
-
-    
-    pip3 install pandas --upgrade
-    pip3 install numpy --upgrade           
-    
-    
+            1. wget https://github.com/samtools/samtools/releases/download/1.4.1/samtools-1.4.1.tar.bz2 -O samtools.tar.bz2
+            2. tar -xjvf samtools.tar.bz2 
+            3. cd samtools-1.4.1/
+            4. ./configure
+            5. make
+            6. make install
 
 ## Usage and examples
 
