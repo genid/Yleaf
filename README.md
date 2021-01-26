@@ -15,12 +15,12 @@
 ## Installation
 
 1. Install dependencies, you can skip this step if these packages are already installed on your system
-            
-            apt-get install python3.6            
+
+            apt-get install python3.6
             pip3 install pandas --upgrade
-            pip3 install numpy  --upgrade            
-            apt-get install bwa            
-            
+            pip3 install numpy  --upgrade
+            apt-get install bwa
+
 
 	SAMtools: We recommend the newests versions of SAMtools (e.g. > 1.4.1)
 
@@ -30,6 +30,23 @@
             4. ./configure
             5. make
             6. make install
+
+### Installation using an environment (OPTIONAL)
+
+        Explanation:
+            #1) creates a new environment with a given name (e.g. yleaf-env)
+            #2) activate the environment with the given name
+            #3) install pandas library with the latest release
+            #4) Run Yleaf normally
+            #5) deactivates the virtual environment or just close the current terminal
+
+        To run in the terminal:
+            1) python3.6 -m venv yleaf-env
+            2) source yleaf-env/bin/activate
+            3) pip install pandas
+            4) python Yleaf.py
+            5) source deactivate
+
 
 ## Usage and examples
 
