@@ -96,7 +96,6 @@ def get_frequency_table(mpileup):
 
 
 def find_all_indels(s):
-    find_all = lambda c, s: [x for x in range(c.find(s), len(c)) if c[x] == s]
     list_pos = []
     for i in find_all(s, "-"):
         list_pos.append(i)
@@ -148,7 +147,6 @@ def trimm_indels(s, pos):
 
 
 def trimm_caret(s):
-    find_all = lambda c, s: [x for x in range(c.find(s), len(c)) if c[x] == s]
     list_pos = []
     for i in find_all(s, "^"):
         list_pos.append(i)
@@ -167,6 +165,10 @@ def trimm_caret(s):
             break
         i += 1
     return sequence
+
+
+def find_all(c, s):
+    return [x for x in range(c.find(s), len(c)) if c[x] == s]
 
 
 def execute_mpileup(header, bam_file, pileupfile, quality_thresh, folder, reference):
@@ -440,7 +442,6 @@ def predict_haplogroup(source, path_file, output):
 
 
 def main():
-
     whole_time = time.time()
     print(
         """\tErasmus MC Department of Genetic Identification \n\n\tYleaf: software tool for human Y-chromosomal
@@ -525,8 +526,6 @@ def main():
             predict_haplogroup(source, out_folder, hg_out)
     else:
         print("--- Yleaf failed! please check inputs... ---")
-
-
 
 
 if __name__ == "__main__":

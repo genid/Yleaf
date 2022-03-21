@@ -7,7 +7,7 @@ import sys
 import errno
 
 flag = True
-while(flag):
+while flag:
     print("Please choose a build Genome reference to download and process with BWA-MEM")
     choice = input("hg19/hg38: ")            
     if str(choice) == "hg19":                
