@@ -1,0 +1,26 @@
+chr	marker_name	haplogroup	pos	mutation	anc	der	reads	called_perc	called_base	state	Description
+chrY	M176	O1b2	2787139	G->A	G	A	1	100	T	NA	Discordant genotype
+chrY	L1378	D2	2960099	C->T	C	T	2	100	A	NA	Discordant genotype
+chrY	P201	O2a2	2960155	T->C	T	C	3	100	A	NA	Discordant genotype
+chrY	M343	R1b	3019783	C->A	C	A	6	100	G	NA	Discordant genotype
+chrY	V38	E1b1a	6950250	C->T	C	T	3	100	G	NA	Discordant genotype
+chrY	V13	E1b1b1a1b1a	6974222	G->A	G	A	2	100	T	NA	Discordant genotype
+chrY	V32	E1b1b1a1a1b	7064780	G->C	G	C	4	100	T	NA	Discordant genotype
+chrY	JST-002611	O2a1c	7678685	G->A	G	A	3	100	C	NA	Discordant genotype
+chrY	F6251	D1a	7813234	C->T	C	T	1	100	A	NA	Discordant genotype
+chrY	P326	LT	8599249	T->C	T	C	2	100	A	NA	Discordant genotype
+chrY	P256	M	8817190	G->A	G	A	2	100	T	NA	Discordant genotype
+chrY	Z284	R1a1a1b1a3a	8849155	C->G	C	G	1	100	A	NA	Discordant genotype
+chrY	Z282	R1a1a1b1a	13476521	T->C	T	C	7	100	G	NA	Discordant genotype
+chrY	L21	R1b1a1a2a1a2c1	13542548	C->G	C	G	1	100	A	NA	Discordant genotype
+chrY	M438	I2	14526924	A->G	A	G	9	100	C	NA	Discordant genotype
+chrY	V168	A1	15835792	G->A	G	A	1	100	T	NA	Discordant genotype
+chrY	Z1936	N1a1a1a1a2	19301440	C->T	C	T	1	100	A	NA	Discordant genotype
+chrY	M13	A1b1b2b	19560212	G->C	G	C	2	100	A	NA	Discordant genotype
+chrY	M123	E1b1b1b2a1	19602700	C->T	C	T	1	100	G	NA	Discordant genotype
+chrY	M122	O2	19602788	A->G	A	G	2	100	C	NA	Discordant genotype
+chrY	M96	E	19617112	C->G	C	G	1	100	A	NA	Discordant genotype
+chrY	M89	F	19755427	C->T	C	T	1	100	G	NA	Discordant genotype
+chrY	M285	G1	20579854	G->C	G	C	1	100	T	NA	Discordant genotype
+chrY	M304	J	20587967	A->C	A	C	3	100	T	NA	Discordant genotype
+chrY	M526	K2	21389038	A->C	A	C	2	100	T	NA	Discordant genotype
