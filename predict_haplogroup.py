@@ -274,7 +274,7 @@ def main():
 
     args = get_arguments()
 
-    path_samples = args.Input
+    path_samples = args.Input  # .out files are collected
     samples = check_if_folder(path_samples, '.out')
     out_file = args.Outputfile
     home_source = os.path.dirname(os.path.realpath(__file__))
@@ -284,9 +284,8 @@ def main():
     h_flag = True
     log_output = []
     for sample_name in samples:
-        # print(sample_name)
         putative_hg = "NA"
-        out_name = sample_name.split("/")[-1]
+        out_name = str(sample_name.split("/")[-1])
         out_name = out_name.split(".")[0]
 
         total_reads, valid_markers = process_log(sample_name[:-3])
