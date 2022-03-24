@@ -280,7 +280,6 @@ def main():
     home_source = os.path.dirname(os.path.realpath(__file__))
     hg_intermediate = home_source + "/Hg_Prediction_tables/"
     intermediate_tree_table = hg_intermediate + "Intermediates.txt"
-
     h_flag = True
     log_output = []
     for sample_name in samples:
