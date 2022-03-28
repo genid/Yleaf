@@ -291,8 +291,7 @@ def main():
 
         df_intermediate = pd.read_csv(intermediate_tree_table, header=None, engine='python')
         intermediates = df_intermediate[0].values
-        print(intermediates)
-        exit()
+
         df_haplogroup_all = pd.read_csv(sample_name, sep="\t", engine='python')
         df_haplogroup_all = df_haplogroup_all.sort_values(by=['haplogroup'])
 
