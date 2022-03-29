@@ -96,7 +96,6 @@ def calc_score_one(df_intermediate, df_haplogroup):
     correct_state = 0
     for i in df_intermediate.values:
         tmp = df_haplogroup.loc[df_haplogroup["haplogroup"] == i[0]]
-
         if not tmp.empty:
             if "/" in i[1]:
                 correct_state += len(tmp)
@@ -308,6 +307,7 @@ def main():
             df_tmp = df_tmp.drop(df_tmp[df_tmp.haplogroup == hg].index)
         hg = df_tmp["haplogroup"].values
 
+        # pre filter based on the most prevalent and deepest haplogroup in derived data
         init_hg = get_hg_root(hg)
 
         df_intermediate = get_intermediate_branch(init_hg, hg_intermediate)
