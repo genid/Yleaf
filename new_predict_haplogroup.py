@@ -4,7 +4,7 @@ import math
 
 BACKBONE_GROUPS = set()
 MAIN_HAPLO_GROUPS = set()
-STATE_CACHE = {}
+QC1_SCORE_CACHE = {}
 
 
 class Tree:
@@ -58,8 +58,6 @@ def read_derived_haplotype_dict(file):
         for line in f:
             _, _, _, branches, _, _, _, _, _, _, derived = line.strip().split("\t")
             for branch in branches.split(";"):
-                if branch == "P":
-                    print(branches)
                 if branch in haplotype_dict:
                     if derived == "D":
                         haplotype_dict[branch][0] += 1
@@ -72,7 +70,7 @@ def read_derived_haplotype_dict(file):
 
 
 def read_backbone_groups():
-    global BACKBONE_GROUPS
+    global BACKBONE_GROUPS, MAIN_HAPLO_GROUPS
     with open("Hg_Prediction_tables/Intermediates.txt") as f:
         for line in f:
             if "~" in line:
@@ -87,28 +85,25 @@ def read_backbone_groups():
 def get_most_likely_haplotype(tree, haplotype_dict):
 
     sorted_depth_haplotypes = sorted(haplotype_dict.keys(), key=lambda k: tree.get(k).depth, reverse=True)
-    not_final_nodes = set()
+    covered_node_scores = {}
     scores = {}
     tree_paths = {}
     for haplotype_name in sorted_depth_haplotypes:
-        if haplotype_name in not_final_nodes:
-            continue
         node = tree.get(haplotype_name)
         parent = node.parent
         path = [node.name]
 
-        # walk the tree back
+        # caclulate score 3 already since this is most efficient
         qc3_score = [0, 0]  # matching, total
+
+        # walk the tree back
         while parent is not None:
             path.append(parent.name)
+            # at least one of the snps is in derived state and in the same overal haplogroup
             if parent.name in haplotype_dict:
-                # at least one of the snps is in derived state and in the same overal haplogroup
-                # TODO: ask for more specifics cause this seems very different
-                if parent.name[0] == node.name[0]:
-                    if haplotype_dict[parent.name][0] > 0:
-                        qc3_score[0] += 1
-                    qc3_score[1] += 1
-                not_final_nodes.add(parent.name)
+                if parent.name[0] == node.name[0] and parent.name != node.name[0]:
+                    qc3_score[0] += haplotype_dict[parent.name][0]
+                    qc3_score[1] += haplotype_dict[parent.name][1]
             parent = parent.parent
 
         qc1_score = get_qc1_score(path, haplotype_dict)
@@ -121,15 +116,28 @@ def get_most_likely_haplotype(tree, haplotype_dict):
             qc3_score = 0
         else:
             qc3_score = qc3_score[0] / qc3_score[1]
+
+        total_score = math.prod([qc1_score, qc2_score, qc3_score])
+
+        if node.name in covered_node_scores and total_score <= covered_node_scores[node.name]:
+            continue
         scores[node.name] = [qc1_score, qc2_score, qc3_score]
         tree_paths[node.name] = get_str_path(path)
 
-    scores = sorted(scores.items(), key=lambda kv: math.prod(kv[1]), reverse=True)
-    # for score in scores:
-    #     total_score = math.prod(score[1])
-    #     if total_score > 0:
-    #         print(score[0], score[1], total_score)
-    #         print(tree_paths[score[0]])
+        # make sure that less specific nodes with lower scores are not recorded
+        for node_name in path:
+            if node_name in covered_node_scores:
+                if total_score > covered_node_scores[node_name]:
+                    covered_node_scores[node_name] = total_score
+            else:
+                covered_node_scores[node_name] = total_score
+
+    scores = sorted(scores.items(), key=lambda kv: (math.prod(kv[1]), tree.get(kv[0]).depth), reverse=True)
+    for score in scores:
+        total_score = math.prod(score[1])
+        if total_score > 0:
+            print(score[0], score[1], total_score)
+            print(tree_paths[score[0]])
 
 
 def get_qc1_score(path, haplotype_dict):
@@ -143,8 +151,10 @@ def get_qc1_score(path, haplotype_dict):
     if most_specific_backbone is None:
         return 0
 
-    if most_specific_backbone in STATE_CACHE:
-        expected_states = STATE_CACHE[most_specific_backbone]
+    global QC1_SCORE_CACHE
+    # same backbone, same score
+    if most_specific_backbone in QC1_SCORE_CACHE:
+        return QC1_SCORE_CACHE[most_specific_backbone]
     else:
         expected_states = {}
         with open(f"Hg_Prediction_tables/{most_specific_backbone}_int.txt") as f:
@@ -153,7 +163,6 @@ def get_qc1_score(path, haplotype_dict):
                     continue
                 name, state = line.strip().split("\t")
                 expected_states[name] = state
-        STATE_CACHE[most_specific_backbone] = expected_states
 
     score = [0, 0]  # matching, total
     for name, (derived, total) in intermediate_states.items():
@@ -165,7 +174,11 @@ def get_qc1_score(path, haplotype_dict):
         score[1] += total
     if score[1] == 0:
         return 0
-    return score[0] / score[1]
+
+    # cache the score
+    qc1_score = score[0] / score[1]
+    QC1_SCORE_CACHE[most_specific_backbone] = qc1_score
+    return qc1_score
 
 
 def get_str_path(path):
@@ -176,6 +189,8 @@ def get_str_path(path):
     return str_path
 
 
+def write_outcome():
+    pass
 
 
 if __name__ == '__main__':

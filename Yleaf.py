@@ -439,7 +439,6 @@ def logo():
 def predict_haplogroup(source, path_file, output):
     script = source + "/predict_haplogroup.py"
     cmd = "python {} -input {} -out {}".format(script, path_file, output)
-    print(cmd)
     subprocess.call(cmd, shell=True)
 
 
@@ -450,21 +449,11 @@ def main():
          \n\tphylogenetic analysis and haplogroup inference v2.2\n""")
     logo()
     args = get_arguments()
-    # app_folder = os.getcwd()
+
     app_folder = os.path.dirname(os.path.realpath(__name__))
     out_path = args.Outputfile
     source = os.path.abspath(os.path.dirname(sys.argv[0]))
     out_folder = out_path
-    """
-    #if not out_path.startswith("/"):
-    #    out_folder = os.path.abspath(out_path)
-
-    print(out_path)
-    if os.path.isabs(out_path):
-        out_folder = out_path
-    else:        
-        out_folder = out_path        
-    """
     hg_out = "hg_prediction.hg"
     if create_tmp_dirs(out_folder):
         if args.Fastq:

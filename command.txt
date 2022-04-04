@@ -1,1 +1,1 @@
-python Yleaf.py -pos Position_files/Visage_Ampliseq_hg38.txt -out test -q 1 -b 50 -bam /media/disk2/Illumina_genomes/1000G/hg19/HG00096.mapped.ILLUMINA.bwa.GBR.low_coverage.20120522_chrY.bam -r 1
+python Yleaf.py -pos Position_files/WGS_hg19_new.txt -out test -q 1 -b 50 -bam /media/disk2/Illumina_genomes/1000G/hg19/HG00096.mapped.ILLUMINA.bwa.GBR.low_coverage.20120522_chrY.bam -r 1
