@@ -1,8 +1,8 @@
 Total of reads: 14219874
-Valid markers: 52
+Valid markers: 64709
 Markers with zero reads: 0
 Markers below the read threshold {1}: 0
 Markers below the base majority threshold {50}: 0
-Markers with discordant genotype: 25
-Markers without haplogroup information: 25
-Markers with haplogroup information: 27
+Markers with discordant genotype: 380
+Markers without haplogroup information: 380
+Markers with haplogroup information: 64329
