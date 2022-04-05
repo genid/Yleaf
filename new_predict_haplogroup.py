@@ -1,6 +1,6 @@
 import json
 import math
-
+from pathlib import Path
 
 BACKBONE_GROUPS = set()
 MAIN_HAPLO_GROUPS = set()
@@ -41,13 +41,51 @@ class Node:
         self.depth = depth
 
 
+class HgMarkersLinker:
+    DERIVED = "D"
+    ANCESTRAL = "A"
+
+    def __init__(self):
+        self._ancestral_markers = set()
+        self._derived_markers = set()
+
+    def add(self, marker_name, state):
+        if state == self.DERIVED:
+            self._derived_markers.add(marker_name)
+        else:
+            self._ancestral_markers.add(marker_name)
+
+    @property
+    def nr_total(self):
+        return len(self._ancestral_markers) + len(self._derived_markers)
+
+    @property
+    def nr_derived(self):
+        return len(self._derived_markers)
+
+    @property
+    def nr_ancestral(self):
+        return len(self._ancestral_markers)
+
+
 def main():
-    file = "test/HG00096.mapped.ILLUMINA.bwa.GBR.low_coverage.20120522_chrY/HG00096.mapped.ILLUMINA.bwa.GBR" \
-           ".low_coverage.20120522_chrY.out"
-    haplotype_dict = read_derived_haplotype_dict(file)
+    in_folder = "test"
     read_backbone_groups()
-    tree = Tree("Position_files/tree.json")
-    get_most_likely_haplotype(tree, haplotype_dict)
+    final_table = []
+    for folder in read_input_folder(in_folder):
+        haplotype_dict = read_derived_haplotype_dict(folder / (folder.name + ".out"))
+        tree = Tree("Position_files/tree.json")
+        best_haplotype_score = get_most_likely_haplotype(tree, haplotype_dict)
+        print(best_haplotype_score)
+        add_to_final_table(final_table, haplotype_dict)
+
+
+def read_input_folder(folder_name):
+    in_folder = Path(folder_name)
+    for folder in in_folder.iterdir():
+        if not folder.is_dir():
+            continue
+        yield folder
 
 
 def read_derived_haplotype_dict(file):
@@ -56,16 +94,10 @@ def read_derived_haplotype_dict(file):
     with open(file) as f:
         f.readline()
         for line in f:
-            _, _, _, branches, _, _, _, _, _, _, derived = line.strip().split("\t")
-            for branch in branches.split(";"):
-                if branch in haplotype_dict:
-                    if derived == "D":
-                        haplotype_dict[branch][0] += 1
-                    haplotype_dict[branch][1] += 1
-                else:
-                    haplotype_dict[branch] = [0, 1]
-                    if derived == "D":
-                        haplotype_dict[branch][0] += 1
+            _, _, marker, branch, _, _, _, _, _, _, state = line.strip().split("\t")
+            if branch not in haplotype_dict:
+                haplotype_dict[branch] = HgMarkersLinker()
+            haplotype_dict[branch].add(marker, state)
     return haplotype_dict
 
 
@@ -82,7 +114,7 @@ def read_backbone_groups():
         MAIN_HAPLO_GROUPS.add(chr(nr))
 
 
-def get_most_likely_haplotype(tree, haplotype_dict):
+def get_most_likely_haplotype(tree, haplotype_dict, treshold=0.75):
 
     sorted_depth_haplotypes = sorted(haplotype_dict.keys(), key=lambda k: tree.get(k).depth, reverse=True)
     covered_node_scores = {}
@@ -102,16 +134,16 @@ def get_most_likely_haplotype(tree, haplotype_dict):
             # at least one of the snps is in derived state and in the same overal haplogroup
             if parent.name in haplotype_dict:
                 if parent.name[0] == node.name[0] and parent.name != node.name[0]:
-                    qc3_score[0] += haplotype_dict[parent.name][0]
-                    qc3_score[1] += haplotype_dict[parent.name][1]
+                    qc3_score[0] += haplotype_dict[parent.name].nr_derived
+                    qc3_score[1] += haplotype_dict[parent.name].nr_total
             parent = parent.parent
 
         qc1_score = get_qc1_score(path, haplotype_dict)
 
-        if haplotype_dict[node.name][1] == 0:
+        if haplotype_dict[node.name].nr_total == 0:
             qc2_score = 0
         else:
-            qc2_score = haplotype_dict[node.name][0] / haplotype_dict[node.name][1]
+            qc2_score = haplotype_dict[node.name].nr_derived / haplotype_dict[node.name].nr_total
         if qc3_score[1] == 0:
             qc3_score = 0
         else:
@@ -121,8 +153,10 @@ def get_most_likely_haplotype(tree, haplotype_dict):
 
         if node.name in covered_node_scores and total_score <= covered_node_scores[node.name]:
             continue
-        scores[node.name] = [qc1_score, qc2_score, qc3_score]
-        tree_paths[node.name] = get_str_path(path)
+        # only record these scores
+        if total_score > treshold:
+            scores[node.name] = [qc1_score, qc2_score, qc3_score]
+            tree_paths[node.name] = get_str_path(path)
 
         # make sure that less specific nodes with lower scores are not recorded
         for node_name in path:
@@ -132,12 +166,7 @@ def get_most_likely_haplotype(tree, haplotype_dict):
             else:
                 covered_node_scores[node_name] = total_score
 
-    scores = sorted(scores.items(), key=lambda kv: (math.prod(kv[1]), tree.get(kv[0]).depth), reverse=True)
-    for score in scores:
-        total_score = math.prod(score[1])
-        if total_score > 0:
-            print(score[0], score[1], total_score)
-            print(tree_paths[score[0]])
+    return scores
 
 
 def get_qc1_score(path, haplotype_dict):
@@ -165,13 +194,13 @@ def get_qc1_score(path, haplotype_dict):
                 expected_states[name] = state
 
     score = [0, 0]  # matching, total
-    for name, (derived, total) in intermediate_states.items():
+    for name, marker_linker in intermediate_states.items():
         expected_state = expected_states[name]
         if expected_state == "A":
-            score[0] += total - derived
+            score[0] += marker_linker.nr_ancestral
         else:
-            score[0] += derived
-        score[1] += total
+            score[0] += marker_linker.nr_derived
+        score[1] += marker_linker.nr_total
     if score[1] == 0:
         return 0
 
@@ -189,8 +218,13 @@ def get_str_path(path):
     return str_path
 
 
-def write_outcome():
+def add_to_final_table():
+
     pass
+
+
+def write_final_table(final_table):
+    header = "Sample_name\tHg\tHg_marker\tTotal_reads\tValid_markers\tQC-score\tQC-1\tQC-2\tQC-3"
 
 
 if __name__ == '__main__':
