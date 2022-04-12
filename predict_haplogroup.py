@@ -1,5 +1,4 @@
 import json
-import math
 import argparse
 from pathlib import Path
 
@@ -82,8 +81,8 @@ def main():
     for folder in read_input_folder(in_folder):
         haplotype_dict = read_derived_haplotype_dict(folder / (folder.name + ".out"))
         tree = Tree("Position_files/tree.json")
-        best_haplotype_scores = get_most_likely_haplotype(tree, haplotype_dict)
-        add_to_final_table(final_table, haplotype_dict, best_haplotype_scores, folder)
+        best_haplotype_score = get_most_likely_haplotype(tree, haplotype_dict)
+        add_to_final_table(final_table, haplotype_dict, best_haplotype_score, folder)
     write_final_table(final_table, output)
     print("--- Yleaf 'Y-Haplogroup prediction' finished... ---")
 
@@ -138,8 +137,7 @@ def get_most_likely_haplotype(tree, haplotype_dict, treshold=0.7):
 
     sorted_depth_haplotypes = sorted(haplotype_dict.keys(), key=lambda k: tree.get(k).depth, reverse=True)
     covered_node_scores = {}
-    scores = {}
-    tree_paths = {}
+    best_score = ["NA", 0, 0, 0, 0]
     for haplotype_name in sorted_depth_haplotypes:
         node = tree.get(haplotype_name)
         parent = node.parent
@@ -169,14 +167,13 @@ def get_most_likely_haplotype(tree, haplotype_dict, treshold=0.7):
         else:
             qc3_score = qc3_score[0] / qc3_score[1]
 
-        total_score = math.prod([qc1_score, qc2_score, qc3_score])
+        total_score = product([qc1_score, qc2_score, qc3_score])
 
         if node.name in covered_node_scores and total_score <= covered_node_scores[node.name]:
             continue
-        # only record these scores
-        if total_score > treshold:
-            scores[node.name] = [qc1_score, qc2_score, qc3_score]
-            tree_paths[node.name] = get_str_path(path)
+
+        if total_score > treshold and total_score > best_score[-1]:
+            best_score = [node.name, qc1_score, qc2_score, qc3_score, total_score]
 
         # make sure that less specific nodes with lower scores are not recorded
         for node_name in path:
@@ -186,7 +183,7 @@ def get_most_likely_haplotype(tree, haplotype_dict, treshold=0.7):
             else:
                 covered_node_scores[node_name] = total_score
 
-    return scores
+    return best_score
 
 
 def get_qc1_score(path, haplotype_dict):
@@ -240,9 +237,13 @@ def get_str_path(path):
 
 def add_to_final_table(final_table, haplotype_dict, best_haplotype_scores, folder):
     total_reads, valid_markers = process_log_file(folder / (folder.name + ".log"))
-    for hg, score_values in best_haplotype_scores.items():
-        final_table.append([folder.name, hg, ';'.join(haplotype_dict[hg].get_derived_markers()), total_reads,
-                            valid_markers, math.prod(score_values), *score_values])
+    hg, qc1, qc2, qc3, total = best_haplotype_scores
+    marker_list = list(haplotype_dict[hg].get_derived_markers())
+    # dont show all markers if too many
+    if len(marker_list) > 2:
+        marker_list = marker_list[:2] + ["etc."]
+    final_table.append([folder.name, hg, ';'.join(marker_list), total_reads,
+                        valid_markers, total, qc1, qc2, qc3])
 
 
 def process_log_file(log_file):
@@ -267,6 +268,13 @@ def write_final_table(final_table, out_file):
         f.write(header)
         for line in final_table:
             f.write('\t'.join(map(str, line)) + "\n")
+
+
+def product(values):
+    total = 1
+    for value in values:
+        total *= value
+    return total
 
 
 if __name__ == '__main__':
