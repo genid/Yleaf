@@ -438,7 +438,7 @@ def logo():
 
 def predict_haplogroup(source, path_file, output):
     script = source + "/predict_haplogroup.py"
-    cmd = "python {} -input {} -out {}".format(script, path_file, output)
+    cmd = "python {} -i {} -o {}".format(script, path_file, output)
     subprocess.call(cmd, shell=True)
 
 
