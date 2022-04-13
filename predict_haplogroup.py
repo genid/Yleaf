@@ -136,10 +136,14 @@ def read_derived_haplotype_dict(file):
 def get_most_likely_haplotype(tree, haplotype_dict, treshold=0.7):
 
     sorted_depth_haplotypes = sorted(haplotype_dict.keys(), key=lambda k: tree.get(k).depth, reverse=True)
-    covered_node_scores = {}
+    covered_nodes = set()
     best_score = ["NA", 0, 0, 0, 0]
     for haplotype_name in sorted_depth_haplotypes:
         node = tree.get(haplotype_name)
+
+        # only record most specific nodes regardless of scores
+        if node in covered_nodes:
+            continue
         parent = node.parent
         path = [node.name]
 
@@ -169,19 +173,13 @@ def get_most_likely_haplotype(tree, haplotype_dict, treshold=0.7):
 
         total_score = product([qc1_score, qc2_score, qc3_score])
 
-        if node.name in covered_node_scores and total_score <= covered_node_scores[node.name]:
-            continue
-
+        # filter on treshold and best score
         if total_score > treshold and total_score > best_score[-1]:
             best_score = [node.name, qc1_score, qc2_score, qc3_score, total_score]
 
-        # make sure that less specific nodes with lower scores are not recorded
+        # make sure that less specific nodes are not recorded
         for node_name in path:
-            if node_name in covered_node_scores:
-                if total_score > covered_node_scores[node_name]:
-                    covered_node_scores[node_name] = total_score
-            else:
-                covered_node_scores[node_name] = total_score
+            covered_nodes.add(node_name)
 
     return best_score
 
