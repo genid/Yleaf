@@ -1,44 +1,10 @@
-import json
 import argparse
 from pathlib import Path
+from tree import Tree, Node
 
 BACKBONE_GROUPS = set()
 MAIN_HAPLO_GROUPS = set()
 QC1_SCORE_CACHE = {}
-
-
-class Tree:
-    __ROOT_KEY = 'ROOT (Y-Chromosome "Adam")'
-
-    def __init__(self, file):
-        self.node_mapping = {}
-        self._construct_tree(file)
-
-    def _construct_tree(self, file):
-        with open(file) as f:
-            tree_dict = json.load(f)
-
-        # base has no parent
-        base_node = Node(self.__ROOT_KEY, None, 0)
-        self.node_mapping[self.__ROOT_KEY] = base_node
-        self._recursive_read(tree_dict, base_node, 0)
-
-    def _recursive_read(self, tree_dict, node, depth):
-        depth += 1
-        for node_name in tree_dict[node.name]:
-            new_node = Node(node_name, node, depth)
-            self.node_mapping[node_name] = new_node
-            self._recursive_read(tree_dict, new_node, depth)
-
-    def get(self, node_name):
-        return self.node_mapping[node_name]
-
-
-class Node:
-    def __init__(self, name, parent_node, depth):
-        self.name = name
-        self.parent = parent_node
-        self.depth = depth
 
 
 class HgMarkersLinker:
@@ -126,7 +92,7 @@ def read_derived_haplotype_dict(file):
     with open(file) as f:
         f.readline()
         for line in f:
-            _, _, marker, branch, _, _, _, _, _, _, state = line.strip().split("\t")
+            _, _, marker, branch, _, _, _, _, _, _, state, _ = line.strip().split("\t")
             if branch not in haplotype_dict:
                 haplotype_dict[branch] = HgMarkersLinker()
             haplotype_dict[branch].add(marker, state)
@@ -173,9 +139,10 @@ def get_most_likely_haplotype(tree, haplotype_dict, treshold=0.7):
 
         total_score = product([qc1_score, qc2_score, qc3_score])
 
-        # filter on treshold and best score
-        if total_score > treshold and total_score > best_score[-1]:
-            best_score = [node.name, qc1_score, qc2_score, qc3_score, total_score]
+        # if above filter we found the hit
+        if total_score > treshold:
+            best_score = [node.name, qc1_score, qc2_score, qc3_score, total_score, node.depth]
+            break
 
         # make sure that less specific nodes are not recorded
         for node_name in path:
@@ -235,7 +202,7 @@ def get_str_path(path):
 
 def add_to_final_table(final_table, haplotype_dict, best_haplotype_scores, folder):
     total_reads, valid_markers = process_log_file(folder / (folder.name + ".log"))
-    hg, qc1, qc2, qc3, total = best_haplotype_scores
+    hg, qc1, qc2, qc3, total, _ = best_haplotype_scores
     marker_list = list(haplotype_dict[hg].get_derived_markers())
     # dont show all markers if too many
     if len(marker_list) > 2:

@@ -18,6 +18,7 @@ import pandas as pd
 import numpy as np
 from argparse import ArgumentParser
 import gc
+from tree import Tree, Node
 
 pd.options.mode.chained_assignment = None  # default='warn'
 
@@ -358,7 +359,6 @@ def extract_haplogroups(path_markerfile, reads_thresh, base_majority,
     df_fmf = df_fmf[columns_fmf]
 
     df_out = df.drop(["bool_state"], axis=1)
-    df_out = df_out.sort_values(by=['haplogroup'], ascending=True)
 
     log_output_list.append("Markers with zero reads: " + str(len(df_belowzero)))
     log_output_list.append(
@@ -381,7 +381,27 @@ def extract_haplogroups(path_markerfile, reads_thresh, base_majority,
         ["chr", "pos", "marker_name", "haplogroup", "mutation", "anc", "der", "reads", "called_perc", "called_base",
          "state"]]
     df_fmf.to_csv(fmf_output, sep="\t", index=False)
-    df_out.to_csv(outputfile, sep="\t", index=False)
+
+    # sort based on the tree
+    lst_df = df_out.values.tolist()
+    mappable_df = {}
+    for lst in lst_df:
+        if lst[3] not in mappable_df:
+            mappable_df[lst[3]] = []
+        mappable_df[lst[3]].append(lst)
+
+    tree = Tree("Position_files/tree.json")
+    with open(outputfile, "w") as f:
+        f.write('\t'.join(["chr", "pos", "marker_name", "haplogroup", "mutation", "anc", "der", "reads",
+                           "called_perc", "called_base", "state", "tree_depth\n"]))
+        for node_key in tree.node_mapping:
+            if node_key not in mappable_df:
+                continue
+            depth = tree.get(node_key).depth
+            for lst in mappable_df[node_key]:
+                f.write('\t'.join(map(str, lst)) + f"\t{depth}\n")
+
+    #df_out.to_csv(outputfile, sep="\t", index=False)
 
 
 def samtools(threads, folder, folder_name, path_file, quality_thresh, markerfile, reference, flag, args, whole_time):
