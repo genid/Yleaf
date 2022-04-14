@@ -479,9 +479,13 @@ def main():
     args = get_arguments()
 
     if args.use_old and "new" in args.position:
-        print("WARNING: using the old prediction with new position files will give inaccurate predictions.")
+        print("ERROR: using the old prediction with new position files will give inaccurate predictions. Use files "
+              "without new in the name.")
+        sys.exit(-1)
     elif not args.use_old and "new" not in args.position:
-        print("WARNING: using the new prediction method with old position files will give inaccurate predictions.")
+        print("ERROR: using the new prediction method with old position files will give inaccurate predictions. Use"
+              " files with new in the name.")
+        sys.exit(-1)
 
     app_folder = os.path.dirname(os.path.realpath(__name__))
     out_path = args.Outputfile
