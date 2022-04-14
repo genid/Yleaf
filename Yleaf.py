@@ -408,8 +408,6 @@ def extract_haplogroups(path_markerfile, reads_thresh, base_majority,
             for lst in mappable_df[node_key]:
                 f.write('\t'.join(map(str, lst)) + f"\t{depth}\n")
 
-    #df_out.to_csv(outputfile, sep="\t", index=False)
-
 
 def samtools(threads, folder, folder_name, path_file, quality_thresh, markerfile, reference, flag, args, whole_time):
     file_name = folder_name
@@ -479,6 +477,11 @@ def main():
          \n\tphylogenetic analysis and haplogroup inference v{VERSION}\n""")
     logo()
     args = get_arguments()
+
+    if args.use_old and "new" in args.position:
+        print("WARNING: using the old prediction with new position files will give inaccurate predictions.")
+    elif not args.use_old and "new" not in args.position:
+        print("WARNING: using the new prediction method with old position files will give inaccurate predictions.")
 
     app_folder = os.path.dirname(os.path.realpath(__name__))
     out_path = args.Outputfile
