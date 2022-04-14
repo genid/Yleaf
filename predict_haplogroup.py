@@ -10,6 +10,7 @@ QC1_SCORE_CACHE = {}
 class HgMarkersLinker:
     DERIVED = "D"
     ANCESTRAL = "A"
+    UNDEFINED = "N"
 
     def __init__(self):
         self._ancestral_markers = set()
@@ -35,6 +36,13 @@ class HgMarkersLinker:
     @property
     def nr_ancestral(self):
         return len(self._ancestral_markers)
+
+    def get_state(self):
+        if self.nr_derived / self.nr_total >= 0.6:
+            return self.DERIVED
+        if self.nr_ancestral / self.nr_total >= 0.6:
+            return self.ANCESTRAL
+        return self.UNDEFINED
 
 
 def main():
@@ -103,7 +111,7 @@ def get_most_likely_haplotype(tree, haplotype_dict, treshold=0.7):
 
     sorted_depth_haplotypes = sorted(haplotype_dict.keys(), key=lambda k: tree.get(k).depth, reverse=True)
     covered_nodes = set()
-    best_score = ["NA", 0, 0, 0, 0]
+    best_score = ["NA", 0, 0, 0, 0, 0]
     for haplotype_name in sorted_depth_haplotypes:
         node = tree.get(haplotype_name)
 
@@ -122,8 +130,13 @@ def get_most_likely_haplotype(tree, haplotype_dict, treshold=0.7):
             # at least one of the snps is in derived state and in the same overal haplogroup
             if parent.name in haplotype_dict:
                 if parent.name[0] == node.name[0] and parent.name != node.name[0]:
-                    qc3_score[0] += haplotype_dict[parent.name].nr_derived
-                    qc3_score[1] += haplotype_dict[parent.name].nr_total
+                    state = haplotype_dict[parent.name].get_state()
+                    if state == HgMarkersLinker.DERIVED:
+                        qc3_score[0] += 1
+
+                    # in case it can not be decided what the state is ratio between 0.4 and  0.6
+                    if state != HgMarkersLinker.UNDEFINED:
+                        qc3_score[1] += 1
             parent = parent.parent
 
         qc1_score = get_qc1_score(path, haplotype_dict)

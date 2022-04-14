@@ -66,6 +66,11 @@ def get_arguments():
                         type=int,
                         default=2)
 
+    parser.add_argument("-old", "--use_old", dest="use_old",
+                        help="Add this value if you want to use the old prediction method of Yleaf (version 2.3). This"
+                             " version only uses the issog tree and slightly different prediction criteria.",
+                        action="store_true")
+
     args = parser.parse_args()
     return args
 
@@ -456,8 +461,11 @@ def logo():
         """)
 
 
-def predict_haplogroup(source, path_file, output):
-    script = source + "/predict_haplogroup.py"
+def predict_haplogroup(source, path_file, output, use_old):
+    if use_old:
+        script = source + "/old_predict_haplogroup.py"
+    else:
+        script = source + "/predict_haplogroup.py"
     cmd = "python {} -i {} -o {}".format(script, path_file, output)
     subprocess.call(cmd, shell=True)
 
@@ -506,7 +514,7 @@ def main():
                     cmd = "rm {}".format(sam_file)
                     subprocess.call(cmd, shell=True)
             hg_out = out_folder + "/" + hg_out
-            predict_haplogroup(source, out_folder, hg_out)
+            predict_haplogroup(source, out_folder, hg_out, args.use_old)
         elif args.Bamfile:
             files = check_if_folder(args.Bamfile, '.bam')
             for path_file in files:
