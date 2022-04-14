@@ -22,6 +22,8 @@ from tree import Tree, Node
 
 pd.options.mode.chained_assignment = None  # default='warn'
 
+VERSION = 3.0
+
 
 def get_arguments():
     parser = ArgumentParser()
@@ -473,8 +475,8 @@ def predict_haplogroup(source, path_file, output, use_old):
 def main():
     whole_time = time.time()
     print(
-        """\tErasmus MC Department of Genetic Identification \n\n\tYleaf: software tool for human Y-chromosomal
-         \n\tphylogenetic analysis and haplogroup inference v2.2\n""")
+        f"""\tErasmus MC Department of Genetic Identification \n\n\tYleaf: software tool for human Y-chromosomal
+         \n\tphylogenetic analysis and haplogroup inference v{VERSION}\n""")
     logo()
     args = get_arguments()
 
