@@ -18,7 +18,7 @@ import pandas as pd
 import numpy as np
 from argparse import ArgumentParser
 import gc
-from tree import Tree, Node
+from tree import Tree
 
 pd.options.mode.chained_assignment = None  # default='warn'
 
@@ -529,7 +529,7 @@ def main():
                     output_file = samtools(args.threads, folder, folder_name, bam_file, args.Quality_thresh,
                                            args.position, False, "bam", args, whole_time)
             hg_out = out_folder + "/" + hg_out
-            predict_haplogroup(source, out_folder, hg_out)
+            predict_haplogroup(source, out_folder, hg_out, args.use_old)
         elif args.Cramfile:
             if args.reference is None:
                 raise FileNotFoundError("-f missing reference")
@@ -544,7 +544,7 @@ def main():
                     output_file = samtools(args.threads, folder, folder_name, cram_file, args.Quality_thresh,
                                            args.position, args.reference, "cram", args, whole_time)
             hg_out = out_folder + "/" + hg_out
-            predict_haplogroup(source, out_folder, hg_out)
+            predict_haplogroup(source, out_folder, hg_out, args.use_old)
     else:
         print("--- Yleaf failed! please check inputs... ---")
 
