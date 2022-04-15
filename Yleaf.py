@@ -281,10 +281,16 @@ def extract_haplogroups(path_markerfile, reads_thresh, base_majority,
     markerfile.columns = ["chr", "marker_name", "haplogroup", "pos", "mutation", "anc", "der"]
     markerfile = markerfile.drop_duplicates(subset='pos', keep='first', inplace=False)
 
-    # made a change here to skip bad lines
-    pileupfile = pd.read_csv(path_pileupfile, header=None, sep="\t",
-                             dtype={0: str, 1: int, 2: str, 3: int, 4: str, 5: str},
-                             on_bad_lines='skip')
+    # packagemanagement is the best
+    try:
+        pileupfile = pd.read_csv(path_pileupfile, header=None, sep="\t",
+                                 dtype={0: str, 1: int, 2: str, 3: int, 4: str, 5: str},
+                                 on_bad_lines='skip')
+    except TypeError:
+        pileupfile = pd.read_csv(path_pileupfile, header=None, sep="\t",
+                                 dtype={0: str, 1: int, 2: str, 3: int, 4: str, 5: str},
+                                 error_bad_lines=False)
+
     pileupfile.columns = ['chr', 'pos', 'refbase', 'reads', 'align', 'quality']
 
     if flag == "cram":
