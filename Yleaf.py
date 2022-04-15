@@ -369,7 +369,8 @@ def extract_haplogroups(path_markerfile, reads_thresh, base_majority,
     df = df[df["called_perc"] >= base_majority]
 
     df_fmf = pd.concat([df_belowzero, df_readsthreshold, df_basemajority, df_discordantgenotype], axis=0, sort=True)
-    df_fmf = df_fmf[columns_fmf]
+    df_fmf = df_fmf[['chr', 'pos', 'marker_name', 'haplogroup', 'mutation', 'anc', 'der', 'reads',
+                     'called_perc', 'called_base', 'state', 'Description']]
 
     df_out = df.drop(["bool_state"], axis=1)
 
