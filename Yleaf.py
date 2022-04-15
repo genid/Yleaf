@@ -407,7 +407,7 @@ def extract_haplogroups(path_markerfile, reads_thresh, base_majority,
     tree = Tree("Position_files/tree.json")
     with open(outputfile, "w") as f:
         f.write('\t'.join(["chr", "pos", "marker_name", "haplogroup", "mutation", "anc", "der", "reads",
-                           "called_perc", "called_base", "state", "tree_depth\n"]))
+                           "called_perc", "called_base", "state", "depth\n"]))
         for node_key in tree.node_mapping:
             if node_key not in mappable_df:
                 continue
