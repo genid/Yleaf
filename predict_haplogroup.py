@@ -1,6 +1,6 @@
 import argparse
 from pathlib import Path
-from tree import Tree, Node
+from tree import Tree
 
 BACKBONE_GROUPS = set()
 MAIN_HAPLO_GROUPS = set()
@@ -38,6 +38,8 @@ class HgMarkersLinker:
         return len(self._ancestral_markers)
 
     def get_state(self):
+        # at least a fraction of 0.6 need to either derived or ancestral, otherwise the state can not be accurately
+        # determined
         if self.nr_derived / self.nr_total >= 0.6:
             return self.DERIVED
         if self.nr_ancestral / self.nr_total >= 0.6:
@@ -127,8 +129,8 @@ def get_most_likely_haplotype(tree, haplotype_dict, treshold=0.7):
         # walk the tree back
         while parent is not None:
             path.append(parent.name)
-            # at least one of the snps is in derived state and in the same overal haplogroup
             if parent.name in haplotype_dict:
+                # in the same overal haplogroup
                 if parent.name[0] == node.name[0] and parent.name != node.name[0]:
                     state = haplotype_dict[parent.name].get_state()
                     if state == HgMarkersLinker.DERIVED:
@@ -216,6 +218,10 @@ def get_str_path(path):
 def add_to_final_table(final_table, haplotype_dict, best_haplotype_scores, folder):
     total_reads, valid_markers = process_log_file(folder / (folder.name + ".log"))
     hg, qc1, qc2, qc3, total, _ = best_haplotype_scores
+    if hg == "NA":
+        final_table.append([folder.name, hg, "", total_reads,
+                            valid_markers, total, qc1, qc2, qc3])
+        return
     marker_list = list(haplotype_dict[hg].get_derived_markers())
     # dont show all markers if too many
     if len(marker_list) > 2:

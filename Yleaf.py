@@ -7,7 +7,7 @@
 # License: GNU General Public License v3 or later
 # A copy of GNU GPL v3 should have been included in this software package in LICENSE.txt.
 
-# Yleaf detection of Y-Haplogroups in Human DNA v2.2
+# Yleaf detection of Y-Haplogroups in Human DNA v3.0
 
 import os
 import sys
@@ -284,7 +284,7 @@ def extract_haplogroups(path_markerfile, reads_thresh, base_majority,
     # made a change here to skip bad lines
     pileupfile = pd.read_csv(path_pileupfile, header=None, sep="\t",
                              dtype={0: str, 1: int, 2: str, 3: int, 4: str, 5: str},
-                             error_bad_lines=False)
+                             on_bad_lines='skip')
     pileupfile.columns = ['chr', 'pos', 'refbase', 'reads', 'align', 'quality']
 
     if flag == "cram":
