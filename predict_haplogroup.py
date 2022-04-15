@@ -188,12 +188,12 @@ def get_qc1_score(path, haplotype_dict):
                 if line == "":
                     continue
                 name, state = line.strip().split("\t")
-                expected_states[name] = state
+                expected_states[name] = {state.split("/")}
 
     score = [0, 0]  # matching, total
     for name, marker_linker in intermediate_states.items():
-        expected_state = expected_states[name]
-        if expected_state == "A":
+        expected_possible_states = expected_states[name]
+        if "A" in expected_possible_states:
             score[0] += marker_linker.nr_ancestral
         else:
             score[0] += marker_linker.nr_derived

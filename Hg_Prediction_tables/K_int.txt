@@ -16,4 +16,9 @@ NO	A
 NO1	A
 LT	A
 K	D
+K~	D
+K2	A
 P	A
+P~	A
+P1	A
+P1~	A
