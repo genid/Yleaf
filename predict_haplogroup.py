@@ -84,8 +84,10 @@ def read_backbone_groups():
             BACKBONE_GROUPS.add(line.strip())
 
     # add capitals A-Z to get all groups
-    for nr in range(65, 85):
+    for nr in range(66, 85):
         MAIN_HAPLO_GROUPS.add(chr(nr))
+    MAIN_HAPLO_GROUPS.add("A0-T")
+    MAIN_HAPLO_GROUPS.add("A00")
 
 
 def read_input_folder(folder_name):
@@ -162,7 +164,6 @@ def get_most_likely_haplotype(tree, haplotype_dict, treshold=0.7):
         # make sure that less specific nodes are not recorded
         for node_name in path:
             covered_nodes.add(node_name)
-
     return best_score
 
 
@@ -193,11 +194,11 @@ def get_qc1_score(path, haplotype_dict):
     score = [0, 0]  # matching, total
     for name, marker_linker in intermediate_states.items():
         expected_possible_states = expected_states[name]
-        if "A" in expected_possible_states:
-            score[0] += marker_linker.nr_ancestral
-        else:
-            score[0] += marker_linker.nr_derived
-        score[1] += marker_linker.nr_total
+        state = marker_linker.get_state()
+        if state in expected_possible_states:
+            score[0] += 1
+        if state != HgMarkersLinker.UNDEFINED:
+            score[1] += 1
     if score[1] == 0:
         return 0
 
