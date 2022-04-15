@@ -188,7 +188,7 @@ def get_qc1_score(path, haplotype_dict):
                 if line == "":
                     continue
                 name, state = line.strip().split("\t")
-                expected_states[name] = {state.split("/")}
+                expected_states[name] = {*state.split("/")}
 
     score = [0, 0]  # matching, total
     for name, marker_linker in intermediate_states.items():
