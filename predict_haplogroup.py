@@ -55,6 +55,9 @@ def main():
     read_backbone_groups()
     final_table = []
     for folder in read_input_folder(in_folder):
+        # make sure to reset this for each sample
+        global QC1_SCORE_CACHE
+        QC1_SCORE_CACHE = {}
         haplotype_dict = read_derived_haplotype_dict(folder / (folder.name + ".out"))
         tree = Tree("Position_files/tree.json")
         best_haplotype_score = get_most_likely_haplotype(tree, haplotype_dict)
