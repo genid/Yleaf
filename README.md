@@ -60,7 +60,7 @@ python install.py
 ```
 ## Usage and examples
 
-In version 3.0 we switched to using YFull for the underlying tree structure of the haplogroups.
+In version 3.0 we switched to using YFull (v10.01) for the underlying tree structure of the haplogroups.
  This also means that predictions are a bit different compared to earlier versions.
 ### Yleaf: FASTQ (raw reads)
     
