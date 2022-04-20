@@ -118,7 +118,7 @@ def get_most_likely_haplotype(tree, haplotype_dict, treshold=0.7):
 
     sorted_depth_haplotypes = sorted(haplotype_dict.keys(), key=lambda k: tree.get(k).depth, reverse=True)
     covered_nodes = set()
-    best_score = ["NA", 0, 0, 0, 0, 0]
+    best_score = ["NA", "NA", 0, 0, 0, 0, 0]
     for haplotype_name in sorted_depth_haplotypes:
         node = tree.get(haplotype_name)
 
@@ -163,7 +163,7 @@ def get_most_likely_haplotype(tree, haplotype_dict, treshold=0.7):
         if total_score > treshold:
             ancestral_children = get_ancestral_children(node, haplotype_dict)
             ancestral_string = ','.join([f'x{name}' for name in ancestral_children])
-            best_score = [f"{node.name}({ancestral_string}", qc1_score, qc2_score, qc3_score, total_score, node.depth]
+            best_score = [node.name, ancestral_string, qc1_score, qc2_score, qc3_score, total_score, node.depth]
             break
 
         # make sure that less specific nodes are not recorded
@@ -233,7 +233,7 @@ def get_ancestral_children(node, haplotype_dict):
 
 def add_to_final_table(final_table, haplotype_dict, best_haplotype_scores, folder):
     total_reads, valid_markers = process_log_file(folder / (folder.name + ".log"))
-    hg, qc1, qc2, qc3, total, _ = best_haplotype_scores
+    hg, ancestral_children, qc1, qc2, qc3, total, _ = best_haplotype_scores
     if hg == "NA":
         final_table.append([folder.name, hg, "", total_reads,
                             valid_markers, total, qc1, qc2, qc3])
@@ -242,8 +242,12 @@ def add_to_final_table(final_table, haplotype_dict, best_haplotype_scores, folde
     # dont show all markers if too many
     if len(marker_list) > 2:
         marker_list = marker_list[:2] + ["etc."]
-    final_table.append([folder.name, hg, ';'.join(marker_list), total_reads,
-                        valid_markers, total, qc1, qc2, qc3])
+    if len(ancestral_children) > 0:
+        final_table.append([folder.name, f"{hg}({ancestral_children})", ';'.join(marker_list), total_reads,
+                            valid_markers, total, qc1, qc2, qc3])
+    else:
+        final_table.append([folder.name, hg, ';'.join(marker_list), total_reads,
+                            valid_markers, total, qc1, qc2, qc3])
 
 
 def process_log_file(log_file):
