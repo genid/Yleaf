@@ -14,45 +14,75 @@
 
 ## Installation
 
-1. Install dependencies, you can skip this step if these packages are already installed on your system
-            
-            apt-get install python3.6            
-            pip3 install pandas --upgrade
-            pip3 install numpy  --upgrade            
-            apt-get install bwa            
-            
+You can either build a conda environment with all dependencies
 
-	SAMtools: We recommend the newests versions of SAMtools (e.g. > 1.4.1)
+```bash
+# create the conda environment
+conda create --name yleaf_env python=3.6
+# activat the environment
+conda activate yleaf_env
+# install required python libraries
+conda install pandas
+conda install numpy
+# install Burrows-Wheeler Aligner for fastQ files
+conda install -c bioconda bwa
+# install SAMtools
+conda install -c bioconda samtools
+# clone the yleaf repository
+git clone https://github.com/genid/Yleaf.git
 
-            1. wget https://github.com/samtools/samtools/releases/download/1.4.1/samtools-1.4.1.tar.bz2 -O samtools.tar.bz2
-            2. tar -xjvf samtools.tar.bz2 
-            3. cd samtools-1.4.1/
-            4. ./configure
-            5. make
-            6. make install
+# finally if you want to use FASTQ files use the provided install.py
+script to download required genome data
+cd Yleaf
+python install.py
+```      
+or manually install everything
+```bash
+# install python and libraries
+apt-get install python3.6
+pip3 install pandas
+pip3 install numpy
+# install Burrows-Wheeler Aligner for FASTQ files
+sudo apt-get install bwa
+# install SAMtools
+wget https://github.com/samtools/samtools/releases/download/1.4.1/
+samtools-1.4.1.tar.bz2 -O samtools.tar.bz2
+tar -xjvf samtools.tar.bz2 3. cd samtools-1.4.1/
+./configure 5. make
+make install
+# clone the yleaf repository
+git clone https://github.com/genid/Yleaf.git
 
+# finally if you want to use FASTQ files use the provided install.py
+script to download required genome data
+cd Yleaf
+python install.py
+```
 ## Usage and examples
 
+In version 3.0 we switched to using YFull for the underlying tree structure of the haplogroups.
+ This also means that predictions are a bit different compared to earlier versions.
 ### Yleaf: FASTQ (raw reads)
     
-    python Yleaf.py -fastq raw_reads.fastq -f reference_indexed/genome.fasta -pos Position_files/[hg19.txt/hg38.txt] -out out -r 1 -q 20 -b 90 -t 4
+    python Yleaf.py -fastq raw_reads.fastq -f reference_indexed/genome.fasta -pos Position_files/new_position_files/[hg19.txt/hg38.txt] -out out -r 1 -q 20 -b 90 -t 4
         
 ### Yleaf: BAM or CRAM format
     
-    python Yleaf.py -bam file.bam -pos Position_files/[hg19.txt/hg38.txt] -out out -r 1 -q 20 -b 90 
+    python Yleaf.py -bam file.bam -pos Position_files/new_position_files/[hg19.txt/hg38.txt] -out out -r 1 -q 20 -b 90 
 
-    python Yleaf.py -cram file.cram -pos Position_files/[hg19.txt/hg38.txt] -out out -r 1 -q 20 -b 90  -f genome.fasta
+    python Yleaf.py -cram file.cram -pos Position_files/new_position_files/[hg19.txt/hg38.txt] -out out -r 1 -q 20 -b 90  -f genome.fasta
 
 ### Haplogroup prediction (w/output generated from Yleaf)
 
     python predict_haplogroup.py -input Output_files/ -out output.hg
 
-3. See complete manual at the website:
-    https://www.erasmusmc.nl/genetic_identification/resources/
+## Additional information
 
-4. Bug report
+For a more comprehensive manual please have a look at the [yleaf_manual](yleaf_manual.pdf).
 
-Please send an email at d.montielgonzalez@erasmusmc.nl if there is a problem getting the software up and running.
+If you have a bug to report or a question about installation consider sending an email to 
+ b.vanwersch at erasmusmc.nl or create an issue on GitHub.
+
 
 ### References and Supporting Information
 A. Ralf, et al., Yleaf: software for human Y-chromosomal haplogroup inference from next generation sequencing data (2018).
