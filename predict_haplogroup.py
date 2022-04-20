@@ -242,7 +242,8 @@ def add_to_final_table(final_table, haplotype_dict, best_haplotype_scores, folde
     if len(marker_list) > 2:
         marker_list = marker_list[:2] + ["etc."]
     if len(ancestral_children) > 0:
-        ancestral_string = "x" + ','.join([f'{name.split("-")[1]}' for name in ancestral_children])
+        ancestral_string = "x" + ','.join([f'{name.split("-")[1] if "-" in name else name}'
+                                           for name in ancestral_children])
         final_table.append([folder.name, f"{hg}*({ancestral_string})", ';'.join(marker_list), total_reads,
                             valid_markers, total, qc1, qc2, qc3])
     else:
