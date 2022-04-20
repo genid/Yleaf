@@ -14,14 +14,17 @@ class Tree:
             tree_dict = json.load(f)
 
         # base has no parent
-        base_node = Node(self.__ROOT_KEY, None, 0)
+        base_node = Node(self.__ROOT_KEY, None, 0, ["A00", "A0-T"])
         self.node_mapping[self.__ROOT_KEY] = base_node
         self._recursive_read(tree_dict, base_node, 0)
 
     def _recursive_read(self, tree_dict, node, depth):
         depth += 1
         for node_name in tree_dict[node.name]:
-            new_node = Node(node_name, node, depth)
+            children = []
+            if node_name in tree_dict:
+                children = tree_dict[node_name]
+            new_node = Node(node_name, node, depth, children)
             self.node_mapping[node_name] = new_node
             self._recursive_read(tree_dict, new_node, depth)
 
@@ -30,7 +33,8 @@ class Tree:
 
 
 class Node:
-    def __init__(self, name, parent_node, depth):
+    def __init__(self, name, parent_node, depth, children):
         self.name = name
         self.parent = parent_node
         self.depth = depth
+        self.children = children

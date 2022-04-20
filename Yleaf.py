@@ -404,7 +404,7 @@ def extract_haplogroups(path_markerfile, reads_thresh, base_majority,
             mappable_df[lst[3]] = []
         mappable_df[lst[3]].append(lst)
 
-    tree = Tree("Position_files/tree.json")
+    tree = Tree("Hg_Prediction_tables/tree.json")
     with open(outputfile, "w") as f:
         f.write('\t'.join(["chr", "pos", "marker_name", "haplogroup", "mutation", "anc", "der", "reads",
                            "called_perc", "called_base", "state", "depth\n"]))

@@ -59,7 +59,7 @@ def main():
         global QC1_SCORE_CACHE
         QC1_SCORE_CACHE = {}
         haplotype_dict = read_derived_haplotype_dict(folder / (folder.name + ".out"))
-        tree = Tree("Position_files/tree.json")
+        tree = Tree("Hg_Prediction_tables/tree.json")
         best_haplotype_score = get_most_likely_haplotype(tree, haplotype_dict)
         add_to_final_table(final_table, haplotype_dict, best_haplotype_score, folder)
     write_final_table(final_table, output)
@@ -161,7 +161,9 @@ def get_most_likely_haplotype(tree, haplotype_dict, treshold=0.7):
 
         # if above filter we found the hit
         if total_score > treshold:
-            best_score = [node.name, qc1_score, qc2_score, qc3_score, total_score, node.depth]
+            ancestral_children = get_ancestral_children(node, haplotype_dict)
+            ancestral_string = ','.join([f'x{name}' for name in ancestral_children])
+            best_score = [f"{node.name}({ancestral_string}", qc1_score, qc2_score, qc3_score, total_score, node.depth]
             break
 
         # make sure that less specific nodes are not recorded
@@ -217,6 +219,16 @@ def get_str_path(path):
         str_path = f"->{value}" + str_path
     str_path = "ROOT" + str_path
     return str_path
+
+
+def get_ancestral_children(node, haplotype_dict):
+    ancestral_children = []
+    for name in node.children:
+        if name in haplotype_dict:
+            state = haplotype_dict[name].get_state()
+            if state == HgMarkersLinker.ANCESTRAL:
+                ancestral_children.append(name)
+    return ancestral_children
 
 
 def add_to_final_table(final_table, haplotype_dict, best_haplotype_scores, folder):
