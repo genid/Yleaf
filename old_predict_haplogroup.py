@@ -1,13 +1,15 @@
 #!/usr/bin/env python
 
-# Copyright (C) 2018-2019 Diego Montiel Gonzalez
-# Erasmus Medical Center
-# Department of Genetic Identification
-#
-# License: GNU General Public License v3 or later
-# A copy of GNU GPL v3 should have been included in this software package in LICENSE.txt.
+"""
+Script for Haplogroup prediction
 
-# Script for Haplogroup prediction
+Developed at Erasmus Medical Center Department of Genetic Identification
+
+License: GNU General Public License v3 or later
+A copy of GNU GPL v3 should have been included in this software package in LICENSE.txt.
+
+Autor: Diego Montiel Gonzalez
+"""
 
 import pandas as pd
 import numpy as np

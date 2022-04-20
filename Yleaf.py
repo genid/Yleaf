@@ -1,13 +1,16 @@
 #!/usr/bin/env python
 
-# Copyright (C) 2018-2020 Diego Montiel Gonzalez
-# Erasmus Medical Center
-# Department of Genetic Identification
-#
-# License: GNU General Public License v3 or later
-# A copy of GNU GPL v3 should have been included in this software package in LICENSE.txt.
+"""
+Yleaf detection of Y-Haplogroups in Human DNA v3.0
 
-# Yleaf detection of Y-Haplogroups in Human DNA v3.0
+Developed at Erasmus Medical Center Department of Genetic Identification
+
+License: GNU General Public License v3 or later
+A copy of GNU GPL v3 should have been included in this software package in LICENSE.txt.
+
+Autor: Diego Montiel Gonzalez
+Slightly modified by: Bram van Wersch
+"""
 
 import os
 import sys
