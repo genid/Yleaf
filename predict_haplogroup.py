@@ -162,8 +162,7 @@ def get_most_likely_haplotype(tree, haplotype_dict, treshold=0.7):
         # if above filter we found the hit
         if total_score > treshold:
             ancestral_children = get_ancestral_children(node, haplotype_dict)
-            ancestral_string = ','.join([f'x{name}' for name in ancestral_children])
-            best_score = [node.name, ancestral_string, qc1_score, qc2_score, qc3_score, total_score, node.depth]
+            best_score = [node.name, ancestral_children, qc1_score, qc2_score, qc3_score, total_score, node.depth]
             break
 
         # make sure that less specific nodes are not recorded
@@ -243,7 +242,8 @@ def add_to_final_table(final_table, haplotype_dict, best_haplotype_scores, folde
     if len(marker_list) > 2:
         marker_list = marker_list[:2] + ["etc."]
     if len(ancestral_children) > 0:
-        final_table.append([folder.name, f"{hg}({ancestral_children})", ';'.join(marker_list), total_reads,
+        ancestral_string = "x" + ','.join([f'{name.split("-")[1]}' for name in ancestral_children])
+        final_table.append([folder.name, f"{hg}*({ancestral_string})", ';'.join(marker_list), total_reads,
                             valid_markers, total, qc1, qc2, qc3])
     else:
         final_table.append([folder.name, hg, ';'.join(marker_list), total_reads,
