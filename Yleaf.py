@@ -185,14 +185,21 @@ def find_all(c, s):
     return [x for x in range(c.find(s), len(c)) if c[x] == s]
 
 
-def execute_mpileup(header, bam_file, pileupfile, quality_thresh, folder, reference):
-    if reference:
-        cmd = "samtools mpileup -f {} -AQ{} -r {} {} > {}".format(reference,
-                                                                  quality_thresh, header, bam_file, pileupfile)
+def check_bed(bed, markerfile, header):
+    if not os.path.isfile(bed):
+        mf = pd.read_csv(markerfile, sep="\t", header=None)
+        mf = mf[[0, 3]]
+        mf[0] = header
 
+        mf.to_csv(bed, sep="\t", index=False, header=False)
+
+
+def execute_mpileup(bed, header, bam_file, pileupfile, quality_thresh, folder, reference):
+
+    if reference:
+        cmd = "samtools mpileup -l {} -f {} -AQ{} {} > {}".format(bed, reference, quality_thresh, bam_file, pileupfile)
     else:
-        cmd = "samtools mpileup -AQ{} -r {} {} > {}".format(quality_thresh,
-                                                            header, bam_file, pileupfile)
+        cmd = "samtools mpileup -l {} -AQ{} {} > {}".format(bed, quality_thresh, bam_file, pileupfile)
     subprocess.call(cmd, shell=True)
 
 
@@ -205,6 +212,9 @@ def chromosome_table(path_file, path_folder, file_name):
     df_chromosome = pd.read_table(tmp_output, header=None)
 
     total_reads = sum(df_chromosome[2])
+
+    unmapped = df_chromosome[df_chromosome[0].str.contains("Y")][3].values[0]
+
     df_chromosome["perc"] = (df_chromosome[2] / total_reads) * 100
     df_chromosome = df_chromosome.round(decimals=2)
     df_chromosome['perc'] = df_chromosome['perc'].astype(str) + '%'
@@ -216,9 +226,9 @@ def chromosome_table(path_file, path_folder, file_name):
     subprocess.call(cmd, shell=True)
 
     if 'Y' in df_chromosome["chr"].values:
-        return "Y", total_reads
+        return "Y", total_reads, unmapped
     elif 'chrY' in df_chromosome["chr"].values:
-        return "chrY", total_reads
+        return "chrY", total_reads, unmapped
 
 
 def check_if_folder(path, ext):
@@ -262,18 +272,6 @@ def create_tmp_dirs(folder):
 
 
 def replace_with_bases(base, read_result):
-    """
-    Parameters
-    ----------
-    base : string
-        single character from the ref base ACGT.
-    read_result : string
-        line from the pileup read_result with commas and periods (,..).
-    Returns
-    -------
-    replace commas and periods from results using the ref base
-        DESCRIPTION.
-    """
     if re.search("^[ACTG]", base):
         return read_result.replace(",", base[0]).replace(".", base[0])
     else:
@@ -281,7 +279,7 @@ def replace_with_bases(base, read_result):
 
 
 def extract_haplogroups(path_markerfile, reads_thresh, base_majority,
-                        path_pileupfile, fmf_output, outputfile, flag, use_old):
+                        path_pileupfile, fmf_output, outputfile, flag, use_old, mapped, unmapped):
     print("Extracting haplogroups...")
     markerfile = pd.read_csv(path_markerfile, header=None, sep="\t")
     markerfile.columns = ["chr", "marker_name", "haplogroup", "pos", "mutation", "anc", "der"]
@@ -305,7 +303,8 @@ def extract_haplogroups(path_markerfile, reads_thresh, base_majority,
         new_read_results = list(map(replace_with_bases, ref_base, read_results))
         pileupfile["align"] = new_read_results
 
-    LOG_LIST.append("Total of reads: " + str(len(pileupfile)))
+    LOG_LIST.append("Total of mapped reads: " + str(mapped))
+    LOG_LIST.append("Total of unmapped reads: " + str(unmapped))
 
     intersect_pos = np.intersect1d(pileupfile['pos'], markerfile['pos'])
     markerfile = markerfile.loc[markerfile['pos'].isin(intersect_pos)]
@@ -361,7 +360,6 @@ def extract_haplogroups(path_markerfile, reads_thresh, base_majority,
     df_discordantgenotype = df_discordantgenotype.drop(["bool_state"], axis=1)
     df_discordantgenotype["state"] = "NA"
     df_discordantgenotype["Description"] = "Discordant genotype"
-    columns_fmf = df_discordantgenotype.columns
     df = df[bool_list_state]
 
     # read threshold
@@ -445,16 +443,20 @@ def samtools(threads, folder, folder_name, path_file, quality_thresh, markerfile
             print(cmd)
             subprocess.call(cmd, shell=True)
 
-    header, total_reads = chromosome_table(path_file, folder, file_name)
+    header, mapped, unmapped = chromosome_table(path_file, folder, file_name)
 
-    execute_mpileup(header, path_file, pileupfile, quality_thresh, folder, reference)
+    index = markerfile.rfind('.')
+    bed = markerfile[:index] + ".bed"
+    check_bed(bed, markerfile, header)
+
+    execute_mpileup(bed, header, path_file, pileupfile, quality_thresh, folder, reference)
     print("--- %.2f seconds in run PileUp ---" % (time.time() - start_time))
 
     start_time = time.time()
     extract_haplogroups(markerfile, args.Reads_thresh, args.Base_majority,
-                        pileupfile, fmf_output, outputfile, flag, use_old)
+                        pileupfile, fmf_output, outputfile, flag, use_old, mapped, unmapped)
 
-    cmd = "rm {};".format(pileupfile)
+    cmd = "rm {} {};".format(pileupfile, bed)
     subprocess.call(cmd, shell=True)
 
     print("--- %.2f seconds in extracting haplogroups --- " % (time.time() - start_time))
@@ -514,7 +516,7 @@ def main():
     out_folder = out_path
     hg_out = "hg_prediction.hg"
     folder = None
-    folder_name  = None
+    folder_name = None
     if create_tmp_dirs(out_folder):
         if args.Fastq:
             files = check_if_folder(args.Fastq, '.fastq')
@@ -580,7 +582,6 @@ def main():
             predict_haplogroup(source, out_folder, hg_out, args.use_old)
     else:
         print("--- Yleaf failed! please check inputs... ---")
-        return
 
 
 if __name__ == "__main__":

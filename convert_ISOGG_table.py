@@ -1,3 +1,16 @@
+#!/usr/bin/env python
+
+"""
+Script for transforming the ISOGG csv table into tables that can be used by Yleaf
+
+Developed at Erasmus Medical Center Department of Genetic Identification
+
+License: GNU General Public License v3 or later
+A copy of GNU GPL v3 should have been included in this software package in LICENSE.txt.
+
+Autor: Bram van Wersch
+"""
+
 import argparse
 from typing import List, Tuple
 

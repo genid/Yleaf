@@ -87,5 +87,5 @@ If you have a bug to report or a question about installation consider sending an
 ### References and Supporting Information
 A. Ralf, et al., Yleaf: software for human Y-chromosomal haplogroup inference from next generation sequencing data (2018).
 
-https://academic.oup.com/mbe/article/35/7/1820/4993044
+https://academic.oup.com/mbe/article/35/5/1291/4922696
 
