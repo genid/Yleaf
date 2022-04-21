@@ -73,7 +73,7 @@ def get_arguments():
 
     parser.add_argument("-old", "--use_old", dest="use_old",
                         help="Add this value if you want to use the old prediction method of Yleaf (version 2.3). This"
-                             " version only uses the issog tree and slightly different prediction criteria.",
+                             " version only uses the ISOGG tree and slightly different prediction criteria.",
                         action="store_true")
 
     args = parser.parse_args()
@@ -278,7 +278,7 @@ def replace_with_bases(base, read_result):
 
 
 def extract_haplogroups(path_markerfile, reads_thresh, base_majority,
-                        path_pileupfile, log_output, fmf_output, outputfile, flag):
+                        path_pileupfile, log_output, fmf_output, outputfile, flag, use_old):
     print("Extracting haplogroups...")
     markerfile = pd.read_csv(path_markerfile, header=None, sep="\t")
     markerfile.columns = ["chr", "marker_name", "haplogroup", "pos", "mutation", "anc", "der"]
@@ -391,6 +391,15 @@ def extract_haplogroups(path_markerfile, reads_thresh, base_majority,
             log.write(marker)
             log.write("\n")
 
+    if use_old:
+        df_out = df_out.sort_values(by=['haplogroup'], ascending=True)
+        df_out = df_out[
+            ["chr", "pos", "marker_name", "haplogroup", "mutation", "anc", "der", "reads", "called_perc", "called_base",
+             "state"]]
+        df_fmf.to_csv(fmf_output, sep="\t", index=False)
+        df_out.to_csv(outputfile, sep="\t", index=False)
+        return
+
     del [[df_basemajority, df_belowzero, df_discordantgenotype, df_readsthreshold, df_freq_table, df]]
     gc.collect()
 
@@ -419,7 +428,8 @@ def extract_haplogroups(path_markerfile, reads_thresh, base_majority,
                 f.write('\t'.join(map(str, lst)) + f"\t{depth}\n")
 
 
-def samtools(threads, folder, folder_name, path_file, quality_thresh, markerfile, reference, flag, args, whole_time):
+def samtools(threads, folder, folder_name, path_file, quality_thresh, markerfile, reference, flag, args, whole_time,
+             use_old):
     file_name = folder_name
     outputfile = folder + "/" + folder_name + ".out"
     log_output = folder + "/" + folder_name + ".log"
@@ -445,7 +455,7 @@ def samtools(threads, folder, folder_name, path_file, quality_thresh, markerfile
 
     start_time = time.time()
     extract_haplogroups(markerfile, args.Reads_thresh, args.Base_majority,
-                        pileupfile, log_output, fmf_output, outputfile, flag)
+                        pileupfile, log_output, fmf_output, outputfile, flag, use_old)
 
     cmd = "rm {};".format(pileupfile)
     subprocess.call(cmd, shell=True)
@@ -529,7 +539,7 @@ def main():
                     cmd = "samtools index -@ {} {}".format(args.threads, bam_file)
                     subprocess.call(cmd, shell=True)
                     output_file = samtools(args.threads, folder, folder_name, bam_file, args.Quality_thresh,
-                                           args.position, False, "bam", args, whole_time)
+                                           args.position, False, "bam", args, whole_time, args.use_old)
                     cmd = "rm {}".format(sam_file)
                     subprocess.call(cmd, shell=True)
             hg_out = out_folder + "/" + hg_out
@@ -544,7 +554,7 @@ def main():
                 folder = os.path.join(app_folder, out_folder, folder_name)
                 if create_tmp_dirs(folder):
                     output_file = samtools(args.threads, folder, folder_name, bam_file, args.Quality_thresh,
-                                           args.position, False, "bam", args, whole_time)
+                                           args.position, False, "bam", args, whole_time, args.use_old)
             hg_out = out_folder + "/" + hg_out
             predict_haplogroup(source, out_folder, hg_out, args.use_old)
         elif args.Cramfile:
@@ -559,7 +569,7 @@ def main():
                 folder = os.path.join(app_folder, out_folder, folder_name)
                 if create_tmp_dirs(folder):
                     output_file = samtools(args.threads, folder, folder_name, cram_file, args.Quality_thresh,
-                                           args.position, args.reference, "cram", args, whole_time)
+                                           args.position, args.reference, "cram", args, whole_time, args.use_old)
             hg_out = out_folder + "/" + hg_out
             predict_haplogroup(source, out_folder, hg_out, args.use_old)
     else:
