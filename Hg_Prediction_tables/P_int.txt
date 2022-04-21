@@ -19,3 +19,6 @@ K	D
 K~	D
 K2	D
 P	D
+P~	A
+P1	A
+P1~	A
