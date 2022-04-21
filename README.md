@@ -47,7 +47,8 @@ sudo apt-get install bwa
 # install SAMtools
 wget https://github.com/samtools/samtools/releases/download/1.4.1/
 samtools-1.4.1.tar.bz2 -O samtools.tar.bz2
-tar -xjvf samtools.tar.bz2 3. cd samtools-1.4.1/
+tar -xjvf samtools.tar.bz2 3. 
+cd samtools-1.4.1/
 ./configure 5. make
 make install
 # clone the yleaf repository
