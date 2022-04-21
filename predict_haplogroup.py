@@ -13,8 +13,8 @@ Autor: Bram van Wersch
 
 import argparse
 from pathlib import Path
-from tree import Tree
-from typing import Set, Dict, Iterator, List, Any, Union
+from tree import Tree, Node
+from typing import Set, Dict, Iterator, List, Any, Union, Tuple
 
 BACKBONE_GROUPS: Set = set()
 MAIN_HAPLO_GROUPS: Set = set()
@@ -154,9 +154,9 @@ def get_most_likely_haplotype(
     tree: Tree,
     haplotype_dict: Dict[str, HgMarkersLinker],
     treshold: float
-) -> List[Any]:
+) -> Tuple[str, str, int, int, int, int, int]:
     """Get the most specific haplogroup with a score above the treshold. The score is build up from 3 parts:
-    part 1: This score indicates whether the predicted haplogroup follows the
+    QC1: This score indicates whether the predicted haplogroup follows the
         expected backbone of the haplogroup tree structure (i.e. if haplogroup E
         is predicted the markers defining: A0-T, A1, A1b, BT, CT, DE should be
         in the derived state, while other intermediate markers like: CF, F, GHIJK,
@@ -165,7 +165,7 @@ def get_most_likely_haplotype(
         of all intermediate markers. A score of 1 shows that all markers are in the
         expected state and indicates high confidence if the prediction of the correct
         broad haplogroup.
-    part 2: This score indicates whether equivalent markers to the final haplogroup
+    QC2: This score indicates whether equivalent markers to the final haplogroup
         prediction were found in the ancestral state. I.e. if the final
         haplogroup is R1b1a1a2a2, there are two markers in the assay defining
         this haplogroup: Z2103 and Z2105, if both are found to be derived the
@@ -173,7 +173,7 @@ def get_most_likely_haplotype(
         the ancestral state the QC2 value will be calculated as number of derived
         equivalent markers divided by the total number of equivalent markers, in
         this example the part 2 score value would be 0.5.
-    part 3: This score indicates whether the predicted haplogroup follows the
+    QC3: This score indicates whether the predicted haplogroup follows the
         expected within-haplogroup tree structure. I.e. if the predicted haplogroup
         is O2a1c (O-JST002611), it is expected that markers defining:
         O2a1, O2a, O2 and O are also in the derived state. A score of 1 shows
@@ -181,11 +181,11 @@ def get_most_likely_haplotype(
         in the haplogroup prediction.
 
     First all possible haplogroups are sorted based on the depth in the tree. This is the order haplogroup scores will
-    be calculated to determine if they are above the treshold.
+    be calculated to determine if they are above the treshold. As soon as the treshold is reached the function returns.
     """
     sorted_depth_haplotypes = sorted(haplotype_dict.keys(), key=lambda k: tree.get(k).depth, reverse=True)
     covered_nodes = set()
-    best_score = ["NA", "NA", 0, 0, 0, 0, 0]
+    best_score = ("NA", "NA", 0, 0, 0, 0, 0)
     for haplotype_name in sorted_depth_haplotypes:
         node = tree.get(haplotype_name)
 
@@ -208,12 +208,13 @@ def get_most_likely_haplotype(
                     if state == HgMarkersLinker.DERIVED:
                         qc3_score[0] += 1
 
-                    # in case it can not be decided what the state is ratio between 0.4 and  0.6
+                    # in case it can not be decided what the state is ratio between 0.4 and 0.6
                     if state != HgMarkersLinker.UNDEFINED:
                         qc3_score[1] += 1
             parent = parent.parent
 
         qc1_score = get_qc1_score(path, haplotype_dict)
+        # if any of the scores are below treshold, the total can not be above so ignore
         if qc1_score < treshold:
             continue
 
@@ -235,7 +236,7 @@ def get_most_likely_haplotype(
         # if above filter we found the hit
         if total_score > treshold:
             ancestral_children = get_ancestral_children(node, haplotype_dict)
-            best_score = [node.name, ancestral_children, qc1_score, qc2_score, qc3_score, total_score, node.depth]
+            best_score = (node.name, ancestral_children, qc1_score, qc2_score, qc3_score, total_score, node.depth)
             break
 
         # make sure that less specific nodes are not recorded
@@ -244,7 +245,11 @@ def get_most_likely_haplotype(
     return best_score
 
 
-def get_qc1_score(path, haplotype_dict):
+def get_qc1_score(
+    path: List[str],
+    haplotype_dict: Dict[str, HgMarkersLinker]
+) -> float:
+    """Get the first quality score as described in the get_most_likely_haplotype function"""
     most_specific_backbone = None
     intermediate_states = {value: haplotype_dict[value] for value in BACKBONE_GROUPS if value in haplotype_dict}
     for value in path:
@@ -285,15 +290,11 @@ def get_qc1_score(path, haplotype_dict):
     return qc1_score
 
 
-def get_str_path(path):
-    str_path = ""
-    for value in path[:-1]:
-        str_path = f"->{value}" + str_path
-    str_path = "ROOT" + str_path
-    return str_path
-
-
-def get_ancestral_children(node, haplotype_dict):
+def get_ancestral_children(
+    node: Node,
+    haplotype_dict: Dict[str, HgMarkersLinker]
+) -> List[str]:
+    """Get the names of all the child nodes of a node that have more than 60% ancestral markers"""
     ancestral_children = []
     for name in node.children:
         if name in haplotype_dict:
@@ -303,7 +304,13 @@ def get_ancestral_children(node, haplotype_dict):
     return ancestral_children
 
 
-def add_to_final_table(final_table, haplotype_dict, best_haplotype_scores, folder):
+def add_to_final_table(
+    final_table: List[List[Any]],
+    haplotype_dict: Dict[str, HgMarkersLinker],
+    best_haplotype_scores: Tuple[str, str, int, int, int, int, int],
+    folder: Path
+):
+    """Add the score to the final table and some additional information from the log file generated by Yleaf"""
     total_reads, valid_markers = process_log_file(folder / (folder.name + ".log"))
     hg, ancestral_children, qc1, qc2, qc3, total, _ = best_haplotype_scores
     if hg == "NA":
@@ -324,20 +331,30 @@ def add_to_final_table(final_table, haplotype_dict, best_haplotype_scores, folde
                             valid_markers, total, qc1, qc2, qc3])
 
 
-def process_log_file(log_file):
-    total_reads = None
-    valid_markers = None
+def process_log_file(
+    log_file: Path
+) -> Tuple[Union[int, str], Union[int, str]]:
+    """Read the log file produced by Yleaf for some additional information in the output"""
+    total_reads = "NA"
+    valid_markers = "NA"
 
-    with open(log_file) as f:
-        for line in f:
-            if line.startswith("Total of reads"):
-                total_reads = int(line.replace("Total of reads:", "").strip())
-            elif line.startswith("Markers with haplogroup information"):
-                valid_markers = int(line.replace("Markers with haplogroup information:", "").strip())
+    try:
+        with open(log_file) as f:
+            for line in f:
+                if line.startswith("Total of reads"):
+                    total_reads = int(line.replace("Total of reads:", "").strip())
+                elif line.startswith("Markers with haplogroup information"):
+                    valid_markers = int(line.replace("Markers with haplogroup information:", "").strip())
+    except FileNotFoundError:
+        print("WARNING: failed to find .log file from yleaf run. This information is not critical but there will be"
+              " some missing values in the output.")
     return total_reads, valid_markers
 
 
-def write_final_table(final_table, out_file):
+def write_final_table(
+    final_table: List[List[Any]],
+    out_file: Union[Path, str]
+):
     # sort for each sample based on QC-score
     final_table.sort(key=lambda values: (values[0], values[5]), reverse=True)
 
@@ -348,7 +365,10 @@ def write_final_table(final_table, out_file):
             f.write('\t'.join(map(str, line)) + "\n")
 
 
-def product(values):
+def product(
+    values: List[float]
+) -> float:
+    """Take the product of a list of floats. The math.prod function is python 3.8 or above"""
     total = 1
     for value in values:
         total *= value
