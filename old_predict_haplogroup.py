@@ -262,7 +262,7 @@ def process_log(log_file):
     try:
         df_log = pd.read_csv(log_file, sep=":", header=None)
         log_array = df_log[1].values
-        total_reads = log_array[0]
+        total_reads = log_array[1]
         valid_markers = log_array[-1]
     except FileNotFoundError:
         print("Warning: log file not found!")

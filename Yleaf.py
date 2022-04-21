@@ -463,6 +463,17 @@ def samtools(threads, folder, folder_name, path_file, quality_thresh, markerfile
     return outputfile
 
 
+def write_log_file(folder, folder_name):
+    # write logfile
+    try:
+        with open(folder + "/" + folder_name + ".log", "a") as log:
+            for marker in LOG_LIST:
+                log.write(marker)
+                log.write("\n")
+    except IOError:
+        print("Failed to write .log file")
+
+
 def logo():
     print(r"""
 
@@ -503,8 +514,7 @@ def main():
     out_folder = out_path
     hg_out = "hg_prediction.hg"
     folder = None
-    folder_name = None
-
+    folder_name  = None
     if create_tmp_dirs(out_folder):
         if args.Fastq:
             files = check_if_folder(args.Fastq, '.fastq')
@@ -536,6 +546,7 @@ def main():
                     cmd = "rm {}".format(sam_file)
                     subprocess.call(cmd, shell=True)
             hg_out = out_folder + "/" + hg_out
+            write_log_file(folder, folder_name)
             predict_haplogroup(source, out_folder, hg_out, args.use_old)
         elif args.Bamfile:
             files = check_if_folder(args.Bamfile, '.bam')
@@ -549,6 +560,7 @@ def main():
                     output_file = samtools(args.threads, folder, folder_name, bam_file, args.Quality_thresh,
                                            args.position, False, "bam", args, whole_time, args.use_old)
             hg_out = out_folder + "/" + hg_out
+            write_log_file(folder, folder_name)
             predict_haplogroup(source, out_folder, hg_out, args.use_old)
         elif args.Cramfile:
             if args.reference is None:
@@ -564,17 +576,11 @@ def main():
                     output_file = samtools(args.threads, folder, folder_name, cram_file, args.Quality_thresh,
                                            args.position, args.reference, "cram", args, whole_time, args.use_old)
             hg_out = out_folder + "/" + hg_out
+            write_log_file(folder, folder_name)
             predict_haplogroup(source, out_folder, hg_out, args.use_old)
     else:
         print("--- Yleaf failed! please check inputs... ---")
         return
-
-    if folder is not None and folder_name is not None:
-        # write logfile
-        with open(folder + "/" + folder_name + ".log", "a") as log:
-            for marker in LOG_LIST:
-                log.write(marker)
-                log.write("\n")
 
 
 if __name__ == "__main__":
