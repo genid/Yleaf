@@ -27,6 +27,9 @@ pd.options.mode.chained_assignment = None  # default='warn'
 
 VERSION = 3.0
 
+# this is not ideal
+LOG_LIST = []
+
 
 def get_arguments():
     parser = ArgumentParser()
@@ -278,7 +281,7 @@ def replace_with_bases(base, read_result):
 
 
 def extract_haplogroups(path_markerfile, reads_thresh, base_majority,
-                        path_pileupfile, log_output, fmf_output, outputfile, flag, use_old):
+                        path_pileupfile, fmf_output, outputfile, flag, use_old):
     print("Extracting haplogroups...")
     markerfile = pd.read_csv(path_markerfile, header=None, sep="\t")
     markerfile.columns = ["chr", "marker_name", "haplogroup", "pos", "mutation", "anc", "der"]
@@ -302,7 +305,7 @@ def extract_haplogroups(path_markerfile, reads_thresh, base_majority,
         new_read_results = list(map(replace_with_bases, ref_base, read_results))
         pileupfile["align"] = new_read_results
 
-    log_output_list = ["Total of reads: " + str(len(pileupfile))]
+    LOG_LIST.append("Total of reads: " + str(len(pileupfile)))
 
     intersect_pos = np.intersect1d(pileupfile['pos'], markerfile['pos'])
     markerfile = markerfile.loc[markerfile['pos'].isin(intersect_pos)]
@@ -317,7 +320,7 @@ def extract_haplogroups(path_markerfile, reads_thresh, base_majority,
     gc.collect()
 
     # valid markers from positionsfile.txt
-    log_output_list.append("Valid markers: " + str(markerfile_len))
+    LOG_LIST.append("Valid markers: " + str(markerfile_len))
 
     index_belowzero = df[df["reads"] == 0].index
     df_belowzero = df[df.index.isin(index_belowzero)]
@@ -377,19 +380,14 @@ def extract_haplogroups(path_markerfile, reads_thresh, base_majority,
 
     df_out = df.drop(["bool_state"], axis=1)
 
-    log_output_list.append("Markers with zero reads: " + str(len(df_belowzero)))
-    log_output_list.append(
+    LOG_LIST.append("Markers with zero reads: " + str(len(df_belowzero)))
+    LOG_LIST.append(
         "Markers below the read threshold {" + str(reads_thresh) + "}: " + str(len(df_readsthreshold)))
-    log_output_list.append(
+    LOG_LIST.append(
         "Markers below the base majority threshold {" + str(base_majority) + "}: " + str(len(df_basemajority)))
-    log_output_list.append("Markers with discordant genotype: " + str(len(df_discordantgenotype)))
-    log_output_list.append("Markers without haplogroup information: " + str(len(df_fmf)))
-    log_output_list.append("Markers with haplogroup information: " + str(len(df_out)))
-
-    with open(log_output, "a") as log:
-        for marker in log_output_list:
-            log.write(marker)
-            log.write("\n")
+    LOG_LIST.append("Markers with discordant genotype: " + str(len(df_discordantgenotype)))
+    LOG_LIST.append("Markers without haplogroup information: " + str(len(df_fmf)))
+    LOG_LIST.append("Markers with haplogroup information: " + str(len(df_out)))
 
     if use_old:
         df_out = df_out.sort_values(by=['haplogroup'], ascending=True)
@@ -432,7 +430,6 @@ def samtools(threads, folder, folder_name, path_file, quality_thresh, markerfile
              use_old):
     file_name = folder_name
     outputfile = folder + "/" + folder_name + ".out"
-    log_output = folder + "/" + folder_name + ".log"
     fmf_output = folder + "/" + folder_name + ".fmf"
     pileupfile = folder + "/" + folder_name + ".pu"
 
@@ -455,7 +452,7 @@ def samtools(threads, folder, folder_name, path_file, quality_thresh, markerfile
 
     start_time = time.time()
     extract_haplogroups(markerfile, args.Reads_thresh, args.Base_majority,
-                        pileupfile, log_output, fmf_output, outputfile, flag, use_old)
+                        pileupfile, fmf_output, outputfile, flag, use_old)
 
     cmd = "rm {};".format(pileupfile)
     subprocess.call(cmd, shell=True)
@@ -498,20 +495,16 @@ def main():
     logo()
     args = get_arguments()
 
-    if args.use_old and "new" in args.position:
-        print("ERROR: using the old prediction with new position files will give inaccurate predictions. Use files "
-              "without new in the name.")
-        sys.exit(-1)
-    elif not args.use_old and "new" not in args.position:
-        print("ERROR: using the new prediction method with old position files will give inaccurate predictions. Use"
-              " files with new in the name.")
-        sys.exit(-1)
+    LOG_LIST.append("Command: " + ' '.join(sys.argv))
 
     app_folder = os.path.dirname(os.path.realpath(__name__))
     out_path = args.Outputfile
     source = os.path.abspath(os.path.dirname(sys.argv[0]))
     out_folder = out_path
     hg_out = "hg_prediction.hg"
+    folder = None
+    folder_name = None
+
     if create_tmp_dirs(out_folder):
         if args.Fastq:
             files = check_if_folder(args.Fastq, '.fastq')
@@ -574,6 +567,14 @@ def main():
             predict_haplogroup(source, out_folder, hg_out, args.use_old)
     else:
         print("--- Yleaf failed! please check inputs... ---")
+        return
+
+    if folder is not None and folder_name is not None:
+        # write logfile
+        with open(folder + "/" + folder_name + ".log", "a") as log:
+            for marker in LOG_LIST:
+                log.write(marker)
+                log.write("\n")
 
 
 if __name__ == "__main__":
