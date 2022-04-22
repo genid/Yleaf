@@ -16,6 +16,7 @@ import os
 import sys
 import re
 import time
+import shutil
 import subprocess
 import pandas as pd
 import numpy as np
@@ -222,8 +223,8 @@ def chromosome_table(path_file, path_folder, file_name):
     df_chromosome.columns = ['chr', 'reads', 'perc']
     df_chromosome.to_csv(output, index=None, sep="\t")
 
-    cmd = "rm " + tmp_output
-    subprocess.call(cmd, shell=True)
+    f.close()
+    os.remove(tmp_output)
 
     if 'Y' in df_chromosome["chr"].values:
         return "Y", total_reads, unmapped
@@ -256,18 +257,16 @@ def create_tmp_dirs(folder):
             print("WARNING! File " + folder + " already exists, \nWould you like to remove it?")
             choice = input("y/n: ")
             if str(choice).upper() == "Y":
-                cmd = 'rm -r ' + folder
-                subprocess.call(cmd, shell=True)
-                cmd = 'mkdir ' + folder
-                subprocess.call(cmd, shell=True)
+                shutil.rmtree(folder)
+                os.mkdir(folder)
+                return True
                 return True
             elif str(choice).upper() == "N":
                 return False
             else:
                 print("Please type y/Y or n/N")
     else:
-        cmd = 'mkdir ' + folder
-        subprocess.call(cmd, shell=True)
+        os.mkdir(folder)
         return True
 
 
@@ -456,8 +455,7 @@ def samtools(threads, folder, folder_name, path_file, quality_thresh, markerfile
     extract_haplogroups(markerfile, args.Reads_thresh, args.Base_majority,
                         pileupfile, fmf_output, outputfile, flag, use_old, mapped, unmapped)
 
-    cmd = "rm {} {};".format(pileupfile, bed)
-    subprocess.call(cmd, shell=True)
+    os.remove(pileupfile)
 
     print("--- %.2f seconds in extracting haplogroups --- " % (time.time() - start_time))
     print("--- %.2f seconds to run Yleaf  ---" % (time.time() - whole_time))
@@ -545,8 +543,7 @@ def main():
                     subprocess.call(cmd, shell=True)
                     output_file = samtools(args.threads, folder, folder_name, bam_file, args.Quality_thresh,
                                            args.position, False, "bam", args, whole_time, args.use_old)
-                    cmd = "rm {}".format(sam_file)
-                    subprocess.call(cmd, shell=True)
+                    os.remove(sam_file)
             hg_out = out_folder + "/" + hg_out
             write_log_file(folder, folder_name)
             predict_haplogroup(source, out_folder, hg_out, args.use_old)
