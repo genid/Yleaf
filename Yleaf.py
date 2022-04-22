@@ -11,7 +11,7 @@ A copy of GNU GPL v3 should have been included in this software package in LICEN
 Autor: Diego Montiel Gonzalez
 Slightly modified by: Bram van Wersch
 """
-
+import argparse
 import os
 import sys
 import re
@@ -22,6 +22,8 @@ import pandas as pd
 import numpy as np
 from argparse import ArgumentParser
 import gc
+from pathlib import Path
+
 from tree import Tree
 
 pd.options.mode.chained_assignment = None  # default='warn'
@@ -31,49 +33,104 @@ VERSION = 3.0
 # this is not ideal
 LOG_LIST = []
 
+PREDICTION_OUT_FILE_NAME: str = "hg_prediction.hg"
 
-def get_arguments():
+
+def main():
+    whole_time = time.time()
+    print(
+        f"""\tErasmus MC Department of Genetic Identification \n\n\tYleaf: software tool for human Y-chromosomal
+         \n\tphylogenetic analysis and haplogroup inference v{VERSION}\n""")
+    logo()
+    args = get_arguments()
+
+    LOG_LIST.append("Command: " + ' '.join(sys.argv))
+
+    app_folder = os.path.dirname(os.path.realpath(__name__))
+    out_folder = args.Outputfile
+    source = Path(__file__).absolute().parent
+    folder = None
+    folder_name = None
+    safe_create_dir(out_folder)
+    if args.Fastq:
+        main_fastq()
+    elif args.Bamfile:
+        files = check_if_folder(args.Bamfile, '.bam')
+        for path_file in files:
+            print("Starting...")
+            print(path_file)
+            bam_file = path_file
+            folder_name = get_folder_name(path_file)
+            folder = os.path.join(app_folder, out_folder, folder_name)
+            safe_create_dir(folder)
+            samtools(args.threads, folder, folder_name, bam_file, args.Quality_thresh, args.position, False,
+                     "bam", args, whole_time, args.use_old)
+        hg_out = out_folder + "/" + PREDICTION_OUT_FILE_NAME
+        write_log_file(folder, folder_name)
+        predict_haplogroup(source, out_folder, hg_out, args.use_old)
+    elif args.Cramfile:
+        if args.reference is None:
+            raise FileNotFoundError("-f missing reference")
+        files = check_if_folder(args.Cramfile, '.cram')
+        for path_file in files:
+            print("Starting...")
+            print(path_file)
+            cram_file = path_file
+            folder_name = get_folder_name(path_file)
+            folder = os.path.join(app_folder, out_folder, folder_name)
+            safe_create_dir(folder)
+            samtools(args.threads, folder, folder_name, cram_file, args.Quality_thresh, args.position,
+                     args.reference, "cram", args, whole_time, args.use_old)
+        hg_out = out_folder + "/" + PREDICTION_OUT_FILE_NAME
+        write_log_file(folder, folder_name)
+        predict_haplogroup(source, out_folder, hg_out, args.use_old)
+
+
+def get_arguments() -> argparse.Namespace:
     parser = ArgumentParser()
 
     parser.add_argument("-fastq", "--fastq",
                         dest="Fastq", required=False,
-                        help="Use raw FastQ files", metavar="PATH")
+                        help="Use raw FastQ files", metavar="PATH", type=check_file)
 
     parser.add_argument("-bam", "--bam",
                         dest="Bamfile", required=False,
-                        help="input BAM file", metavar="PATH")
+                        help="input BAM file", metavar="PATH", type=check_file)
 
     parser.add_argument("-cram", "--cram",
                         dest="Cramfile", required=False,
-                        help="input CRAM file", metavar="PATH")
+                        help="input CRAM file", metavar="PATH", type=check_file)
 
     parser.add_argument("-f", "--fasta-ref", dest="reference",
                         help="fasta reference genome sequence ", metavar="PATH", required=False)
 
     parser.add_argument("-pos", "--position", dest="position",
-                        help="Positions file [hg19.txt or hg38.txt]", metavar="PATH", required=True)
+                        help="Positions file found in the Position_files folder. Use old_position_files when using the "
+                             " -old flag, otherwise use the new_position_files.", metavar="PATH", required=True,
+                        type=check_file)
 
     parser.add_argument("-out", "--output",
                         dest="Outputfile", required=True,
                         help="Folder name containing outputs", metavar="STRING")
 
     parser.add_argument("-r", "--Reads_thresh",
-                        help="The minimum number of reads for each base",
+                        help="The minimum number of reads for each base. (default=50)",
                         type=int, required=False,
                         default=50)
 
     parser.add_argument("-q", "--Quality_thresh",
-                        help="Minimum quality for each read, integer between 10 and 39, inclusive \n [10-40]",
+                        help="Minimum quality for each read, integer between 10 and 40. [10-40]",
                         type=int, required=True)
 
     parser.add_argument("-b", "--Base_majority",
-                        help="The minimum percentage of a base result for acceptance \n [50-99]",
+                        help="The minimum percentage of a base result for acceptance, integer between 50 and 99."
+                             " [50-99]",
                         type=int, required=True)
 
     parser.add_argument("-t", "--Threads", dest="threads",
                         help="Set number of additional threads to use during alignment BWA-MEM",
                         type=int,
-                        default=2)
+                        default=1)
 
     parser.add_argument("-old", "--use_old", dest="use_old",
                         help="Add this value if you want to use the old prediction method of Yleaf (version 2.3). This"
@@ -82,6 +139,73 @@ def get_arguments():
 
     args = parser.parse_args()
     return args
+
+
+def check_file(
+    path: str
+) -> Path:
+    """Check for the presence of a file and return a Path object"""
+    object_path = Path(path)
+    if not object_path.exists():
+        raise argparse.ArgumentTypeError("Path to provided file/dir does not exist")
+    return object_path
+
+
+def safe_create_dir(
+    folder: str
+):
+    """Create the given folder. If the folder is already present delete if the user agrees."""
+    if os.path.isdir(folder):
+        while True:
+            print("WARNING! Folder " + folder + " already exists, would you like to remove it?")
+            choice = input("y/n: ")
+            if str(choice).upper() == "Y":
+                shutil.rmtree(folder)
+                os.mkdir(folder)
+                return
+            elif str(choice).upper() == "N":
+                sys.exit(0)
+            else:
+                print("Please type y/Y or n/N")
+    else:
+        try:
+            os.mkdir(folder)
+        except OSError:
+            print("WARNING: failed to create directory. Exiting...")
+            raise
+
+
+def main_fastq():
+    files = check_if_folder(args.Fastq, '.fastq')
+    for path_file in files:
+        print(args.reference)
+        if args.reference is None:
+            raise FileNotFoundError("-f missing reference")
+        print("Starting...")
+        folder_name = get_folder_name(path_file)
+        folder = os.path.join(app_olfder, out_folder, folder_name)
+        safe_create_dir(folder)
+        start_time = time.time()
+        sam_file = folder + "/" + folder_name + ".sam"
+        fastq_cmd = "bwa mem -t {} {} {} > {}".format(args.threads, args.reference, path_file, sam_file)
+        print(fastq_cmd)
+        subprocess.call(fastq_cmd, shell=True)
+        print("--- %s seconds in Indexing reads to reference ---" % (time.time() - start_time))
+        start_time = time.time()
+        bam_file = folder + "/" + folder_name + ".bam"
+        cmd = "samtools view -@ {} -bS {} | samtools sort -@ {} -m 2G -o {}".format(args.threads, sam_file,
+                                                                                    args.threads, bam_file)
+        print(cmd)
+        subprocess.call(cmd, shell=True)
+        print("--- %s seconds in convertin Sam to Bam ---" % (time.time() - start_time))
+        cmd = "samtools index -@ {} {}".format(args.threads, bam_file)
+        subprocess.call(cmd, shell=True)
+        samtools(args.threads, folder, folder_name, bam_file, args.Quality_thresh, args.position, False,
+                 "bam", args, whole_time, args.use_old)
+        os.remove(sam_file)
+    hg_out = out_folder + "/" + hg_out
+    write_log_file(folder, folder_name)
+    predict_haplogroup(source, out_folder, hg_out, args.use_old)
 
 
 def get_frequency_table(mpileup):
@@ -195,7 +319,7 @@ def check_bed(bed, markerfile, header):
         mf.to_csv(bed, sep="\t", index=False, header=False)
 
 
-def execute_mpileup(bed, header, bam_file, pileupfile, quality_thresh, folder, reference):
+def execute_mpileup(bed, bam_file, pileupfile, quality_thresh, reference):
 
     if reference:
         cmd = "samtools mpileup -l {} -f {} -AQ{} {} > {}".format(bed, reference, quality_thresh, bam_file, pileupfile)
@@ -249,24 +373,6 @@ def get_folder_name(path_file):
     folder = path_file.split('/')[-1]
     folder_name = os.path.splitext(folder)[0]
     return folder_name
-
-
-def create_tmp_dirs(folder):
-    if os.path.isdir(folder):
-        while True:
-            print("WARNING! File " + folder + " already exists, \nWould you like to remove it?")
-            choice = input("y/n: ")
-            if str(choice).upper() == "Y":
-                shutil.rmtree(folder)
-                os.mkdir(folder)
-                return True
-            elif str(choice).upper() == "N":
-                return False
-            else:
-                print("Please type y/Y or n/N")
-    else:
-        os.mkdir(folder)
-        return True
 
 
 def replace_with_bases(base, read_result):
@@ -447,7 +553,7 @@ def samtools(threads, folder, folder_name, path_file, quality_thresh, markerfile
     bed = markerfile[:index] + ".bed"
     check_bed(bed, markerfile, header)
 
-    execute_mpileup(bed, header, path_file, pileupfile, quality_thresh, folder, reference)
+    execute_mpileup(bed, path_file, pileupfile, quality_thresh, reference)
     print("--- %.2f seconds in run PileUp ---" % (time.time() - start_time))
 
     start_time = time.time()
@@ -459,8 +565,6 @@ def samtools(threads, folder, folder_name, path_file, quality_thresh, markerfile
 
     print("--- %.2f seconds in extracting haplogroups --- " % (time.time() - start_time))
     print("--- %.2f seconds to run Yleaf  ---" % (time.time() - whole_time))
-
-    return outputfile
 
 
 def write_log_file(folder, folder_name):
@@ -477,14 +581,14 @@ def write_log_file(folder, folder_name):
 def logo():
     print(r"""
 
-           |
-          /|\          
-         /\|/\    
-        \\\|///   
-         \\|//  
-          |||   
-          |||    
-          |||    
+                   |
+                  /|\          
+                 /\|/\    
+                \\\|///   
+                 \\|//  
+                  |||   
+                  |||    
+                  |||    
 
         """)
 
@@ -496,89 +600,6 @@ def predict_haplogroup(source, path_file, output, use_old):
         script = source + "/predict_haplogroup.py"
     cmd = "python {} -i {} -o {}".format(script, path_file, output)
     subprocess.call(cmd, shell=True)
-
-
-def main():
-    whole_time = time.time()
-    print(
-        f"""\tErasmus MC Department of Genetic Identification \n\n\tYleaf: software tool for human Y-chromosomal
-         \n\tphylogenetic analysis and haplogroup inference v{VERSION}\n""")
-    logo()
-    args = get_arguments()
-
-    LOG_LIST.append("Command: " + ' '.join(sys.argv))
-
-    app_folder = os.path.dirname(os.path.realpath(__name__))
-    out_path = args.Outputfile
-    source = os.path.abspath(os.path.dirname(sys.argv[0]))
-    out_folder = out_path
-    hg_out = "hg_prediction.hg"
-    folder = None
-    folder_name = None
-    if create_tmp_dirs(out_folder):
-        if args.Fastq:
-            files = check_if_folder(args.Fastq, '.fastq')
-            for path_file in files:
-                print(args.reference)
-                if args.reference is None:
-                    raise FileNotFoundError("-f missing reference")
-                print("Starting...")
-                folder_name = get_folder_name(path_file)
-                folder = os.path.join(app_folder, out_folder, folder_name)
-                if create_tmp_dirs(folder):
-                    start_time = time.time()
-                    sam_file = folder + "/" + folder_name + ".sam"
-                    fastq_cmd = "bwa mem -t {} {} {} > {}".format(args.threads, args.reference, path_file, sam_file)
-                    print(fastq_cmd)
-                    subprocess.call(fastq_cmd, shell=True)
-                    print("--- %s seconds in Indexing reads to reference ---" % (time.time() - start_time))
-                    start_time = time.time()
-                    bam_file = folder + "/" + folder_name + ".bam"
-                    cmd = "samtools view -@ {} -bS {} | samtools sort -@ {} -m 2G -o {}".format(args.threads, sam_file,
-                                                                                                args.threads, bam_file)
-                    print(cmd)
-                    subprocess.call(cmd, shell=True)
-                    print("--- %s seconds in convertin Sam to Bam ---" % (time.time() - start_time))
-                    cmd = "samtools index -@ {} {}".format(args.threads, bam_file)
-                    subprocess.call(cmd, shell=True)
-                    output_file = samtools(args.threads, folder, folder_name, bam_file, args.Quality_thresh,
-                                           args.position, False, "bam", args, whole_time, args.use_old)
-                    os.remove(sam_file)
-            hg_out = out_folder + "/" + hg_out
-            write_log_file(folder, folder_name)
-            predict_haplogroup(source, out_folder, hg_out, args.use_old)
-        elif args.Bamfile:
-            files = check_if_folder(args.Bamfile, '.bam')
-            for path_file in files:
-                print("Starting...")
-                print(path_file)
-                bam_file = path_file
-                folder_name = get_folder_name(path_file)
-                folder = os.path.join(app_folder, out_folder, folder_name)
-                if create_tmp_dirs(folder):
-                    output_file = samtools(args.threads, folder, folder_name, bam_file, args.Quality_thresh,
-                                           args.position, False, "bam", args, whole_time, args.use_old)
-            hg_out = out_folder + "/" + hg_out
-            write_log_file(folder, folder_name)
-            predict_haplogroup(source, out_folder, hg_out, args.use_old)
-        elif args.Cramfile:
-            if args.reference is None:
-                raise FileNotFoundError("-f missing reference")
-            files = check_if_folder(args.Cramfile, '.cram')
-            for path_file in files:
-                print("Starting...")
-                print(path_file)
-                cram_file = path_file
-                folder_name = get_folder_name(path_file)
-                folder = os.path.join(app_folder, out_folder, folder_name)
-                if create_tmp_dirs(folder):
-                    output_file = samtools(args.threads, folder, folder_name, cram_file, args.Quality_thresh,
-                                           args.position, args.reference, "cram", args, whole_time, args.use_old)
-            hg_out = out_folder + "/" + hg_out
-            write_log_file(folder, folder_name)
-            predict_haplogroup(source, out_folder, hg_out, args.use_old)
-    else:
-        print("--- Yleaf failed! please check inputs... ---")
 
 
 if __name__ == "__main__":
