@@ -37,7 +37,6 @@ PREDICTION_OUT_FILE_NAME: str = "hg_prediction.hg"
 
 
 def main():
-    whole_time = time.time()
     print(
         f"""\tErasmus MC Department of Genetic Identification \n\n\tYleaf: software tool for human Y-chromosomal
          \n\tphylogenetic analysis and haplogroup inference v{VERSION}\n""")
@@ -47,13 +46,14 @@ def main():
     LOG_LIST.append("Command: " + ' '.join(sys.argv))
 
     app_folder = os.path.dirname(os.path.realpath(__name__))
-    out_folder = args.Outputfile
+    out_folder = Path(args.Outputfile)
     source = Path(__file__).absolute().parent
     folder = None
     folder_name = None
     safe_create_dir(out_folder)
+    start_time = time.time()
     if args.Fastq:
-        main_fastq()
+        main_fastq(args, start_time)
     elif args.Bamfile:
         files = check_if_folder(args.Bamfile, '.bam')
         for path_file in files:
@@ -64,8 +64,8 @@ def main():
             folder = os.path.join(app_folder, out_folder, folder_name)
             safe_create_dir(folder)
             samtools(args.threads, folder, folder_name, bam_file, args.Quality_thresh, args.position, False,
-                     "bam", args, whole_time, args.use_old)
-        hg_out = out_folder + "/" + PREDICTION_OUT_FILE_NAME
+                     "bam", args, start_time, args.use_old)
+        hg_out = out_folder / PREDICTION_OUT_FILE_NAME
         write_log_file(folder, folder_name)
         predict_haplogroup(source, out_folder, hg_out, args.use_old)
     elif args.Cramfile:
@@ -80,8 +80,8 @@ def main():
             folder = os.path.join(app_folder, out_folder, folder_name)
             safe_create_dir(folder)
             samtools(args.threads, folder, folder_name, cram_file, args.Quality_thresh, args.position,
-                     args.reference, "cram", args, whole_time, args.use_old)
-        hg_out = out_folder + "/" + PREDICTION_OUT_FILE_NAME
+                     args.reference, "cram", args, start_time, args.use_old)
+        hg_out = out_folder / PREDICTION_OUT_FILE_NAME
         write_log_file(folder, folder_name)
         predict_haplogroup(source, out_folder, hg_out, args.use_old)
 
@@ -152,12 +152,12 @@ def check_file(
 
 
 def safe_create_dir(
-    folder: str
+    folder: Path
 ):
     """Create the given folder. If the folder is already present delete if the user agrees."""
     if os.path.isdir(folder):
         while True:
-            print("WARNING! Folder " + folder + " already exists, would you like to remove it?")
+            print("WARNING! Folder " + str(folder) + " already exists, would you like to remove it?")
             choice = input("y/n: ")
             if str(choice).upper() == "Y":
                 shutil.rmtree(folder)
@@ -175,7 +175,7 @@ def safe_create_dir(
             raise
 
 
-def main_fastq():
+def main_fastq(args, start_time):
     files = check_if_folder(args.Fastq, '.fastq')
     for path_file in files:
         print(args.reference)
@@ -201,9 +201,9 @@ def main_fastq():
         cmd = "samtools index -@ {} {}".format(args.threads, bam_file)
         subprocess.call(cmd, shell=True)
         samtools(args.threads, folder, folder_name, bam_file, args.Quality_thresh, args.position, False,
-                 "bam", args, whole_time, args.use_old)
+                 "bam", args, start_time, args.use_old)
         os.remove(sam_file)
-    hg_out = out_folder + "/" + hg_out
+    hg_out = out_folder + "/" + PREDICTION_OUT_FILE_NAME
     write_log_file(folder, folder_name)
     predict_haplogroup(source, out_folder, hg_out, args.use_old)
 
