@@ -341,8 +341,8 @@ def process_log_file(
     try:
         with open(log_file) as f:
             for line in f:
-                if line.startswith("Total of reads"):
-                    total_reads = int(line.replace("Total of reads:", "").strip())
+                if line.startswith("Total of mapped reads:"):
+                    total_reads = int(line.replace("Total of mapped reads:", "").strip())
                 elif line.startswith("Markers with haplogroup information"):
                     valid_markers = int(line.replace("Markers with haplogroup information:", "").strip())
     except FileNotFoundError:

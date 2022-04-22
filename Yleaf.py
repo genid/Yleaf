@@ -455,6 +455,7 @@ def samtools(threads, folder, folder_name, path_file, quality_thresh, markerfile
                         pileupfile, fmf_output, outputfile, flag, use_old, mapped, unmapped)
 
     os.remove(pileupfile)
+    os.remove(bed)
 
     print("--- %.2f seconds in extracting haplogroups --- " % (time.time() - start_time))
     print("--- %.2f seconds to run Yleaf  ---" % (time.time() - whole_time))
