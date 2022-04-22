@@ -260,7 +260,6 @@ def create_tmp_dirs(folder):
                 shutil.rmtree(folder)
                 os.mkdir(folder)
                 return True
-                return True
             elif str(choice).upper() == "N":
                 return False
             else:
