@@ -46,9 +46,9 @@ def main():
 
     LOG_LIST.append("Command: " + ' '.join(sys.argv))
 
-    app_folder = os.path.dirname(os.path.realpath(__name__))
+    app_folder = Path(__file__).absolute().parent
     out_folder = Path(args.Outputfile)
-    source = Path(__file__).absolute().parent
+    source = app_folder
     folder = None
     folder_name = None
     safe_create_dir(out_folder)
@@ -78,7 +78,7 @@ def main():
             print(path_file)
             cram_file = path_file
             folder_name = get_folder_name(path_file)
-            folder = os.path.join(app_folder, out_folder, folder_name)
+            folder = app_folder / out_folder / folder_name
             safe_create_dir(folder)
             samtools(args.threads, folder, folder_name, cram_file, args.Quality_thresh, args.position,
                      args.reference, "cram", args, start_time, args.use_old)
@@ -177,15 +177,15 @@ def safe_create_dir(
 
 
 def main_fastq(args, app_folder, out_folder, folder_name, source):
+    if args.reference is None:
+        raise FileNotFoundError("Missing reference genome, please supply one with -f")
     files = check_if_folder(args.Fastq, '.fastq')
-    folder = os.path.join(app_folder, out_folder, folder_name)
-    safe_create_dir(folder)
     for path_file in files:
-        print(args.reference)
-        if args.reference is None:
-            raise FileNotFoundError("-f missing reference")
+
         print("Starting...")
         folder_name = get_folder_name(path_file)
+        folder = app_folder / out_folder / folder_name
+        safe_create_dir(folder)
         start_time = time.time()
         sam_file = folder + "/" + folder_name + ".sam"
         fastq_cmd = "bwa mem -t {} {} {} > {}".format(args.threads, args.reference, path_file, sam_file)
