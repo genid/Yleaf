@@ -23,7 +23,8 @@ def main():
 
 def get_arguments() -> argparse.Namespace:
     """Get the arguments provided by the user to this script"""
-    parser = argparse.ArgumentParser(description="Erasmus MC: Genetic Identification\n Y-Haplogroup Prediction")
+    parser = argparse.ArgumentParser(description="Transform the data table that can be downloaded from the ISOGG "
+                                                 "website into tables that can be read by Yleaf")
 
     parser.add_argument("-i", "--input", required=True,
                         help="ISOGG data table, this can be downloaded from the https://isogg.org/ website",
