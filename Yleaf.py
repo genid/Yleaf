@@ -23,6 +23,7 @@ import numpy as np
 from argparse import ArgumentParser
 import gc
 from pathlib import Path
+from typing import Union
 
 from tree import Tree
 
@@ -53,7 +54,7 @@ def main():
     safe_create_dir(out_folder)
     start_time = time.time()
     if args.Fastq:
-        main_fastq(args, start_time)
+        main_fastq(args, app_folder, out_folder, folder_name, source)
     elif args.Bamfile:
         files = check_if_folder(args.Bamfile, '.bam')
         for path_file in files:
@@ -152,7 +153,7 @@ def check_file(
 
 
 def safe_create_dir(
-    folder: Path
+    folder: Union[str, Path]
 ):
     """Create the given folder. If the folder is already present delete if the user agrees."""
     if os.path.isdir(folder):
@@ -175,16 +176,16 @@ def safe_create_dir(
             raise
 
 
-def main_fastq(args, start_time):
+def main_fastq(args, app_folder, out_folder, folder_name, source):
     files = check_if_folder(args.Fastq, '.fastq')
+    folder = os.path.join(app_folder, out_folder, folder_name)
+    safe_create_dir(folder)
     for path_file in files:
         print(args.reference)
         if args.reference is None:
             raise FileNotFoundError("-f missing reference")
         print("Starting...")
         folder_name = get_folder_name(path_file)
-        folder = os.path.join(app_olfder, out_folder, folder_name)
-        safe_create_dir(folder)
         start_time = time.time()
         sam_file = folder + "/" + folder_name + ".sam"
         fastq_cmd = "bwa mem -t {} {} {} > {}".format(args.threads, args.reference, path_file, sam_file)
@@ -203,7 +204,7 @@ def main_fastq(args, start_time):
         samtools(args.threads, folder, folder_name, bam_file, args.Quality_thresh, args.position, False,
                  "bam", args, start_time, args.use_old)
         os.remove(sam_file)
-    hg_out = out_folder + "/" + PREDICTION_OUT_FILE_NAME
+    hg_out = out_folder / PREDICTION_OUT_FILE_NAME
     write_log_file(folder, folder_name)
     predict_haplogroup(source, out_folder, hg_out, args.use_old)
 
