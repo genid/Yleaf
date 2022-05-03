@@ -465,6 +465,7 @@ def samtools(threads, folder, folder_name, path_file, quality_thresh, markerfile
 
 def write_log_file(folder, folder_name):
     # write logfile
+    global LOG_LIST
     try:
         with open(folder + "/" + folder_name + ".log", "a") as log:
             for marker in LOG_LIST:
@@ -472,6 +473,7 @@ def write_log_file(folder, folder_name):
                 log.write("\n")
     except IOError:
         print("Failed to write .log file")
+    LOG_LIST = []
 
 
 def logo():
@@ -543,9 +545,9 @@ def main():
                     subprocess.call(cmd, shell=True)
                     output_file = samtools(args.threads, folder, folder_name, bam_file, args.Quality_thresh,
                                            args.position, False, "bam", args, whole_time, args.use_old)
+                    write_log_file(folder, folder_name)
                     os.remove(sam_file)
             hg_out = out_folder + "/" + hg_out
-            write_log_file(folder, folder_name)
             predict_haplogroup(source, out_folder, hg_out, args.use_old)
         elif args.Bamfile:
             files = check_if_folder(args.Bamfile, '.bam')
@@ -558,8 +560,8 @@ def main():
                 if create_tmp_dirs(folder):
                     output_file = samtools(args.threads, folder, folder_name, bam_file, args.Quality_thresh,
                                            args.position, False, "bam", args, whole_time, args.use_old)
+                write_log_file(folder, folder_name)
             hg_out = out_folder + "/" + hg_out
-            write_log_file(folder, folder_name)
             predict_haplogroup(source, out_folder, hg_out, args.use_old)
         elif args.Cramfile:
             if args.reference is None:
@@ -574,8 +576,8 @@ def main():
                 if create_tmp_dirs(folder):
                     output_file = samtools(args.threads, folder, folder_name, cram_file, args.Quality_thresh,
                                            args.position, args.reference, "cram", args, whole_time, args.use_old)
+                write_log_file(folder, folder_name)
             hg_out = out_folder + "/" + hg_out
-            write_log_file(folder, folder_name)
             predict_haplogroup(source, out_folder, hg_out, args.use_old)
     else:
         print("--- Yleaf failed! please check inputs... ---")
