@@ -431,12 +431,12 @@ def samtools(threads, folder, folder_name, path_file, quality_thresh, markerfile
 
     start_time = time.time()
     if flag == "bam":
-        if not any([os.path.exists(path_file + '.bai'), os.path.exists(path_file.replace(".bam", "") + '.bai')]):
+        if not any([os.path.exists(path_file + '.bai'), os.path.exists(path_file.rstrip(".bam") + '.bai')]):
             cmd = "samtools index -@{} {}".format(threads, path_file)
             print(cmd)
             subprocess.call(cmd, shell=True)
     elif flag == "cram":
-        if not any([os.path.exists(path_file + '.crai'), os.path.exists(path_file.replace(".cram", "") + '.crai')]):
+        if not any([os.path.exists(path_file + '.crai'), os.path.exists(path_file.rstrip(".cram") + '.crai')]):
             cmd = "samtools index -@{} {}".format(threads, path_file)
             print(cmd)
             subprocess.call(cmd, shell=True)
