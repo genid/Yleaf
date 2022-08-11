@@ -16,14 +16,14 @@ import os
 import sys
 import re
 import time
+import logging
 import shutil
 import subprocess
 import pandas as pd
 import numpy as np
 from argparse import ArgumentParser
-import gc
 from pathlib import Path
-from typing import Union
+from typing import Union, List
 
 from tree import Tree
 
@@ -36,85 +36,85 @@ LOG_LIST = []
 
 PREDICTION_OUT_FILE_NAME: str = "hg_prediction.hg"
 
+LOG = logging.getLogger("yleaf_logger")
+
 
 def main():
-    print(
-        f"""\tErasmus MC Department of Genetic Identification \n\n\tYleaf: software tool for human Y-chromosomal
-         \n\tphylogenetic analysis and haplogroup inference v{VERSION}\n""")
+
+    setup_logger()
+    LOG.info("Erasmus MC Department of Genetic Identification\nYleaf: software tool for human Y-chromosomal "
+             f"phylogenetic analysis and haplogroup inference v{VERSION}")
     logo()
     args = get_arguments()
 
     LOG_LIST.append("Command: " + ' '.join(sys.argv))
 
     app_folder = Path(__file__).absolute().parent
-    out_folder = Path(args.Outputfile)
+    out_folder = Path(args.output)
     source = app_folder
-    folder = None
-    folder_name = None
-    safe_create_dir(out_folder)
-    start_time = time.time()
-    if args.Fastq:
-        main_fastq(args, app_folder, out_folder, folder_name, source)
-    elif args.Bamfile:
-        files = check_if_folder(args.Bamfile, '.bam')
-        for path_file in files:
-            print("Starting...")
-            print(path_file)
-            bam_file = path_file
-            folder_name = get_folder_name(path_file)
-            folder = os.path.join(app_folder, out_folder, folder_name)
-            safe_create_dir(folder)
-            samtools(args.threads, folder, folder_name, bam_file, args.Quality_thresh, args.position, False,
-                     "bam", args, start_time, args.use_old)
-        hg_out = out_folder / PREDICTION_OUT_FILE_NAME
-        write_log_file(folder, folder_name)
-        predict_haplogroup(source, out_folder, hg_out, args.use_old)
-    elif args.Cramfile:
+    safe_create_dir(out_folder, args.force)
+    LOG.info("Starting with Yleaf run...")
+    if args.fastq:
+        main_fastq(args, app_folder, out_folder, source)
+    elif args.bamfile:
+        main_bam(args, app_folder, out_folder, source)
+    elif args.cramfile:
         if args.reference is None:
             raise FileNotFoundError("-f missing reference")
-        files = check_if_folder(args.Cramfile, '.cram')
+        files = get_files_with_extension(args.cramfile, '.cram')
         for path_file in files:
-            print("Starting...")
             print(path_file)
             cram_file = path_file
             folder_name = get_folder_name(path_file)
             folder = app_folder / out_folder / folder_name
-            safe_create_dir(folder)
+            safe_create_dir(folder, args.force)
             samtools(args.threads, folder, folder_name, cram_file, args.Quality_thresh, args.position,
-                     args.reference, "cram", args, start_time, args.use_old)
+                     args.reference, False, args, args.use_old)
+            write_log_file(folder, folder_name)
         hg_out = out_folder / PREDICTION_OUT_FILE_NAME
-        write_log_file(folder, folder_name)
         predict_haplogroup(source, out_folder, hg_out, args.use_old)
+    else:
+        raise ValueError("Please specify either a bam, a cram or a fastq file")
+    LOG.info("Done!")
+
+
+def setup_logger():
+    """Setup logging"""
+    handler = logging.StreamHandler(sys.stdout)
+    formatter = logging.Formatter('%(levelname)s (%(relativeCreated)d ms) - %(message)s')
+    handler.setFormatter(formatter)
+    LOG.addHandler(handler)
+    LOG.setLevel(logging.DEBUG)
+    LOG.debug("Logger created")
 
 
 def get_arguments() -> argparse.Namespace:
     parser = ArgumentParser()
 
-    parser.add_argument("-fastq", "--fastq",
-                        dest="Fastq", required=False,
+    parser.add_argument("-fastq", "--fastq", required=False,
                         help="Use raw FastQ files", metavar="PATH", type=check_file)
 
-    parser.add_argument("-bam", "--bam",
-                        dest="Bamfile", required=False,
+    parser.add_argument("-bam", "--bamfile", required=False,
                         help="input BAM file", metavar="PATH", type=check_file)
 
-    parser.add_argument("-cram", "--cram",
-                        dest="Cramfile", required=False,
+    parser.add_argument("-cram", "--cramfile", required=False,
                         help="input CRAM file", metavar="PATH", type=check_file)
 
-    parser.add_argument("-f", "--fasta-ref", dest="reference",
+    parser.add_argument("-force", "--force", action="store_true",
+                        help="Delete files without asking")
+
+    parser.add_argument("-f", "--reference",
                         help="fasta reference genome sequence ", metavar="PATH", required=False)
 
-    parser.add_argument("-pos", "--position", dest="position",
+    parser.add_argument("-pos", "--position",
                         help="Positions file found in the Position_files folder. Use old_position_files when using the "
                              " -old flag, otherwise use the new_position_files.", metavar="PATH", required=True,
                         type=check_file)
 
-    parser.add_argument("-out", "--output",
-                        dest="Outputfile", required=True,
+    parser.add_argument("-out", "--output", required=True,
                         help="Folder name containing outputs", metavar="STRING")
 
-    parser.add_argument("-r", "--Reads_thresh",
+    parser.add_argument("-r", "--reads_treshold",
                         help="The minimum number of reads for each base. (default=50)",
                         type=int, required=False,
                         default=50)
@@ -153,47 +153,52 @@ def check_file(
 
 
 def safe_create_dir(
-    folder: Union[str, Path]
+    folder: Union[str, Path],
+    force: bool
 ):
     """Create the given folder. If the folder is already present delete if the user agrees."""
     if os.path.isdir(folder):
-        while True:
-            print("WARNING! Folder " + str(folder) + " already exists, would you like to remove it?")
+        while True and not force:
+            LOG.warning("Folder " + str(folder) + " already exists, would you like to remove it?")
             choice = input("y/n: ")
             if str(choice).upper() == "Y":
-                shutil.rmtree(folder)
-                os.mkdir(folder)
-                return
+                break
             elif str(choice).upper() == "N":
                 sys.exit(0)
             else:
                 print("Please type y/Y or n/N")
+        shutil.rmtree(folder)
+        os.mkdir(folder)
     else:
         try:
             os.mkdir(folder)
         except OSError:
-            print("WARNING: failed to create directory. Exiting...")
+            LOG.error("WARNING: failed to create directory. Exiting...")
             raise
 
 
-def main_fastq(args, app_folder, out_folder, folder_name, source):
+def main_fastq(
+    args: argparse.Namespace,
+    app_folder: Path,
+    out_folder: Path,
+    source: Path
+):
     if args.reference is None:
-        raise FileNotFoundError("Missing reference genome, please supply one with -f")
-    files = check_if_folder(args.Fastq, '.fastq')
+        LOG.error("Missing reference genome, please supply one with -f")
+        raise SystemExit("Missing reference genome, please supply one with -f")
+    files = get_files_with_extension(args.fastq, '.fastq')
     for path_file in files:
-
-        print("Starting...")
         folder_name = get_folder_name(path_file)
         folder = app_folder / out_folder / folder_name
-        safe_create_dir(folder)
+        safe_create_dir(folder, args.force)
         start_time = time.time()
-        sam_file = folder + "/" + folder_name + ".sam"
+        sam_file = folder / (folder_name + ".sam")
         fastq_cmd = "bwa mem -t {} {} {} > {}".format(args.threads, args.reference, path_file, sam_file)
-        print(fastq_cmd)
+        LOG.info(f"Calling bwa with: {fastq_cmd}")
         subprocess.call(fastq_cmd, shell=True)
         print("--- %s seconds in Indexing reads to reference ---" % (time.time() - start_time))
         start_time = time.time()
-        bam_file = folder + "/" + folder_name + ".bam"
+        bam_file = folder / (folder_name + ".bam")
         cmd = "samtools view -@ {} -bS {} | samtools sort -@ {} -m 2G -o {}".format(args.threads, sam_file,
                                                                                     args.threads, bam_file)
         print(cmd)
@@ -202,10 +207,26 @@ def main_fastq(args, app_folder, out_folder, folder_name, source):
         cmd = "samtools index -@ {} {}".format(args.threads, bam_file)
         subprocess.call(cmd, shell=True)
         samtools(args.threads, folder, folder_name, bam_file, args.Quality_thresh, args.position, False,
-                 "bam", args, start_time, args.use_old)
+                 True, args, args.use_old)
         os.remove(sam_file)
+        write_log_file(folder, folder_name)
     hg_out = out_folder / PREDICTION_OUT_FILE_NAME
-    write_log_file(folder, folder_name)
+    predict_haplogroup(source, out_folder, hg_out, args.use_old)
+
+
+def main_bam(args, app_folder, out_folder, source):
+    files = get_files_with_extension(args.bamfile, '.bam')
+    LOG.info("Starting with running for bamfile...")
+    for path_file in files:
+        bam_file = path_file
+        folder_name = get_folder_name(path_file)
+        folder = app_folder / out_folder / folder_name
+        safe_create_dir(folder, args.force)
+        samtools(args.threads, folder, folder_name, bam_file, args.Quality_thresh, args.position, False,
+                 True, args, args.use_old)
+        write_log_file(folder, folder_name)
+        LOG.info(f"Finished running for {path_file.name}")
+    hg_out = out_folder / PREDICTION_OUT_FILE_NAME
     predict_haplogroup(source, out_folder, hg_out, args.use_old)
 
 
@@ -329,12 +350,12 @@ def execute_mpileup(bed, bam_file, pileupfile, quality_thresh, reference):
     subprocess.call(cmd, shell=True)
 
 
-def chromosome_table(path_file, path_folder, file_name):
-    output = path_folder + '/' + file_name + '.chr'
-    tmp_output = path_folder + "/tmp.txt"
-
+def chromosome_table(path_file: Path, path_folder: Path, file_name: str):
+    output = path_folder / (file_name + '.chr')
+    tmp_output = path_folder / "tmp.txt"
+    print()
     f = open(tmp_output, "w")
-    subprocess.call(["samtools", "idxstats", path_file], stdout=f)
+    subprocess.call(["samtools", "idxstats", str(path_file)], stdout=f)
     df_chromosome = pd.read_table(tmp_output, header=None)
 
     total_reads = sum(df_chromosome[2])
@@ -357,34 +378,50 @@ def chromosome_table(path_file, path_folder, file_name):
         return "chrY", total_reads, unmapped
 
 
-def check_if_folder(path, ext):
-    list_files = []
-    if os.path.isdir(path):
-        dirpath = os.walk(path)
-        for dirpath, dirnames, filenames in dirpath:
-            for filename in [f for f in filenames if f.endswith(ext)]:
-                files = os.path.join(dirpath, filename)
-                list_files.append(files)
-        return list_files
+def get_files_with_extension(
+    path: Union[str, Path],
+    ext: str
+) -> List[Path]:
+    """Get all files with a certain extension from a path. The path can be a file or a dir."""
+    filtered_files = []
+    path = Path(path)  # to be sure
+    if path.is_dir():
+        for file in path.iterdir():
+            if file.suffix == ext:
+                filtered_files.append(file)
+        return filtered_files
     else:
         return [path]
 
 
-def get_folder_name(path_file):
-    folder = path_file.split('/')[-1]
-    folder_name = os.path.splitext(folder)[0]
+def get_folder_name(
+    path_file: Path
+) -> str:
+    file = path_file.name
+    folder_name = os.path.splitext(file)[0]
     return folder_name
 
 
 def replace_with_bases(base, read_result):
+    print(base, read_result)
     if re.search("^[ACTG]", base):
         return read_result.replace(",", base[0]).replace(".", base[0])
     else:
         return read_result
 
 
-def extract_haplogroups(path_markerfile, reads_thresh, base_majority,
-                        path_pileupfile, fmf_output, outputfile, flag, use_old, mapped, unmapped):
+def extract_haplogroups(
+    path_markerfile: Path,
+    reads_thresh: float,
+    base_majority: int,
+    path_pileupfile: Path,
+    fmf_output: Path,
+    outputfile: Path,
+    is_bam_file: bool,
+    use_old: bool,
+    mapped: int,
+    unmapped: int
+):
     print("Extracting haplogroups...")
     markerfile = pd.read_csv(path_markerfile, header=None, sep="\t")
     markerfile.columns = ["chr", "marker_name", "haplogroup", "pos", "mutation", "anc", "der"]
@@ -402,7 +439,7 @@ def extract_haplogroups(path_markerfile, reads_thresh, base_majority,
 
     pileupfile.columns = ['chr', 'pos', 'refbase', 'reads', 'align', 'quality']
 
-    if flag == "cram":
+    if not is_bam_file:
         ref_base = pileupfile["refbase"].values
         read_results = pileupfile["align"].values
         new_read_results = list(map(replace_with_bases, ref_base, read_results))
@@ -420,8 +457,8 @@ def extract_haplogroups(path_markerfile, reads_thresh, base_majority,
     df = pd.merge(markerfile, pileupfile, on='pos')
 
     markerfile_len = len(markerfile)
-    del [[pileupfile, markerfile]]
-    gc.collect()
+    # del [[pileupfile, markerfile]]
+    # gc.collect()
 
     # valid markers from positionsfile.txt
     LOG_LIST.append("Valid markers: " + str(markerfile_len))
@@ -501,8 +538,8 @@ def extract_haplogroups(path_markerfile, reads_thresh, base_majority,
         df_out.to_csv(outputfile, sep="\t", index=False)
         return
 
-    del [[df_basemajority, df_belowzero, df_discordantgenotype, df_readsthreshold, df_freq_table, df]]
-    gc.collect()
+    # del [[df_basemajority, df_belowzero, df_discordantgenotype, df_readsthreshold, df_freq_table, df]]
+    # gc.collect()
 
     df_out = df_out[
         ["chr", "pos", "marker_name", "haplogroup", "mutation", "anc", "der", "reads", "called_perc", "called_base",
@@ -529,54 +566,65 @@ def extract_haplogroups(path_markerfile, reads_thresh, base_majority,
                 f.write('\t'.join(map(str, lst)) + f"\t{depth}\n")
 
 
-def samtools(threads, folder, folder_name, path_file, quality_thresh, markerfile, reference, flag, args, whole_time,
-             use_old):
+def samtools(
+    threads: int,
+    folder: Path,
+    folder_name: str,
+    path_file: Path,
+    quality_thresh: float,
+    markerfile: Path,
+    reference: bool,
+    is_bam_pathfile: bool,
+    args: argparse.Namespace,
+    use_old: bool
+):
     file_name = folder_name
-    outputfile = folder + "/" + folder_name + ".out"
-    fmf_output = folder + "/" + folder_name + ".fmf"
-    pileupfile = folder + "/" + folder_name + ".pu"
+    outputfile = folder / (folder_name + ".out")
+    fmf_output = folder / (folder_name + ".fmf")
+    pileupfile = folder / (folder_name + ".pu")
 
-    start_time = time.time()
-    if flag == "bam":
-        if not os.path.exists(path_file + '.bai'):
+    if is_bam_pathfile:
+        if not os.path.exists(str(path_file) + '.bai'):
             cmd = "samtools index -@{} {}".format(threads, path_file)
-            print(cmd)
+            LOG.info(f"Calling samtools with: {cmd}")
             subprocess.call(cmd, shell=True)
-    elif flag == "cram":
+    else:
         if not os.path.exists(path_file + '.crai'):
             cmd = "samtools index -@{} {}".format(threads, path_file)
-            print(cmd)
+            LOG.info(f"Calling samtools with: {cmd}")
             subprocess.call(cmd, shell=True)
-
     header, mapped, unmapped = chromosome_table(path_file, folder, file_name)
 
-    index = markerfile.rfind('.')
-    bed = markerfile[:index] + ".bed"
+    bed = str(markerfile).rsplit(".", 1)[0] + ".bed"
     check_bed(bed, markerfile, header)
 
     execute_mpileup(bed, path_file, pileupfile, quality_thresh, reference)
-    print("--- %.2f seconds in run PileUp ---" % (time.time() - start_time))
+    LOG.info("Finished running PileUp")
 
     start_time = time.time()
-    extract_haplogroups(markerfile, args.Reads_thresh, args.Base_majority,
-                        pileupfile, fmf_output, outputfile, flag, use_old, mapped, unmapped)
+    extract_haplogroups(markerfile, args.reads_treshold, args.Base_majority,
+                        pileupfile, fmf_output, outputfile, is_bam_pathfile, use_old, mapped, unmapped)
 
     os.remove(pileupfile)
     os.remove(bed)
 
     print("--- %.2f seconds in extracting haplogroups --- " % (time.time() - start_time))
-    print("--- %.2f seconds to run Yleaf  ---" % (time.time() - whole_time))
 
 
-def write_log_file(folder, folder_name):
-    # write logfile
+def write_log_file(
+    folder: Path,
+    folder_name: str
+):
+    # Write all information in LOG_LIST
+    global LOG_LIST
     try:
-        with open(folder + "/" + folder_name + ".log", "a") as log:
+        with open(folder / (folder_name + ".log"), "a") as log:
             for marker in LOG_LIST:
                 log.write(marker)
                 log.write("\n")
     except IOError:
         print("Failed to write .log file")
+    LOG_LIST = [LOG_LIST[0]]  # make sure to reset except for the command used to call
 
 
 def logo():
@@ -594,11 +642,16 @@ def logo():
         """)
 
 
-def predict_haplogroup(source, path_file, output, use_old):
+def predict_haplogroup(
+    source: Path,
+    path_file: Path,
+    output: Path,
+    use_old: bool
+):
     if use_old:
-        script = source + "/old_predict_haplogroup.py"
+        script = source / "old_predict_haplogroup.py"
     else:
-        script = source + "/predict_haplogroup.py"
+        script = source / "predict_haplogroup.py"
     cmd = "python {} -i {} -o {}".format(script, path_file, output)
     subprocess.call(cmd, shell=True)
 
