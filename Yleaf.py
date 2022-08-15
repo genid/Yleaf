@@ -104,7 +104,7 @@ def get_arguments() -> argparse.Namespace:
                         help="Delete files without asking")
 
     parser.add_argument("-f", "--reference",
-                        help="fasta reference genome sequence ", metavar="PATH", required=False)
+                        help="fasta reference genome sequence ", metavar="PATH", required=False, type=check_file)
 
     parser.add_argument("-pos", "--position",
                         help="Positions file found in the Position_files folder. Use old_position_files when using the "
@@ -191,21 +191,15 @@ def main_fastq(
         folder_name = get_folder_name(path_file)
         folder = app_folder / out_folder / folder_name
         safe_create_dir(folder, args.force)
-        start_time = time.time()
         sam_file = folder / (folder_name + ".sam")
-        fastq_cmd = "bwa mem -t {} {} {} > {}".format(args.threads, args.reference, path_file, sam_file)
-        LOG.info(f"Calling bwa with: {fastq_cmd}")
-        subprocess.call(fastq_cmd, shell=True)
-        print("--- %s seconds in Indexing reads to reference ---" % (time.time() - start_time))
-        start_time = time.time()
+        fastq_cmd = "./bwa-mem2 mem -t {} {} {} > {}".format(args.threads, args.reference, path_file, sam_file)
+        call_command(fastq_cmd)
         bam_file = folder / (folder_name + ".bam")
         cmd = "samtools view -@ {} -bS {} | samtools sort -@ {} -m 2G -o {}".format(args.threads, sam_file,
                                                                                     args.threads, bam_file)
-        print(cmd)
-        subprocess.call(cmd, shell=True)
-        print("--- %s seconds in convertin Sam to Bam ---" % (time.time() - start_time))
+        call_command(cmd)
         cmd = "samtools index -@ {} {}".format(args.threads, bam_file)
-        subprocess.call(cmd, shell=True)
+        call_command(cmd)
         samtools(args.threads, folder, folder_name, bam_file, args.Quality_thresh, args.position, False,
                  True, args, args.use_old)
         os.remove(sam_file)
@@ -254,6 +248,18 @@ def get_frequency_table(mpileup):
     df_frequency_table = pd.DataFrame.from_dict(frequency_table, orient='index')
     df_frequency_table.columns = bases
     return df_frequency_table
+
+
+def call_command(command_str: str):
+    LOG.info(f"Started running the following command: {command_str}")
+    process = subprocess.Popen(command_str, stderr=subprocess.PIPE, stdout=subprocess.PIPE, shell=True)
+    # blocking call
+    stdout, stderr = process.communicate()
+    # will only fail if returncode is not 0
+    if process.returncode != 0:
+        LOG.error(f"Above call failed with message {stderr.decode('utf-8')}")
+        raise SystemExit("Failed command execution")
+    LOG.info("Finished running the command")
 
 
 def find_all_indels(s):
