@@ -15,10 +15,13 @@ import argparse
 from pathlib import Path
 from tree import Tree, Node
 from typing import Set, Dict, Iterator, List, Any, Union, Tuple
+import logging
 
 BACKBONE_GROUPS: Set = set()
 MAIN_HAPLO_GROUPS: Set = set()
 QC1_SCORE_CACHE: Dict[str, float] = {}
+
+LOG = logging.getLogger("yleaf_logger")
 
 
 class HgMarkersLinker:
@@ -72,7 +75,7 @@ class HgMarkersLinker:
 
 def main():
     """Main entry point for prediction script"""
-    print("\tY-Haplogroup Prediction")
+    LOG.info("Starting y-Haplogroup Prediction")
     namespace = get_arguments()
     in_folder = namespace.input
     output = namespace.outfile
@@ -87,7 +90,7 @@ def main():
         best_haplotype_score = get_most_likely_haplotype(tree, haplotype_dict, namespace.minimum_score)
         add_to_final_table(final_table, haplotype_dict, best_haplotype_score, folder)
     write_final_table(final_table, output)
-    print("--- Yleaf 'Y-Haplogroup prediction' finished... ---")
+    LOG.info("Y-Haplogroup prediction finished.")
 
 
 def get_arguments() -> argparse.Namespace:
@@ -95,7 +98,7 @@ def get_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Erasmus MC: Genetic Identification\n Y-Haplogroup Prediction")
 
     parser.add_argument("-i", "--input", required=True,
-                        help="Output file or path produced from Yleaf", metavar="FILE")
+                        help="Output file or path produced from Yleaf", metavar="DIR")
 
     parser.add_argument("-ms", "--minimum_score", help="Minimum score needed in order for a prediction to be considered"
                                                        "for inclusion in the final data (default=0.7).",
@@ -346,8 +349,8 @@ def process_log_file(
                 elif line.startswith("Markers with haplogroup information"):
                     valid_markers = int(line.replace("Markers with haplogroup information:", "").strip())
     except FileNotFoundError:
-        print("WARNING: failed to find .log file from yleaf run. This information is not critical but there will be"
-              " some missing values in the output.")
+        LOG.warning("WARNING: failed to find .log file from yleaf run. This information is not critical but there"
+                    " will be some missing values in the output.")
     return total_reads, valid_markers
 
 

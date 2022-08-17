@@ -4,7 +4,9 @@ import subprocess
 import os
 from pathlib import Path
 import urllib.request
-import zipfile
+import gzip
+import shutil
+
 
 _HG19 = "hg19"
 _HG38 = "hg38"
@@ -37,17 +39,19 @@ for index in range(len(dir_names)):
             os.mkdir(dir_path)
         except IOError:
             raise IOError("Failed to create directory for output files")
-    if not Path(dir_path / f"{dir_name}.fa").exists() and not Path(dir_path / f"{dir_name}.fa.gz").exists():
+    if not Path(dir_path / f"{dir_name}.fa").exists() and not Path(f"{dir_name}.fa.gz").exists():
         print(f"Downloading the {dir_name} genome")
         urllib.request.urlretrieve(f"http://hgdownload.cse.ucsc.edu/goldenPath/{dir_name}/bigZips/{dir_name}.fa.gz",
                                    f"{dir_name}.fa.gz")
     else:
         files_already_present = True
-        print("Already found existing archive. Using existing dowloaded file...")
+        print("Already found existing archive. Using existing files.")
     if not Path(dir_path / f"{dir_name}.fa").exists():
         print("Unpacking the downloaded archive")
-        with zipfile.ZipFile(f"{dir_name}.fa.gz", "r") as zip_ref:
-            zip_ref.extractall(dir_path)
+        with gzip.open(f"{dir_name}.fa.gz", 'rb') as f_in:
+            with open(dir_path / f"{dir_name}.fa", 'wb') as f_out:
+                shutil.copyfileobj(f_in, f_out)
+        os.remove(f"{dir_name}.fa.gz")
     else:
         files_already_present = True
     have_to_index = False
@@ -62,8 +66,8 @@ for index in range(len(dir_names)):
             break
     if have_to_index:
         print("Starting with bwa-mem2 indexing for faster fastq runs")
-        cmd = "bwa-mem2 index -a bwtsw hg19/hg19.fa"
-        process = subprocess.Popen(cmd, shell=True)
+        cmd = "bwa-mem2 index hg19/hg19.fa"
+        process = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         stdout, stderr = process.communicate()
         if process.returncode != 0:
             print(f"Failed to create bwa-mem2 index, with message {stderr.decode('utf-8')}")
