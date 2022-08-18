@@ -36,6 +36,7 @@ VERSION = 3.1
 GENERAL_INFO = []
 
 PREDICTION_OUT_FILE_NAME: str = "hg_prediction.hg"
+HAPLOGROUP_IMAGE_FILE_NAME: str = "hg_tree_image.pdf"
 
 LOG = logging.getLogger("yleaf_logger")
 
@@ -45,37 +46,31 @@ def main():
     print("Erasmus MC Department of Genetic Identification\nYleaf: software tool for human Y-chromosomal "
           f"phylogenetic analysis and haplogroup inference v{VERSION}")
     logo()
-    setup_logger()
 
     args = get_arguments()
+    out_folder = Path(args.output)
+    safe_create_dir(out_folder, args.force)
+    setup_logger(out_folder)
 
-    GENERAL_INFO.append("Command: " + ' '.join(sys.argv))
+    LOG.info(f"Running Yleaf with command: {' '.join(sys.argv)}")
 
     app_folder = Path(__file__).absolute().parent
-    out_folder = Path(args.output)
     source = app_folder
-    safe_create_dir(out_folder, args.force)
-    LOG.info("Starting with Yleaf run...")
     if args.fastq:
-        main_fastq(args, app_folder, out_folder, source)
+        main_fastq(args, app_folder, out_folder)
     elif args.bamfile:
-        main_bam_cram(args, app_folder, out_folder, source, True)
+        main_bam_cram(args, app_folder, out_folder, True)
     elif args.cramfile:
-        main_bam_cram(args, app_folder, out_folder, source, False)
+        main_bam_cram(args, app_folder, out_folder, False)
     else:
         LOG.error("Please specify either a bam, a cram or a fastq file")
         raise ValueError("Please specify either a bam, a cram or a fastq file")
+    hg_out = out_folder / PREDICTION_OUT_FILE_NAME
+    predict_haplogroup(source, out_folder, hg_out, args.use_old)
+    if args.draw_haplogroups:
+        draw_haplogroups(hg_out, args.collapsed_draw_mode)
+
     LOG.info("Done!")
-
-
-def setup_logger():
-    """Setup logging"""
-    handler = logging.StreamHandler(sys.stdout)
-    formatter = logging.Formatter('%(levelname)s (%(relativeCreated)d ms) - %(message)s')
-    handler.setFormatter(formatter)
-    LOG.addHandler(handler)
-    LOG.setLevel(logging.DEBUG)
-    LOG.debug("Logger created")
 
 
 def get_arguments() -> argparse.Namespace:
@@ -128,6 +123,11 @@ def get_arguments() -> argparse.Namespace:
                         help="Add this value if you want to use the old prediction method of Yleaf (version 2.3). This"
                              " version only uses the ISOGG tree and slightly different prediction criteria.",
                         action="store_true")
+    parser.add_argument("-dh", "--draw_haplogroups", help="Draw the predicted haplogroups in the haplogroup tree.",
+                        action="store_true")
+    parser.add_argument("-hc", "--collapsed_draw_mode",
+                        help="Add this flag to compress the haplogroup tree image and remove all uninformative "
+                             "haplogroups from it.", action="store_true")
 
     args = parser.parse_args()
     return args
@@ -141,6 +141,23 @@ def check_file(
     if not object_path.exists():
         raise argparse.ArgumentTypeError("Path to provided file/dir does not exist")
     return object_path
+
+
+def setup_logger(
+    out_folder: Path
+):
+    """Setup logging"""
+    handler = logging.StreamHandler(sys.stdout)
+    formatter = logging.Formatter('%(levelname)s (%(relativeCreated)d ms) - %(message)s')
+    handler.setFormatter(formatter)
+    LOG.addHandler(handler)
+
+    file_handler = logging.FileHandler(filename=out_folder / "run.log")
+    file_handler.setFormatter(formatter)
+    LOG.addHandler(file_handler)
+
+    LOG.setLevel(logging.INFO)
+    LOG.debug("Logger created")
 
 
 def safe_create_dir(
@@ -164,7 +181,7 @@ def safe_create_dir(
         try:
             os.mkdir(folder)
         except OSError:
-            LOG.error("Failed to create directory. Exiting...")
+            print("Failed to create directory. Exiting...")
             raise
 
 
@@ -190,8 +207,7 @@ def call_command(
 def main_fastq(
     args: argparse.Namespace,
     app_folder: Path,
-    out_folder: Path,
-    source: Path
+    out_folder: Path
 ):
     if args.reference is None:
         LOG.error("Missing reference genome, please supply one with -f")
@@ -203,7 +219,8 @@ def main_fastq(
         folder = app_folder / out_folder / folder_name
         safe_create_dir(folder, args.force)
         sam_file = folder / (folder_name + ".sam")
-        fastq_cmd = "bwa-mem2 mem -t {} {} {} > {}".format(args.threads, args.reference, path_file, sam_file)
+
+        fastq_cmd = f"minimap2 -ax sr -t {args.threads} {args.reference} {path_file} > {sam_file}"
         call_command(fastq_cmd)
         bam_file = folder / (folder_name + ".bam")
         cmd = "samtools view -@ {} -bS {} | samtools sort -@ {} -m 2G -o {}".format(args.threads, sam_file,
@@ -214,16 +231,15 @@ def main_fastq(
         samtools(args.threads, folder, folder_name, bam_file, args.Quality_thresh, args.position, None,
                  True, args, args.use_old)
         os.remove(sam_file)
-        write_log_file(folder, folder_name)
-    hg_out = out_folder / PREDICTION_OUT_FILE_NAME
-    predict_haplogroup(source, out_folder, hg_out, args.use_old)
+        write_info_file(folder, folder_name)
+        LOG.info(f"Finished running for {path_file.name}")
+        print()
 
 
 def main_bam_cram(
     args: argparse.Namespace,
     app_folder: Path,
     out_folder: Path,
-    source: Path,
     is_bam: bool
 ):
     if args.reference is None and not is_bam:
@@ -242,10 +258,9 @@ def main_bam_cram(
         safe_create_dir(folder, args.force)
         samtools(args.threads, folder, folder_name, path_file, args.Quality_thresh, args.position, reference,
                  is_bam, args, args.use_old)
-        write_log_file(folder, folder_name)
+        write_info_file(folder, folder_name)
         LOG.info(f"Finished running for {path_file.name}")
-    hg_out = out_folder / PREDICTION_OUT_FILE_NAME
-    predict_haplogroup(source, out_folder, hg_out, args.use_old)
+        print()
 
 
 def get_frequency_table(mpileup):
@@ -633,19 +648,19 @@ def samtools(
     LOG.info("Finished extracting haplogroups")
 
 
-def write_log_file(
+def write_info_file(
     folder: Path,
     folder_name: str
 ):
     # Write all information in GENERAL_INFO
     global GENERAL_INFO
     try:
-        with open(folder / (folder_name + ".log"), "a") as log:
+        with open(folder / (folder_name + ".info"), "a") as f:
             for marker in GENERAL_INFO:
-                log.write(marker)
-                log.write("\n")
+                f.write(marker)
+                f.write("\n")
     except IOError:
-        LOG.warning("Failed to write .log file")
+        LOG.warning("Failed to write .info file")
     GENERAL_INFO = [GENERAL_INFO[0]]  # make sure to reset except for the command used to call
 
 
@@ -672,10 +687,24 @@ def predict_haplogroup(
 ):
     if use_old:
         script = source / "old_predict_haplogroup.py"
+        cmd = "python {} -i {} -o {}".format(script, path_file, output)
+        call_command(cmd)
     else:
-        script = source / "predict_haplogroup.py"
-    cmd = "python {} -i {} -o {}".format(script, path_file, output)
-    call_command(cmd)
+        import predict_haplogroup
+        namespace = argparse.Namespace(input=path_file, outfile=output,
+                                       minimum_score=predict_haplogroup.DEFAULT_MIN_SCORE)
+        predict_haplogroup.main(namespace)
+
+
+def draw_haplogroups(
+    haplogroup_file: Path,
+    collapsed_draw_mode: bool
+):
+    # make sure that it is only imported if requested by user
+    import haplogroup_tree_image
+    namespace = argparse.Namespace(input=haplogroup_file, collapse_mode=collapsed_draw_mode,
+                                   outfile=haplogroup_file.parent / HAPLOGROUP_IMAGE_FILE_NAME)
+    haplogroup_tree_image.main(namespace)
 
 
 if __name__ == "__main__":

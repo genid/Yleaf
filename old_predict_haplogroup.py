@@ -255,7 +255,7 @@ def process_keys(keys):
 
 
 def process_log(log_file):
-    log_file += "log"
+    log_file += "info"
     total_reads = "NA"
     valid_markers = "NA"
 
