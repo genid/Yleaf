@@ -9,7 +9,7 @@ License: GNU General Public License v3 or later
 A copy of GNU GPL v3 should have been included in this software package in LICENSE.txt.
 
 Autor: Diego Montiel Gonzalez
-Slightly by: Bram van Wersch
+Modified by: Bram van Wersch
 """
 
 import argparse
@@ -24,7 +24,7 @@ import pandas as pd
 import numpy as np
 from argparse import ArgumentParser
 from pathlib import Path
-from typing import Union, List, TextIO, Tuple
+from typing import Union, List, TextIO, Tuple, Dict
 
 from tree import Tree
 
@@ -103,21 +103,20 @@ def get_arguments() -> argparse.Namespace:
     parser.add_argument("-r", "--reads_treshold",
                         help="The minimum number of reads for each base. (default=50)",
                         type=int, required=False,
-                        default=50)
+                        default=50, metavar="INT")
 
-    parser.add_argument("-q", "--Quality_thresh",
+    parser.add_argument("-q", "--quality_thresh",
                         help="Minimum quality for each read, integer between 10 and 40. [10-40]",
-                        type=int, required=True)
+                        type=int, required=True, metavar="INT")
 
-    parser.add_argument("-b", "--Base_majority",
+    parser.add_argument("-b", "--base_majority",
                         help="The minimum percentage of a base result for acceptance, integer between 50 and 99."
                              " [50-99]",
-                        type=int, required=True)
+                        type=int, required=True, metavar="INT")
 
-    parser.add_argument("-t", "--Threads", dest="threads",
+    parser.add_argument("-t", "--threads", dest="threads",
                         help="Set number of additional threads to use during alignment BWA-MEM",
-                        type=int,
-                        default=1)
+                        type=int, default=1, metavar="INT")
 
     parser.add_argument("-old", "--use_old", dest="use_old",
                         help="Add this value if you want to use the old prediction method of Yleaf (version 2.3). This"
@@ -128,6 +127,12 @@ def get_arguments() -> argparse.Namespace:
     parser.add_argument("-hc", "--collapsed_draw_mode",
                         help="Add this flag to compress the haplogroup tree image and remove all uninformative "
                              "haplogroups from it.", action="store_true")
+    # TODO improve help
+    parser.add_argument("-pm", "--include_private_mutations", help="Include mutations made in private",
+                        action="store_true")
+    parser.add_argument("-mr", "--maximum_mutation_rate", help="Maximum rate of minor allele for it to be considered"
+                                                               " as a private mutation. (default=0.01)",
+                        default=0.01, type=float, metavar="FLOAT")
 
     args = parser.parse_args()
     return args
@@ -215,23 +220,21 @@ def main_fastq(
     files = get_files_with_extension(args.fastq, '.fastq')
     for path_file in files:
         LOG.info(f"Starting with running for {path_file}")
-        folder_name = get_folder_name(path_file)
-        folder = app_folder / out_folder / folder_name
+        folder = app_folder / out_folder / path_file.name.split(".")[0]
         safe_create_dir(folder, args.force)
-        sam_file = folder / (folder_name + ".sam")
+        sam_file = folder / (folder.name + ".sam")
 
         fastq_cmd = f"minimap2 -ax sr -t {args.threads} {args.reference} {path_file} > {sam_file}"
         call_command(fastq_cmd)
-        bam_file = folder / (folder_name + ".bam")
+        bam_file = folder / (folder.name + ".bam")
         cmd = "samtools view -@ {} -bS {} | samtools sort -@ {} -m 2G -o {}".format(args.threads, sam_file,
                                                                                     args.threads, bam_file)
         call_command(cmd)
         cmd = "samtools index -@ {} {}".format(args.threads, bam_file)
         call_command(cmd)
-        samtools(args.threads, folder, folder_name, bam_file, args.Quality_thresh, args.position, None,
-                 True, args, args.use_old)
+        samtools(folder, bam_file, None, True, args)
         os.remove(sam_file)
-        write_info_file(folder, folder_name)
+        write_info_file(folder, folder.name)
         LOG.info(f"Finished running for {path_file.name}")
         print()
 
@@ -253,43 +256,115 @@ def main_bam_cram(
     LOG.info("Starting with running for bamfile...")
     for path_file in files:
         LOG.info(f"Starting with running for {path_file}")
-        folder_name = get_folder_name(path_file)
-        folder = app_folder / out_folder / folder_name
+        folder = app_folder / out_folder / path_file.name.split(".")[0]
         safe_create_dir(folder, args.force)
-        samtools(args.threads, folder, folder_name, path_file, args.Quality_thresh, args.position, reference,
-                 is_bam, args, args.use_old)
-        write_info_file(folder, folder_name)
+        samtools(folder, path_file, reference, is_bam, args)
+        if args.include_private_mutations:
+            find_private_mutations(folder, path_file, args.reference, is_bam, args)
+        write_info_file(folder, folder.name)
         LOG.info(f"Finished running for {path_file.name}")
         print()
 
 
-def get_frequency_table(mpileup):
-    bases = ["A", "T", "G", "C", "+", "-"]
+def find_private_mutations(
+    output_folder: Path,
+    path_file: Path,
+    reference: Union[Path, None],
+    is_bam_pathfile: bool,
+    args: argparse.Namespace
+):
+    LOG.info("Starting with extracting private mutations...")
+
+    # run mpileup
+    pileup_file = output_folder / "temp_pileup.pu"
+    execute_mpileup(None, path_file, pileup_file, args.quality_thresh, reference)
+
+    # get positions with known SNPs that are not part of a haplogroup
+    filter_positions = set()
+    with open(args.position) as f:
+        for line in f:
+            filter_positions.add(line.strip().split("\t")[3])
+
+    positions_of_interest = {}
+    # TODO remove hardcoded
+    with open("hg38/snp_data_filtered.csv") as f:
+        f.readline()
+        for line in f:
+            rs, position, minor_allele, frequency = line.strip().split(",")
+            if position in filter_positions:
+                continue
+            if float(frequency) > args.maximum_mutation_rate:
+                continue
+            positions_of_interest[position] = {"rs": rs, "minor_allele": minor_allele, "frequency": frequency}
+
+    private_mutations = []
+    with open(pileup_file) as f:
+        for index, line in enumerate(f):
+            try:
+                chrom, position, ref_base, count, aligned, quality = line.strip().split()
+            except ValueError:
+                LOG.warning(f"Failed to read line {index} of pileupfile")
+                continue
+            # not on y-chromosome
+            if "y" not in chrom.lower():
+                continue
+            # not enough reads
+            if int(count) < args.reads_treshold:
+                continue
+            # not annotated in dbsnp
+            if position not in positions_of_interest:
+                # TODO need to have a different solution here
+                continue
+            if not is_bam_pathfile:
+                aligned = replace_with_bases(ref_base, aligned)
+            minor_snp_allele = positions_of_interest[position]["minor_allele"]
+            freq_dict = get_frequencies(aligned)
+            actual_allele, allele_count = max(positions_of_interest[position].items(), key=lambda x: x[1])
+            # measured allele is not the dbsnp allele
+            if actual_allele != minor_snp_allele:
+                continue
+            # not a high enough base majority measured, cannot be sure of real allele
+            if allele_count / sum(positions_of_interest[position]) * 100 < args.base_majority:
+                continue
+            rs, minor_allele, frequency = positions_of_interest[position]
+            private_mutations.append(f"{chrom}\t{position}\t{rs}\t{ref_base}->{minor_allele}\t{ref_base}\t"
+                                     f"{minor_allele}\t{allele_count}\t{frequency}\n")
+        print(private_mutations)
+    os.remove(pileup_file)
+
+
+def get_frequency_table(mpileup: List[str]) -> Dict[str, List[int]]:
     frequency_table = {}
 
-    for i in mpileup.values:
-        fastadict = {"A": 0, "T": 0, "G": 0, "C": 0}
-        sequence = i[9]  # actual sequence
-        sequence = sequence.upper()
-        sequence = trimm_caret(sequence)
-        sequence = sequence.replace("$", "")
-        indel_pos = find_all_indels(sequence)
-        # Count number of indels
-        indels = count_indels(sequence, indel_pos)
-        fastadict.update(indels)
-        fastadict["-"] += sequence.count("*")
-        # Trimm Indels
-        trimm_sequence = trimm_indels(sequence, indel_pos)
-        for seq in trimm_sequence:
-            if seq in fastadict:
-                fastadict[seq] += 1
-        frequency_table.update({i[3]: list(fastadict.values())})
-    df_frequency_table = pd.DataFrame.from_dict(frequency_table, orient='index')
-    df_frequency_table.columns = bases
-    return df_frequency_table
+    for i in mpileup:
+        fastadict = get_frequencies(i[9])
+        frequency_table[i[3]] = list(fastadict.values())
+    return frequency_table
 
 
-def find_all_indels(s):
+def get_frequencies(
+    sequence: str
+) -> Dict[str, int]:
+    fastadict = {"A": 0, "T": 0, "G": 0, "C": 0}
+    sequence = sequence.upper()
+    sequence = trimm_caret(sequence)
+    sequence = sequence.replace("$", "")
+    indel_pos = find_all_indels(sequence)
+    # Count number of indels
+    indels = count_indels(sequence, indel_pos)
+    fastadict.update(indels)
+    fastadict["-"] += sequence.count("*")
+    # Trimm Indels
+    trimm_sequence = trimm_indels(sequence, indel_pos)
+    for seq in trimm_sequence:
+        if seq in fastadict:
+            fastadict[seq] += 1
+    return fastadict
+
+
+def find_all_indels(
+        s: str
+) -> List[int]:
     list_pos = []
     for i in find_all(s, "-"):
         list_pos.append(i)
@@ -298,7 +373,10 @@ def find_all_indels(s):
     return sorted(list_pos)
 
 
-def count_indels(s, pos):
+def count_indels(
+    s: str,
+    pos: List[int]
+) -> Dict[str, int]:
     dict_indel = {"+": 0, "-": 0}
     if len(pos) == 0:
         return dict_indel
@@ -312,7 +390,10 @@ def count_indels(s, pos):
     return dict_indel
 
 
-def trimm_indels(s, pos):
+def trimm_indels(
+    s: str,
+    pos: List[int]
+) -> str:
     # Receives a sequence and trimms indels
     if len(pos) == 0:
         return s
@@ -340,7 +421,9 @@ def trimm_indels(s, pos):
     return u_sequence
 
 
-def trimm_caret(s):
+def trimm_caret(
+    s: str
+) -> str:
     list_pos = []
     for i in find_all(s, "^"):
         list_pos.append(i)
@@ -361,32 +444,38 @@ def trimm_caret(s):
     return sequence
 
 
-def find_all(c, s):
+def find_all(
+    c: str,
+    s: str
+) -> List[int]:
     return [x for x in range(c.find(s), len(c)) if c[x] == s]
 
 
 def write_bed_file(
-    bed: str,
+    bed: Path,
     markerfile: Path,
     header: str
 ):
     mf = pd.read_csv(markerfile, sep="\t", header=None)
     mf = mf[[0, 3]]
     mf[0] = header
-    mf.to_csv(bed, sep="\t", index=False, header=False)
+    mf.to_csv(str(bed), sep="\t", index=False, header=False)
 
 
 def execute_mpileup(
-    bed: str,
+    bed: Union[Path, None],
     bam_file: Path,
     pileupfile: Path,
     quality_thresh: float,
     reference: Union[Path, None]
 ):
+    cmd = "samtools mpileup"
+    if bed is not None:
+        cmd += f" -l {str(bed)}"
+
     if reference is not None:
-        cmd = "samtools mpileup -l {} -f {} -AQ{} {} > {}".format(bed, reference, quality_thresh, bam_file, pileupfile)
-    else:
-        cmd = "samtools mpileup -l {} -AQ{} {} > {}".format(bed, quality_thresh, bam_file, pileupfile)
+        cmd += f" -f {str(reference)}"
+    cmd += f" -AQ{quality_thresh} {str(bam_file)} > {str(pileupfile)}"
     call_command(cmd)
 
 
@@ -441,14 +530,6 @@ def get_files_with_extension(
         return [path]
 
 
-def get_folder_name(
-    path_file: Path
-) -> str:
-    file = path_file.name
-    folder_name = os.path.splitext(file)[0]
-    return folder_name
-
-
 def replace_with_bases(base, read_result):
     if re.search("^[ACTG]", base):
         return read_result.replace(",", base[0]).replace(".", base[0])
@@ -464,9 +545,7 @@ def extract_haplogroups(
     fmf_output: Path,
     outputfile: Path,
     is_bam_file: bool,
-    use_old: bool,
-    mapped: int,
-    unmapped: int
+    use_old: bool
 ):
     LOG.info("Starting with extracting haplogroups...")
     markerfile = pd.read_csv(path_markerfile, header=None, sep="\t")
@@ -491,9 +570,6 @@ def extract_haplogroups(
         new_read_results = list(map(replace_with_bases, ref_base, read_results))
         pileupfile["align"] = new_read_results
 
-    GENERAL_INFO.append("Total of mapped reads: " + str(mapped))
-    GENERAL_INFO.append("Total of unmapped reads: " + str(unmapped))
-
     intersect_pos = np.intersect1d(pileupfile['pos'], markerfile['pos'])
     markerfile = markerfile.loc[markerfile['pos'].isin(intersect_pos)]
     markerfile = markerfile.sort_values(by=['pos'])
@@ -517,7 +593,10 @@ def extract_haplogroups(
 
     df = df[~df.index.isin(index_belowzero)]
 
-    df_freq_table = get_frequency_table(df)
+    freq_dict = get_frequency_table(df.values)
+    df_freq_table = pd.DataFrame.from_dict(freq_dict, orient='index')
+    df_freq_table.columns = ["A", "T", "G", "C", "+", "-"]
+
     df_freq_table = df_freq_table.drop(['+', '-'], axis=1)
     df = df.drop(['refbase', 'align', 'quality'], axis=1)
 
@@ -608,42 +687,40 @@ def extract_haplogroups(
 
 
 def samtools(
-    threads: int,
-    folder: Path,
-    folder_name: str,
+    output_folder: Path,
     path_file: Path,
-    quality_thresh: float,
-    markerfile: Path,
     reference: Union[Path, None],
     is_bam_pathfile: bool,
     args: argparse.Namespace,
-    use_old: bool
 ):
-    file_name = folder_name
-    outputfile = folder / (folder_name + ".out")
-    fmf_output = folder / (folder_name + ".fmf")
-    pileupfile = folder / (folder_name + ".pu")
+
+    outputfile = output_folder / (output_folder.name + ".out")
+    fmf_output = output_folder / (output_folder.name + ".fmf")
+    pileupfile = output_folder / "temp_pileup.pu"
 
     if is_bam_pathfile:
         if not any([Path(str(path_file) + ".bai").exists(), Path(str(path_file).rstrip(".bam") + '.bai').exists()]):
-            cmd = "samtools index -@{} {}".format(threads, path_file)
+            cmd = "samtools index -@{} {}".format(args.threads, path_file)
             call_command(cmd)
     else:
         if not any([Path(str(path_file) + ".crai").exists(), Path(str(path_file).rstrip(".cram") + '.crai').exists()]):
-            cmd = "samtools index -@{} {}".format(threads, path_file)
+            cmd = "samtools index -@{} {}".format(args.threads, path_file)
             call_command(cmd)
-    header, mapped, unmapped = chromosome_table(path_file, folder, file_name)
+    header, mapped, unmapped = chromosome_table(path_file, output_folder, output_folder.name)
 
-    bed = str(markerfile).rsplit(".", 1)[0] + ".bed"
-    write_bed_file(bed, markerfile, header)
+    bed = Path(str(args.position).rsplit(".", 1)[0] + ".bed")
+    if not bed.exists():
+        write_bed_file(bed, args.position, header)
 
-    execute_mpileup(bed, path_file, pileupfile, quality_thresh, reference)
+    execute_mpileup(bed, path_file, pileupfile, args.quality_thresh, reference)
 
-    extract_haplogroups(markerfile, args.reads_treshold, args.Base_majority,
-                        pileupfile, fmf_output, outputfile, is_bam_pathfile, use_old, mapped, unmapped)
+    GENERAL_INFO.append("Total of mapped reads: " + str(mapped))
+    GENERAL_INFO.append("Total of unmapped reads: " + str(unmapped))
+
+    extract_haplogroups(args.position, args.reads_treshold, args.base_majority,
+                        pileupfile, fmf_output, outputfile, is_bam_pathfile, args.use_old)
 
     os.remove(pileupfile)
-    os.remove(bed)
 
     LOG.info("Finished extracting haplogroups")
 
