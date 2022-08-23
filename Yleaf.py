@@ -25,6 +25,7 @@ import numpy as np
 from argparse import ArgumentParser
 from pathlib import Path
 from typing import Union, List, TextIO, Tuple, Dict
+from collections import defaultdict
 
 from tree import Tree
 
@@ -56,6 +57,10 @@ def main():
 
     app_folder = Path(__file__).absolute().parent
     source = app_folder
+    if args.include_private_mutations and args.snp_file is None:
+        LOG.error("Missing snp_file. Please specify one when requesting to include private mutations. These files can"
+                  " be found in the snp_data_tables folder.")
+        raise SystemExit("Missing snp_file argument. Please supply it.")
     if args.fastq:
         main_fastq(args, app_folder, out_folder)
     elif args.bamfile:
@@ -128,8 +133,13 @@ def get_arguments() -> argparse.Namespace:
                         help="Add this flag to compress the haplogroup tree image and remove all uninformative "
                              "haplogroups from it.", action="store_true")
     # TODO improve help
-    parser.add_argument("-pm", "--include_private_mutations", help="Include mutations made in private",
+    parser.add_argument("-pm", "--include_private_mutations", help="Include private mutations. These are mutations not"
+                                                                   " captured in a haplogroup but observed in the "
+                                                                   "individual.",
                         action="store_true")
+    parser.add_argument("-sf", "--snp_file", help="File containing snp's with confirmed rates, for the identification"
+                                                  " of private mutations",
+                        metavar="FILE", type=check_file, default=None)
     parser.add_argument("-mr", "--maximum_mutation_rate", help="Maximum rate of minor allele for it to be considered"
                                                                " as a private mutation. (default=0.01)",
                         default=0.01, type=float, metavar="FLOAT")
@@ -191,8 +201,8 @@ def safe_create_dir(
 
 
 def call_command(
-    command_str: str,
-    stdout_location: TextIO = None
+        command_str: str,
+        stdout_location: TextIO = None
 ):
     """Call a command on the command line and make sure to exit if it fails."""
     LOG.info(f"Started running the following command: {command_str}")
@@ -234,6 +244,8 @@ def main_fastq(
         call_command(cmd)
         samtools(folder, bam_file, None, True, args)
         os.remove(sam_file)
+        if args.include_private_mutations:
+            find_private_mutations(folder, path_file, reference, args)
         write_info_file(folder, folder.name)
         LOG.info(f"Finished running for {path_file.name}")
         print()
@@ -260,7 +272,7 @@ def main_bam_cram(
         safe_create_dir(folder, args.force)
         samtools(folder, path_file, reference, is_bam, args)
         if args.include_private_mutations:
-            find_private_mutations(folder, path_file, args.reference, is_bam, args)
+            find_private_mutations(folder, path_file, reference, args)
         write_info_file(folder, folder.name)
         LOG.info(f"Finished running for {path_file.name}")
         print()
@@ -270,7 +282,6 @@ def find_private_mutations(
     output_folder: Path,
     path_file: Path,
     reference: Union[Path, None],
-    is_bam_pathfile: bool,
     args: argparse.Namespace
 ):
     LOG.info("Starting with extracting private mutations...")
@@ -285,18 +296,16 @@ def find_private_mutations(
         for line in f:
             filter_positions.add(line.strip().split("\t")[3])
 
-    positions_of_interest = {}
-    # TODO remove hardcoded
-    with open("hg38/snp_data_filtered.csv") as f:
+    positions_of_interest = defaultdict(list)
+    with open(args.snp_file) as f:
         f.readline()
         for line in f:
-            rs, position, minor_allele, frequency = line.strip().split(",")
-            if position in filter_positions:
-                continue
+            rs, position, major_allele, minor_allele, frequency = line.strip().split(",")
             if float(frequency) > args.maximum_mutation_rate:
                 continue
-            positions_of_interest[position] = {"rs": rs, "minor_allele": minor_allele, "frequency": frequency}
-
+            positions_of_interest[position].append({"rs": rs, "major_allele": major_allele,
+                                                    "minor_allele": minor_allele, "frequency": frequency})
+    positions_of_interest = dict(positions_of_interest)
     private_mutations = []
     with open(pileup_file) as f:
         for index, line in enumerate(f):
@@ -306,36 +315,47 @@ def find_private_mutations(
                 LOG.warning(f"Failed to read line {index} of pileupfile")
                 continue
             # not on y-chromosome
-            if "y" not in chrom.lower():
+            if "y" not in chrom.split("_")[0].lower():
                 continue
             # not enough reads
             if int(count) < args.reads_treshold:
                 continue
+            if reference is not None:
+                aligned = replace_with_bases(ref_base, aligned)
+            if position in filter_positions:
+                continue
+            freq_dict = get_frequencies(aligned)
+            actual_allele, allele_count = max(freq_dict.items(), key=lambda x: x[1])
+            called_percentage = allele_count / sum(freq_dict.values()) * 100
+            # not a high enough base majority measured, cannot be sure of real allele
+            if called_percentage < args.base_majority:
+                continue
             # not annotated in dbsnp
             if position not in positions_of_interest:
-                # TODO need to have a different solution here
                 continue
-            if not is_bam_pathfile:
-                aligned = replace_with_bases(ref_base, aligned)
-            minor_snp_allele = positions_of_interest[position]["minor_allele"]
-            freq_dict = get_frequencies(aligned)
-            actual_allele, allele_count = max(positions_of_interest[position].items(), key=lambda x: x[1])
-            # measured allele is not the dbsnp allele
-            if actual_allele != minor_snp_allele:
-                continue
-            # not a high enough base majority measured, cannot be sure of real allele
-            if allele_count / sum(positions_of_interest[position]) * 100 < args.base_majority:
-                continue
-            rs, minor_allele, frequency = positions_of_interest[position]
-            private_mutations.append(f"{chrom}\t{position}\t{rs}\t{ref_base}->{minor_allele}\t{ref_base}\t"
-                                     f"{minor_allele}\t{allele_count}\t{frequency}\n")
-        print(private_mutations)
+                # private_mutations.append(f"{chrom}\t{position}\t-\t{ref_base}->{actual_allele}\t{ref_base}\t"
+                #                          f"{actual_allele}\t{allele_count}\t{called_percentage}\t{frequency}\n")
+            else:
+                possible_minor_alleles = {dct["minor_allele"] for dct in positions_of_interest[position]}
+                # measured allele is not the dbsnp allele
+                if actual_allele not in possible_minor_alleles:
+                    continue
+
+                matched_pos_dct = [dct for dct in positions_of_interest[position]
+                                   if dct["minor_allele"] == actual_allele][0]
+                rs, major_allele, minor_allele, frequency = matched_pos_dct.values()
+                private_mutations.append(f"{chrom}\t{position}\t{rs}\t{major_allele}->{actual_allele}\t{major_allele}\t"
+                                         f"{actual_allele}\t{allele_count}\t{called_percentage}\t{frequency}\n")
     os.remove(pileup_file)
+    with open(output_folder / "private_mutations.csv", "w") as f:
+        f.write(''.join(private_mutations))
+    LOG.info("Finished extracting private mutations")
 
 
-def get_frequency_table(mpileup: List[str]) -> Dict[str, List[int]]:
+def get_frequency_table(
+    mpileup: List[str]
+) -> Dict[str, List[int]]:
     frequency_table = {}
-
     for i in mpileup:
         fastadict = get_frequencies(i[9])
         frequency_table[i[3]] = list(fastadict.values())
@@ -363,7 +383,7 @@ def get_frequencies(
 
 
 def find_all_indels(
-        s: str
+    s: str
 ) -> List[int]:
     list_pos = []
     for i in find_all(s, "-"):
@@ -530,7 +550,10 @@ def get_files_with_extension(
         return [path]
 
 
-def replace_with_bases(base, read_result):
+def replace_with_bases(
+    base: str,
+    read_result: str
+) -> str:
     if re.search("^[ACTG]", base):
         return read_result.replace(",", base[0]).replace(".", base[0])
     else:
