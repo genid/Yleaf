@@ -1,2 +1,6 @@
 /__pycache__
-test
+test*
+hg19
+hg38
+Position_files/new_position_files/WGS_Yfull_hg38.bed
+Position_files/new_position_files/WGS_Yfull_hg19.bed

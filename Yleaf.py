@@ -24,8 +24,8 @@ import pandas as pd
 import numpy as np
 from argparse import ArgumentParser
 from pathlib import Path
-from typing import Union, List, TextIO, Tuple, Dict
-from collections import defaultdict
+from typing import Union, List, TextIO, Tuple, Dict, Set
+from collections import defaultdict, deque
 
 from tree import Tree
 
@@ -40,6 +40,11 @@ PREDICTION_OUT_FILE_NAME: str = "hg_prediction.hg"
 HAPLOGROUP_IMAGE_FILE_NAME: str = "hg_tree_image.pdf"
 
 LOG = logging.getLogger("yleaf_logger")
+
+CACHED_POSITION_DATA: Union[Set[str], None] = None
+CACHED_SNP_DATABASE: Union[Dict[str, List[Dict[str, str]]], None] = None
+CACHED_REFERENCE_FILE: Union[List[str], None] = None
+NUM_SET: Set[str] = {"0", "1", "2", "3", "4", "5", "6", "7", "8", "9"}
 
 
 def main():
@@ -57,10 +62,6 @@ def main():
 
     app_folder = Path(__file__).absolute().parent
     source = app_folder
-    if args.include_private_mutations and args.snp_file is None:
-        LOG.error("Missing snp_file. Please specify one when requesting to include private mutations. These files can"
-                  " be found in the snp_data_tables folder.")
-        raise SystemExit("Missing snp_file argument. Please supply it.")
     if args.fastq:
         main_fastq(args, app_folder, out_folder)
     elif args.bamfile:
@@ -83,66 +84,63 @@ def get_arguments() -> argparse.Namespace:
 
     parser.add_argument("-fastq", "--fastq", required=False,
                         help="Use raw FastQ files", metavar="PATH", type=check_file)
-
     parser.add_argument("-bam", "--bamfile", required=False,
                         help="input BAM file", metavar="PATH", type=check_file)
-
     parser.add_argument("-cram", "--cramfile", required=False,
                         help="input CRAM file", metavar="PATH", type=check_file)
-
     parser.add_argument("-force", "--force", action="store_true",
                         help="Delete files without asking")
-
     parser.add_argument("-f", "--reference",
-                        help="fasta reference genome sequence ", metavar="PATH", required=False, type=check_file,
+                        help="fasta reference genome sequence. This file can be found in the folders created during the"
+                             " install script. You can choose the chrY fasta file if only ychromosomal reads are "
+                             "included in the fastq file.", metavar="PATH", required=False, type=check_file,
                         default=None)
-
     parser.add_argument("-pos", "--position",
                         help="Positions file found in the Position_files folder. Use old_position_files when using the "
                              " -old flag, otherwise use the new_position_files.", metavar="PATH", required=True,
                         type=check_file)
-
     parser.add_argument("-out", "--output", required=True,
                         help="Folder name containing outputs", metavar="STRING")
-
     parser.add_argument("-r", "--reads_treshold",
                         help="The minimum number of reads for each base. (default=50)",
                         type=int, required=False,
                         default=50, metavar="INT")
-
     parser.add_argument("-q", "--quality_thresh",
                         help="Minimum quality for each read, integer between 10 and 40. [10-40]",
                         type=int, required=True, metavar="INT")
-
     parser.add_argument("-b", "--base_majority",
                         help="The minimum percentage of a base result for acceptance, integer between 50 and 99."
                              " [50-99]",
                         type=int, required=True, metavar="INT")
-
     parser.add_argument("-t", "--threads", dest="threads",
                         help="Set number of additional threads to use during alignment BWA-MEM",
                         type=int, default=1, metavar="INT")
 
+    # arguments for prediction
     parser.add_argument("-old", "--use_old", dest="use_old",
                         help="Add this value if you want to use the old prediction method of Yleaf (version 2.3). This"
                              " version only uses the ISOGG tree and slightly different prediction criteria.",
                         action="store_true")
+
+    # arguments for drawing haplo group trees
     parser.add_argument("-dh", "--draw_haplogroups", help="Draw the predicted haplogroups in the haplogroup tree.",
                         action="store_true")
     parser.add_argument("-hc", "--collapsed_draw_mode",
                         help="Add this flag to compress the haplogroup tree image and remove all uninformative "
                              "haplogroups from it.", action="store_true")
-    # TODO improve help
-    parser.add_argument("-pm", "--include_private_mutations", help="Include private mutations. These are mutations not"
-                                                                   " captured in a haplogroup but observed in the "
-                                                                   "individual.",
-                        action="store_true")
-    parser.add_argument("-sf", "--snp_file", help="File containing snp's with confirmed rates, for the identification"
-                                                  " of private mutations",
+
+    # arguments for private mutations
+    parser.add_argument("-sd", "--snp_database_file",
+                        help="Csv file containing snp's with confirmed rates, for the identification of private "
+                             "mutations. Can be found in the snp_data_tables folder. This will identify mutations from"
+                             " dbsnp and the 1000 genomes project that have an estimated population frequency.",
                         metavar="FILE", type=check_file, default=None)
     parser.add_argument("-mr", "--maximum_mutation_rate", help="Maximum rate of minor allele for it to be considered"
                                                                " as a private mutation. (default=0.01)",
                         default=0.01, type=float, metavar="FLOAT")
+    parser.add_argument("-sr", "--snp_reference_file",
+                        help="Reference file for identifying SNPs that are not present in the snp_file. These"
+                             "have no associated frequency.", default=None)
 
     args = parser.parse_args()
     return args
@@ -201,8 +199,8 @@ def safe_create_dir(
 
 
 def call_command(
-        command_str: str,
-        stdout_location: TextIO = None
+    command_str: str,
+    stdout_location: TextIO = None
 ):
     """Call a command on the command line and make sure to exit if it fails."""
     LOG.info(f"Started running the following command: {command_str}")
@@ -244,7 +242,7 @@ def main_fastq(
         call_command(cmd)
         samtools(folder, bam_file, None, True, args)
         os.remove(sam_file)
-        if args.include_private_mutations:
+        if args.snp_reference_file is not None or args.snp_database_file is not None:
             find_private_mutations(folder, path_file, reference, args)
         write_info_file(folder, folder.name)
         LOG.info(f"Finished running for {path_file.name}")
@@ -271,7 +269,7 @@ def main_bam_cram(
         folder = app_folder / out_folder / path_file.name.split(".")[0]
         safe_create_dir(folder, args.force)
         samtools(folder, path_file, reference, is_bam, args)
-        if args.include_private_mutations:
+        if args.snp_reference_file is not None or args.snp_database_file is not None:
             find_private_mutations(folder, path_file, reference, args)
         write_info_file(folder, folder.name)
         LOG.info(f"Finished running for {path_file.name}")
@@ -285,37 +283,29 @@ def find_private_mutations(
     args: argparse.Namespace
 ):
     LOG.info("Starting with extracting private mutations...")
+    snp_reference_file = args.snp_reference_file
+    snp_database_file = args.snp_database_file
 
     # run mpileup
     pileup_file = output_folder / "temp_pileup.pu"
     execute_mpileup(None, path_file, pileup_file, args.quality_thresh, reference)
 
-    # get positions with known SNPs that are not part of a haplogroup
-    filter_positions = set()
-    with open(args.position) as f:
-        for line in f:
-            filter_positions.add(line.strip().split("\t")[3])
+    LOG.info("Loading reference files")
+    filter_positions = load_filter_data(args.position)
+    known_snps = load_snp_database_file(snp_database_file, args.maximum_mutation_rate)
+    ychrom_reference = load_reference_file(snp_reference_file)
 
-    positions_of_interest = defaultdict(list)
-    with open(args.snp_file) as f:
-        f.readline()
-        for line in f:
-            rs, position, major_allele, minor_allele, frequency = line.strip().split(",")
-            if float(frequency) > args.maximum_mutation_rate:
-                continue
-            positions_of_interest[position].append({"rs": rs, "major_allele": major_allele,
-                                                    "minor_allele": minor_allele, "frequency": frequency})
-    positions_of_interest = dict(positions_of_interest)
+    LOG.info("Finding private mutations...")
     private_mutations = []
+    confirmed_private_mutations = []
     with open(pileup_file) as f:
         for index, line in enumerate(f):
             try:
                 chrom, position, ref_base, count, aligned, quality = line.strip().split()
-            except ValueError:
-                LOG.warning(f"Failed to read line {index} of pileupfile")
+            except valueerror:
+                log.warning(f"failed to read line {index} of pileupfile")
                 continue
-            # not on y-chromosome
-            if "y" not in chrom.split("_")[0].lower():
+            if chrom != "chrY":
                 continue
             # not enough reads
             if int(count) < args.reads_treshold:
@@ -324,32 +314,96 @@ def find_private_mutations(
                 aligned = replace_with_bases(ref_base, aligned)
             if position in filter_positions:
                 continue
-            freq_dict = get_frequencies(aligned)
-            actual_allele, allele_count = max(freq_dict.items(), key=lambda x: x[1])
-            called_percentage = allele_count / sum(freq_dict.values()) * 100
-            # not a high enough base majority measured, cannot be sure of real allele
-            if called_percentage < args.base_majority:
-                continue
+
             # not annotated in dbsnp
-            if position not in positions_of_interest:
-                continue
-                # private_mutations.append(f"{chrom}\t{position}\t-\t{ref_base}->{actual_allele}\t{ref_base}\t"
-                #                          f"{actual_allele}\t{allele_count}\t{called_percentage}\t{frequency}\n")
-            else:
-                possible_minor_alleles = {dct["minor_allele"] for dct in positions_of_interest[position]}
+            if position not in known_snps and snp_reference_file is not None:
+                freq_dict = get_frequencies(aligned)
+                actual_allele, allele_count = max(freq_dict.items(), key=lambda x: x[1])
+                called_percentage = allele_count / sum(freq_dict.values()) * 100
+                # not a high enough base majority measured, cannot be sure of real allele
+                if called_percentage < args.base_majority:
+                    continue
+                ref_base = ychrom_reference[int(position) - 1].upper()
+                if ref_base == actual_allele:
+                    continue
+                private_mutations.append(f"{chrom}\t{position}\t-\t{ref_base}->{actual_allele}\t{ref_base}\t"
+                                         f"{actual_allele}\t{allele_count}\t{called_percentage}\tNA\n")
+            elif position in known_snps and snp_database_file is not None:
+                freq_dict = get_frequencies(aligned)
+                actual_allele, allele_count = max(freq_dict.items(), key=lambda x: x[1])
+                called_percentage = allele_count / sum(freq_dict.values()) * 100
+                # not a high enough base majority measured, cannot be sure of real allele
+                if called_percentage < args.base_majority:
+                    continue
+                possible_minor_alleles = {dct["minor_allele"] for dct in known_snps[position]}
                 # measured allele is not the dbsnp allele
                 if actual_allele not in possible_minor_alleles:
                     continue
 
-                matched_pos_dct = [dct for dct in positions_of_interest[position]
+                matched_pos_dct = [dct for dct in known_snps[position]
                                    if dct["minor_allele"] == actual_allele][0]
                 rs, major_allele, minor_allele, frequency = matched_pos_dct.values()
-                private_mutations.append(f"{chrom}\t{position}\t{rs}\t{major_allele}->{actual_allele}\t{major_allele}\t"
-                                         f"{actual_allele}\t{allele_count}\t{called_percentage}\t{frequency}\n")
+                confirmed_private_mutations.append(f"{chrom}\t{position}\t{rs}\t{major_allele}->{actual_allele}\t"
+                                                   f"{major_allele}\t{actual_allele}\t{allele_count}\t"
+                                                   f"{called_percentage}\t{frequency}\n")
     os.remove(pileup_file)
     with open(output_folder / "private_mutations.csv", "w") as f:
+        f.write(f"chrom\tposition\trs_nr\tmutation\treference\tactual\treads\tcalled_percentage\tfrequency\n")
+        f.write(''.join(confirmed_private_mutations))
         f.write(''.join(private_mutations))
     LOG.info("Finished extracting private mutations")
+
+
+def load_filter_data(
+    path: Path
+) -> Set[str]:
+    global CACHED_POSITION_DATA
+    if CACHED_POSITION_DATA is None:
+        CACHED_POSITION_DATA = set()
+        with open(path) as f:
+            for line in f:
+                CACHED_POSITION_DATA.add(line.strip().split("\t")[3])
+    return CACHED_POSITION_DATA
+
+
+def load_snp_database_file(
+    path: Path,
+    maximum_mutation_rate: float
+) -> Union[Dict[str, List[Dict[str, str]]], None]:
+    global CACHED_SNP_DATABASE
+
+    if path is not None:
+        if CACHED_SNP_DATABASE is None:
+            CACHED_SNP_DATABASE = defaultdict(list)
+            with open(path) as f:
+                f.readline()
+                for line in f:
+                    rs, position, major_allele, minor_allele, frequency = line.strip().split(",")
+                    if float(frequency) > maximum_mutation_rate:
+                        continue
+                    CACHED_SNP_DATABASE[position].append({"rs": rs, "major_allele": major_allele,
+                                                          "minor_allele": minor_allele, "frequency": frequency})
+            CACHED_SNP_DATABASE = dict(CACHED_SNP_DATABASE)
+        return CACHED_SNP_DATABASE
+    else:
+        return None
+
+
+def load_reference_file(
+    path: Path
+) -> Union[List[str], None]:
+    global CACHED_REFERENCE_FILE
+    if path is not None:
+        if CACHED_REFERENCE_FILE is None:
+            CACHED_REFERENCE_FILE = []
+            with open(path) as f:
+                for line in f:
+                    if line.startswith(">"):
+                        continue
+                    CACHED_REFERENCE_FILE.extend(line.strip())
+        return CACHED_REFERENCE_FILE
+    else:
+        return None
 
 
 def get_frequency_table(
@@ -365,110 +419,39 @@ def get_frequency_table(
 def get_frequencies(
     sequence: str
 ) -> Dict[str, int]:
-    fastadict = {"A": 0, "T": 0, "G": 0, "C": 0}
+    fastadict = {"A": 0, "T": 0, "G": 0, "C": 0, "-": 0, "+": 0, "*": 0}
     sequence = sequence.upper()
-    sequence = trimm_caret(sequence)
-    sequence = sequence.replace("$", "")
-    indel_pos = find_all_indels(sequence)
-    # Count number of indels
-    indels = count_indels(sequence, indel_pos)
-    fastadict.update(indels)
-    fastadict["-"] += sequence.count("*")
-    # Trimm Indels
-    trimm_sequence = trimm_indels(sequence, indel_pos)
-    for seq in trimm_sequence:
-        if seq in fastadict:
-            fastadict[seq] += 1
+    index = 0
+    while index < len(sequence):
+        char = sequence[index]
+        if char in fastadict:
+            fastadict[char] += 1
+            index += 1
+        elif char == "^":
+            index += 2
+        elif char in {"-", "+"}:
+            index += 1
+            digit, index = find_digit(sequence, index)
+            index += digit
+        else:
+            index += 1
+    fastadict["-"] += fastadict["*"]
+    del fastadict["*"]
     return fastadict
 
 
-def find_all_indels(
-    s: str
-) -> List[int]:
-    list_pos = []
-    for i in find_all(s, "-"):
-        list_pos.append(i)
-    for i in find_all(s, "+"):
-        list_pos.append(i)
-    return sorted(list_pos)
-
-
-def count_indels(
-    s: str,
-    pos: List[int]
-) -> Dict[str, int]:
-    dict_indel = {"+": 0, "-": 0}
-    if len(pos) == 0:
-        return dict_indel
-    if len(pos) > 0:
-        for i in range(0, len(pos)):
-            try:  # in case it is not a number but a base pair e.g. A
-                dict_indel[s[pos[i]]] += int(s[pos[i] + 1])
-            except ValueError:
-                dict_indel[s[pos[i]]] += 1
-                continue
-    return dict_indel
-
-
-def trimm_indels(
-    s: str,
-    pos: List[int]
-) -> str:
-    # Receives a sequence and trimms indels
-    if len(pos) == 0:
-        return s
-    start = pos[0]
-    count = (start + 1)
-    try:  # in case it is not a number but a base pair e.g. A
-        end = count + int(s[count]) + 1
-    except ValueError:
-        end = start + 1
-    u_sequence = s[:start]
-    if len(pos) > 1:
-        for i in range(1, len(pos)):
-            start = end
-            u_sequence += s[start:pos[i]]
-            start = pos[i]
-            count = (start + 1)
-            try:  # in case it is not a number but a base pair e.g. A
-                end = count + int(s[count]) + 1
-            except ValueError:
-                end = start + 1
-            if pos[-1] == pos[i]:
-                u_sequence += s[end:]
-    else:
-        u_sequence += s[end:]
-    return u_sequence
-
-
-def trimm_caret(
-    s: str
-) -> str:
-    list_pos = []
-    for i in find_all(s, "^"):
-        list_pos.append(i)
-    if len(list_pos) == 0:
-        return s
-    i = 0
-    start = 0
-    sequence = ""
-    while i < len(s):
-        if s[i] == "^":
-            end = i
-            sequence += (s[start:end])
-            start = i + 1
-        elif i >= list_pos[-1] + 1:
-            sequence += (s[list_pos[-1] + 1:])
-            break
-        i += 1
-    return sequence
-
-
-def find_all(
-    c: str,
-    s: str
-) -> List[int]:
-    return [x for x in range(c.find(s), len(c)) if c[x] == s]
+def find_digit(sequence: str, index: int) -> Tuple[int, int]:
+    # first is always a digit
+    nr = [sequence[index]]
+    index += 1
+    while True:
+        char = sequence[index]
+        # this seems to be faster than isdigit()
+        if char in NUM_SET:
+            nr.append(char)
+            index += 1
+            continue
+        return int(''.join(nr)), index
 
 
 def write_bed_file(

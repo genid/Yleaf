@@ -60,13 +60,31 @@ def install_genome_files(dir_name):
         print(f"Downloading the {dir_name} genome...")
         urllib.request.urlretrieve(f"http://hgdownload.cse.ucsc.edu/goldenPath/{dir_name}/bigZips/{dir_name}.fa.gz",
                                    f"{dir_name}.fa.gz")
-    full_fasta_file = Path(dir_path / f"{dir_name}.fa")
+    full_fasta_file = dir_path / f"{dir_name}.fa"
     if not full_fasta_file.exists():
         print("Unpacking the downloaded archive...")
         with gzip.open(f"{dir_name}.fa.gz", 'rb') as f_in:
             with open(dir_path / f"{dir_name}.fa", 'wb') as f_out:
                 shutil.copyfileobj(f_in, f_out)
         os.remove(f"{dir_name}.fa.gz")
+    ychrom_file = dir_path / "chrY.fa"
+    if not ychrom_file.exists():
+        print("Writing Ychromosomal data")
+        get_ychrom_data(full_fasta_file, ychrom_file)
+
+
+def get_ychrom_data(full_data_path: Path, yhcrom_file: Path):
+    with open(yhcrom_file, "w") as fo:
+        with open(full_data_path) as fi:
+            record = False
+            for line in fi:
+                if line == ">chrY\n":
+                    record = True
+                    fo.write(line)
+                elif record:
+                    if line.startswith(">"):
+                        break
+                    fo.write(line)
 
 
 if __name__ == '__main__':
