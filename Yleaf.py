@@ -16,7 +16,6 @@ import argparse
 import os
 import sys
 import re
-import time
 import logging
 import shutil
 import subprocess
@@ -25,7 +24,7 @@ import numpy as np
 from argparse import ArgumentParser
 from pathlib import Path
 from typing import Union, List, TextIO, Tuple, Dict, Set
-from collections import defaultdict, deque
+from collections import defaultdict
 
 from tree import Tree
 
@@ -243,7 +242,7 @@ def main_fastq(
         samtools(folder, bam_file, None, True, args)
         os.remove(sam_file)
         if args.snp_reference_file is not None or args.snp_database_file is not None:
-            find_private_mutations(folder, path_file, reference, args)
+            find_private_mutations(folder, path_file, args.reference, args)
         write_info_file(folder, folder.name)
         LOG.info(f"Finished running for {path_file.name}")
         print()
@@ -302,8 +301,8 @@ def find_private_mutations(
         for index, line in enumerate(f):
             try:
                 chrom, position, ref_base, count, aligned, quality = line.strip().split()
-            except valueerror:
-                log.warning(f"failed to read line {index} of pileupfile")
+            except ValueError:
+                LOG.warning(f"failed to read line {index} of pileupfile")
                 continue
             if chrom != "chrY":
                 continue
