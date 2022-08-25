@@ -32,9 +32,6 @@ pd.options.mode.chained_assignment = None  # default='warn'
 
 VERSION = 3.1
 
-# list used for storing general information collected troughout --> ISSUE WITH MULTIPROCESSING
-GENERAL_INFO = []
-
 CACHED_POSITION_DATA: Union[Set[str], None] = None
 CACHED_SNP_DATABASE: Union[Dict[str, List[Dict[str, str]]], None] = None
 CACHED_REFERENCE_FILE: Union[List[str], None] = None
@@ -44,7 +41,7 @@ NUM_SET: Set[str] = {"0", "1", "2", "3", "4", "5", "6", "7", "8", "9"}
 PREDICTION_OUT_FILE_NAME: str = "hg_prediction.hg"
 HAPLOGROUP_IMAGE_FILE_NAME: str = "hg_tree_image.pdf"
 
-PARENT_FOLDER: Path = Path(__file__).parent
+PARENT_FOLDER: Path = Path(__file__).absolute().parent
 HG19_NAME: str = "hg19"
 HG38_NAME: str = "hg38"
 HG19_FOLDER: Path = PARENT_FOLDER / HG19_NAME
@@ -72,19 +69,17 @@ def main():
 
     LOG.info(f"Running Yleaf with command: {' '.join(sys.argv)}")
 
-    app_folder = Path(__file__).absolute().parent
-    source = app_folder
     if args.fastq:
-        main_fastq(args, app_folder, out_folder)
+        main_fastq(args, out_folder)
     elif args.bamfile:
-        main_bam_cram(args, app_folder, out_folder, True)
+        main_bam_cram(args, out_folder, True)
     elif args.cramfile:
-        main_bam_cram(args, app_folder, out_folder, False)
+        main_bam_cram(args, out_folder, False)
     else:
         LOG.error("Please specify either a bam, a cram or a fastq file")
         raise ValueError("Please specify either a bam, a cram or a fastq file")
     hg_out = out_folder / PREDICTION_OUT_FILE_NAME
-    predict_haplogroup(source, out_folder, hg_out, args.use_old)
+    predict_haplogroup(out_folder, hg_out, args.use_old)
     if args.draw_haplogroups:
         draw_haplogroups(hg_out, args.collapsed_draw_mode)
 
@@ -222,61 +217,53 @@ def call_command(
 
 def main_fastq(
     args: argparse.Namespace,
-    app_folder: Path,
     out_folder: Path
 ):
     if args.reference_genome is None:
-        LOG.error("Missing reference genome, please supply one with -f")
-        raise SystemExit("Missing reference genome, please supply one with -f")
+        LOG.error("Missing reference genome, please specify which one you want to use with -rg")
+        raise SystemExit("Missing reference genome")
     files = get_files_with_extension(args.fastq, '.fastq')
     reference = get_reference_path(args.reference_genome, True)
-    for path_file in files:
-        LOG.info(f"Starting with running for {path_file}")
-        folder = app_folder / out_folder / path_file.name.split(".")[0]
-        safe_create_dir(folder, args.force)
-        sam_file = folder / (folder.name + ".sam")
+    bam_folder = out_folder / "bam_files"
+    LOG.info("Creating bam files fasq files...")
+    for fastq_file in files:
+        LOG.info(f"Starting with running for {fastq_file}")
+        sam_file = bam_folder / "temp_sam.sam"
 
-        fastq_cmd = f"minimap2 -ax sr -t {args.threads} {reference} {path_file} > {sam_file}"
+        fastq_cmd = f"minimap2 -ax sr -t {args.threads} {reference} {fastq_file} > {sam_file}"
         call_command(fastq_cmd)
-        bam_file = folder / (folder.name + ".bam")
+        bam_file = bam_folder / (fastq_file.name.rsplit(".", 1)[0] + ".bam")
         cmd = "samtools view -@ {} -bS {} | samtools sort -@ {} -m 2G -o {}".format(args.threads, sam_file,
                                                                                     args.threads, bam_file)
         call_command(cmd)
         cmd = "samtools index -@ {} {}".format(args.threads, bam_file)
         call_command(cmd)
         os.remove(sam_file)
-        run_shared_processes(folder, bam_file, reference, True, args)
+    args.bamfile = bam_folder
+    main_bam_cram(args, out_folder, True)
 
 
 def main_bam_cram(
     args: argparse.Namespace,
-    app_folder: Path,
     out_folder: Path,
     is_bam: bool
 ):
-    if args.reference is None and not is_bam:
-        LOG.error("Missing reference genome, please supply one with -f")
-        raise SystemExit("Missing reference genome, please supply one with -f")
-    if is_bam:
-        reference = None
-    else:
-        reference = args.reference
+    if args.reference_genome is None and not is_bam:
+        LOG.error("Missing reference genome, please specify which one you want to use with -rg")
+        raise SystemExit("Missing reference genome")
+
+    reference = get_reference_path(args.reference_genome, True)
     files = get_files_with_extension(args.bamfile, '.bam')
-    LOG.info("Starting with running for bamfile...")
     for input_file in files:
         LOG.info(f"Starting with running for {input_file}")
-        out_folder = app_folder / out_folder / input_file.name.split(".")[0]
+        out_folder = PARENT_FOLDER / out_folder / input_file.name.split(".")[0]
         safe_create_dir(out_folder, args.force)
-        run_shared_processes(out_folder, input_file, reference, is_bam, args)
-
-
-def run_shared_processes(out_folder, bam_file, reference, is_bam, args):
-    samtools(out_folder, bam_file, reference, is_bam, args)
-    if args.private_mutations:
-        find_private_mutations(out_folder, bam_file, reference, args)
-    write_info_file(folder, folder.name)
-    LOG.info(f"Finished running for {path_file.name}")
-    print()
+        general_info_list = samtools(out_folder, input_file, reference if not is_bam else None, is_bam, args)
+        write_info_file(out_folder, general_info_list)
+        if args.private_mutations:
+            find_private_mutations(out_folder, input_file, reference, args)
+        LOG.info(f"Finished running for {input_file.name}")
+        print()
 
 
 def get_reference_path(requested_version: str, is_full: bool) -> Path:
@@ -568,7 +555,8 @@ def extract_haplogroups(
     fmf_output: Path,
     outputfile: Path,
     is_bam_file: bool,
-    use_old: bool
+    use_old: bool,
+    general_info_list: List[str]
 ):
     LOG.info("Starting with extracting haplogroups...")
     markerfile = pd.read_csv(path_markerfile, header=None, sep="\t")
@@ -604,7 +592,7 @@ def extract_haplogroups(
     markerfile_len = len(markerfile)
 
     # valid markers from positionsfile.txt
-    GENERAL_INFO.append("Valid markers: " + str(markerfile_len))
+    general_info_list.append("Valid markers: " + str(markerfile_len))
 
     index_belowzero = df[df["reads"] == 0].index
     df_belowzero = df[df.index.isin(index_belowzero)]
@@ -666,14 +654,14 @@ def extract_haplogroups(
 
     df_out = df.drop(["bool_state"], axis=1)
 
-    GENERAL_INFO.append("Markers with zero reads: " + str(len(df_belowzero)))
-    GENERAL_INFO.append(
+    general_info_list.append("Markers with zero reads: " + str(len(df_belowzero)))
+    general_info_list.append(
         "Markers below the read threshold {" + str(reads_thresh) + "}: " + str(len(df_readsthreshold)))
-    GENERAL_INFO.append(
+    general_info_list.append(
         "Markers below the base majority threshold {" + str(base_majority) + "}: " + str(len(df_basemajority)))
-    GENERAL_INFO.append("Markers with discordant genotype: " + str(len(df_discordantgenotype)))
-    GENERAL_INFO.append("Markers without haplogroup information: " + str(len(df_fmf)))
-    GENERAL_INFO.append("Markers with haplogroup information: " + str(len(df_out)))
+    general_info_list.append("Markers with discordant genotype: " + str(len(df_discordantgenotype)))
+    general_info_list.append("Markers without haplogroup information: " + str(len(df_fmf)))
+    general_info_list.append("Markers with haplogroup information: " + str(len(df_out)))
 
     if use_old:
         df_out = df_out.sort_values(by=['haplogroup'], ascending=True)
@@ -715,7 +703,7 @@ def samtools(
     reference: Union[Path, None],
     is_bam_pathfile: bool,
     args: argparse.Namespace,
-):
+) -> List[str]:
 
     outputfile = output_folder / (output_folder.name + ".out")
     fmf_output = output_folder / (output_folder.name + ".fmf")
@@ -736,32 +724,29 @@ def samtools(
 
     execute_mpileup(bed, path_file, pileupfile, args.quality_thresh, reference)
 
-    GENERAL_INFO.append("Total of mapped reads: " + str(mapped))
-    GENERAL_INFO.append("Total of unmapped reads: " + str(unmapped))
+    general_info_list = ["Total of mapped reads: " + str(mapped), "Total of unmapped reads: " + str(unmapped)]
 
     extract_haplogroups(args.position, args.reads_treshold, args.base_majority,
-                        pileupfile, fmf_output, outputfile, is_bam_pathfile, args.use_old)
+                        pileupfile, fmf_output, outputfile, is_bam_pathfile, args.use_old, general_info_list)
 
     os.remove(pileupfile)
     os.remove(bed)
 
     LOG.info("Finished extracting haplogroups")
+    return general_info_list
 
 
 def write_info_file(
     folder: Path,
-    folder_name: str
+    general_info_list: List[str]
 ):
-    # Write all information in GENERAL_INFO
-    global GENERAL_INFO
     try:
-        with open(folder / (folder_name + ".info"), "a") as f:
-            for marker in GENERAL_INFO:
+        with open(folder / (folder.name + ".info"), "a") as f:
+            for marker in general_info_list:
                 f.write(marker)
                 f.write("\n")
     except IOError:
         LOG.warning("Failed to write .info file")
-    GENERAL_INFO = [GENERAL_INFO[0]]  # make sure to reset except for the command used to call
 
 
 def logo():
@@ -780,13 +765,12 @@ def logo():
 
 
 def predict_haplogroup(
-    source: Path,
     path_file: Path,
     output: Path,
     use_old: bool
 ):
     if use_old:
-        script = source / "old_predict_haplogroup.py"
+        script = PARENT_FOLDER / "old_predict_haplogroup.py"
         cmd = "python {} -i {} -o {}".format(script, path_file, output)
         call_command(cmd)
     else:
