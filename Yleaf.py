@@ -69,6 +69,10 @@ def main():
 
     LOG.info(f"Running Yleaf with command: {' '.join(sys.argv)}")
 
+    if args.private_mutations and args.reference_genome is None:
+        LOG.error("When looking for private mutations, please specify a reference genome with the -rf option")
+        raise SystemExit("Missing reference genome")
+
     if args.fastq:
         main_fastq(args, out_folder)
     elif args.bamfile:
@@ -287,8 +291,8 @@ def find_private_mutations(
     args: argparse.Namespace
 ):
     LOG.info("Starting with extracting private mutations...")
-    snp_reference_file = args.snp_reference_file
-    snp_database_file = args.snp_database_file
+    snp_reference_file = get_reference_path(args.reference_genome, False)
+    snp_database_file = PARENT_FOLDER / SNP_DATA_FILE
 
     # run mpileup
     pileup_file = output_folder / "temp_pileup.pu"
