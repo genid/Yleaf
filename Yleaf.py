@@ -32,18 +32,31 @@ pd.options.mode.chained_assignment = None  # default='warn'
 
 VERSION = 3.1
 
-# this is not ideal
+# list used for storing general information collected troughout --> ISSUE WITH MULTIPROCESSING
 GENERAL_INFO = []
-
-PREDICTION_OUT_FILE_NAME: str = "hg_prediction.hg"
-HAPLOGROUP_IMAGE_FILE_NAME: str = "hg_tree_image.pdf"
-
-LOG = logging.getLogger("yleaf_logger")
 
 CACHED_POSITION_DATA: Union[Set[str], None] = None
 CACHED_SNP_DATABASE: Union[Dict[str, List[Dict[str, str]]], None] = None
 CACHED_REFERENCE_FILE: Union[List[str], None] = None
 NUM_SET: Set[str] = {"0", "1", "2", "3", "4", "5", "6", "7", "8", "9"}
+
+# path constants
+PREDICTION_OUT_FILE_NAME: str = "hg_prediction.hg"
+HAPLOGROUP_IMAGE_FILE_NAME: str = "hg_tree_image.pdf"
+
+PARENT_FOLDER: Path = Path(__file__).parent
+HG19_NAME: str = "hg19"
+HG38_NAME: str = "hg38"
+HG19_FOLDER: Path = PARENT_FOLDER / HG19_NAME
+HG38_FOLDER: Path = PARENT_FOLDER / HG38_NAME
+
+FULL_REF_FILE: str = "full_reference.fa"
+Y_REF_FILE: str = "chrY.fa"
+SNP_DATA_FILE: str = "snp_data"
+NEW_POSITION_FILE: str = "new_positions.txt"
+OLD_POSITION_FILE: str = "old_positions.txt"
+
+LOG: logging.Logger = logging.getLogger("yleaf_logger")
 
 
 def main():
@@ -89,15 +102,9 @@ def get_arguments() -> argparse.Namespace:
                         help="input CRAM file", metavar="PATH", type=check_file)
     parser.add_argument("-force", "--force", action="store_true",
                         help="Delete files without asking")
-    parser.add_argument("-f", "--reference",
-                        help="fasta reference genome sequence. This file can be found in the folders created during the"
-                             " install script. You can choose the chrY fasta file if only ychromosomal reads are "
-                             "included in the fastq file.", metavar="PATH", required=False, type=check_file,
-                        default=None)
-    parser.add_argument("-pos", "--position",
-                        help="Positions file found in the Position_files folder. Use old_position_files when using the "
-                             " -old flag, otherwise use the new_position_files.", metavar="PATH", required=True,
-                        type=check_file)
+    parser.add_argument("-rg", "--reference_genome",
+                        help="The reference genome of your bam/cram or fastq file.",
+                        choices=[HG19_NAME, HG38_NAME], default=None)
     parser.add_argument("-out", "--output", required=True,
                         help="Folder name containing outputs", metavar="STRING")
     parser.add_argument("-r", "--reads_treshold",
@@ -112,7 +119,7 @@ def get_arguments() -> argparse.Namespace:
                              " [50-99]",
                         type=int, required=True, metavar="INT")
     parser.add_argument("-t", "--threads", dest="threads",
-                        help="Set number of additional threads to use during alignment BWA-MEM",
+                        help="The number of processes to use when running Yleaf.",
                         type=int, default=1, metavar="INT")
 
     # arguments for prediction
@@ -129,17 +136,14 @@ def get_arguments() -> argparse.Namespace:
                              "haplogroups from it.", action="store_true")
 
     # arguments for private mutations
-    parser.add_argument("-sd", "--snp_database_file",
-                        help="Csv file containing snp's with confirmed rates, for the identification of private "
-                             "mutations. Can be found in the snp_data_tables folder. This will identify mutations from"
-                             " dbsnp and the 1000 genomes project that have an estimated population frequency.",
-                        metavar="FILE", type=check_file, default=None)
+    parser.add_argument("-p", "--private_mutations",
+                        help="Add this flag to search for private mutations. These are mutations that are not part of"
+                             " a haplogroup but are annotated in dbsnp or differentiate from the reference genome.",
+                        action="store_true")
+
     parser.add_argument("-mr", "--maximum_mutation_rate", help="Maximum rate of minor allele for it to be considered"
                                                                " as a private mutation. (default=0.01)",
                         default=0.01, type=float, metavar="FLOAT")
-    parser.add_argument("-sr", "--snp_reference_file",
-                        help="Reference file for identifying SNPs that are not present in the snp_file. These"
-                             "have no associated frequency.", default=None)
 
     args = parser.parse_args()
     return args
@@ -221,17 +225,18 @@ def main_fastq(
     app_folder: Path,
     out_folder: Path
 ):
-    if args.reference is None:
+    if args.reference_genome is None:
         LOG.error("Missing reference genome, please supply one with -f")
         raise SystemExit("Missing reference genome, please supply one with -f")
     files = get_files_with_extension(args.fastq, '.fastq')
+    reference = get_reference_path(args.reference_genome, True)
     for path_file in files:
         LOG.info(f"Starting with running for {path_file}")
         folder = app_folder / out_folder / path_file.name.split(".")[0]
         safe_create_dir(folder, args.force)
         sam_file = folder / (folder.name + ".sam")
 
-        fastq_cmd = f"minimap2 -ax sr -t {args.threads} {args.reference} {path_file} > {sam_file}"
+        fastq_cmd = f"minimap2 -ax sr -t {args.threads} {reference} {path_file} > {sam_file}"
         call_command(fastq_cmd)
         bam_file = folder / (folder.name + ".bam")
         cmd = "samtools view -@ {} -bS {} | samtools sort -@ {} -m 2G -o {}".format(args.threads, sam_file,
@@ -239,13 +244,8 @@ def main_fastq(
         call_command(cmd)
         cmd = "samtools index -@ {} {}".format(args.threads, bam_file)
         call_command(cmd)
-        samtools(folder, bam_file, None, True, args)
         os.remove(sam_file)
-        if args.snp_reference_file is not None or args.snp_database_file is not None:
-            find_private_mutations(folder, path_file, args.reference, args)
-        write_info_file(folder, folder.name)
-        LOG.info(f"Finished running for {path_file.name}")
-        print()
+        run_shared_processes(folder, bam_file, reference, True, args)
 
 
 def main_bam_cram(
@@ -263,16 +263,34 @@ def main_bam_cram(
         reference = args.reference
     files = get_files_with_extension(args.bamfile, '.bam')
     LOG.info("Starting with running for bamfile...")
-    for path_file in files:
-        LOG.info(f"Starting with running for {path_file}")
-        folder = app_folder / out_folder / path_file.name.split(".")[0]
-        safe_create_dir(folder, args.force)
-        samtools(folder, path_file, reference, is_bam, args)
-        if args.snp_reference_file is not None or args.snp_database_file is not None:
-            find_private_mutations(folder, path_file, reference, args)
-        write_info_file(folder, folder.name)
-        LOG.info(f"Finished running for {path_file.name}")
-        print()
+    for input_file in files:
+        LOG.info(f"Starting with running for {input_file}")
+        out_folder = app_folder / out_folder / input_file.name.split(".")[0]
+        safe_create_dir(out_folder, args.force)
+        run_shared_processes(out_folder, input_file, reference, is_bam, args)
+
+
+def run_shared_processes(out_folder, bam_file, reference, is_bam, args):
+    samtools(out_folder, bam_file, reference, is_bam, args)
+    if args.private_mutations:
+        find_private_mutations(out_folder, bam_file, reference, args)
+    write_info_file(folder, folder.name)
+    LOG.info(f"Finished running for {path_file.name}")
+    print()
+
+
+def get_reference_path(requested_version: str, is_full: bool) -> Path:
+    # get the path to the correct reference file. If the files are not present make sure to download them
+    if is_full:
+        reference_file = PARENT_FOLDER / FULL_REF_FILE
+    else:
+        reference_file = PARENT_FOLDER / Y_REF_FILE
+    if not reference_file.exists():
+        LOG.info(f"No reference genome version was found. Downloading the {requested_version} reference genome. This "
+                 f"should be a one time thing.")
+        call_command(f"{PARENT_FOLDER / 'install.py'} {requested_version}")
+        LOG.info("Finished downloading the reference genome.")
+    return reference_file
 
 
 def find_private_mutations(
@@ -713,9 +731,8 @@ def samtools(
             call_command(cmd)
     header, mapped, unmapped = chromosome_table(path_file, output_folder, output_folder.name)
 
-    bed = Path(str(args.position).rsplit(".", 1)[0] + ".bed")
-    if not bed.exists():
-        write_bed_file(bed, args.position, header)
+    bed = output_folder / (args.position.name.rsplit(".", 1)[0] + ".bed")
+    write_bed_file(bed, args.position, header)
 
     execute_mpileup(bed, path_file, pileupfile, args.quality_thresh, reference)
 
@@ -726,6 +743,7 @@ def samtools(
                         pileupfile, fmf_output, outputfile, is_bam_pathfile, args.use_old)
 
     os.remove(pileupfile)
+    os.remove(bed)
 
     LOG.info("Finished extracting haplogroups")
 

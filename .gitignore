@@ -1,6 +1,6 @@
 /__pycache__
 test*
-hg19
-hg38
+chrY.fa
+full_reference.fa
 Position_files/new_position_files/WGS_Yfull_hg38.bed
 Position_files/new_position_files/WGS_Yfull_hg19.bed
