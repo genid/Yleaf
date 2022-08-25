@@ -49,7 +49,7 @@ HG38_FOLDER: Path = PARENT_FOLDER / HG38_NAME
 
 FULL_REF_FILE: str = "full_reference.fa"
 Y_REF_FILE: str = "chrY.fa"
-SNP_DATA_FILE: str = "snp_data"
+SNP_DATA_FILE: str = "snp_data.csv"
 NEW_POSITION_FILE: str = "new_positions.txt"
 OLD_POSITION_FILE: str = "old_positions.txt"
 
@@ -68,10 +68,6 @@ def main():
     setup_logger(out_folder)
 
     LOG.info(f"Running Yleaf with command: {' '.join(sys.argv)}")
-
-    if args.private_mutations and args.reference_genome is None:
-        LOG.error("When looking for private mutations, please specify a reference genome with the -rf option")
-        raise SystemExit("Missing reference genome")
 
     if args.fastq:
         main_fastq(args, out_folder)
@@ -103,20 +99,20 @@ def get_arguments() -> argparse.Namespace:
                         help="Delete files without asking")
     parser.add_argument("-rg", "--reference_genome",
                         help="The reference genome of your bam/cram or fastq file.",
-                        choices=[HG19_NAME, HG38_NAME], default=None)
-    parser.add_argument("-out", "--output", required=True,
+                        choices=[HG19_NAME, HG38_NAME], required=True)
+    parser.add_argument("-o", "--output", required=True,
                         help="Folder name containing outputs", metavar="STRING")
     parser.add_argument("-r", "--reads_treshold",
                         help="The minimum number of reads for each base. (default=50)",
                         type=int, required=False,
                         default=50, metavar="INT")
     parser.add_argument("-q", "--quality_thresh",
-                        help="Minimum quality for each read, integer between 10 and 40. [10-40]",
-                        type=int, required=True, metavar="INT")
+                        help="Minimum quality for each read, integer between 10 and 40. [10-40] (default=10)",
+                        type=int, required=False, metavar="INT", default=10)
     parser.add_argument("-b", "--base_majority",
                         help="The minimum percentage of a base result for acceptance, integer between 50 and 99."
-                             " [50-99]",
-                        type=int, required=True, metavar="INT")
+                             " [50-99] (default=50)",
+                        type=int, required=False, metavar="INT", default=50)
     parser.add_argument("-t", "--threads", dest="threads",
                         help="The number of processes to use when running Yleaf.",
                         type=int, default=1, metavar="INT")
@@ -223,9 +219,6 @@ def main_fastq(
     args: argparse.Namespace,
     out_folder: Path
 ):
-    if args.reference_genome is None:
-        LOG.error("Missing reference genome, please specify which one you want to use with -rg")
-        raise SystemExit("Missing reference genome")
     files = get_files_with_extension(args.fastq, '.fastq')
     reference = get_reference_path(args.reference_genome, True)
     bam_folder = out_folder / "bam_files"
@@ -252,30 +245,28 @@ def main_bam_cram(
     out_folder: Path,
     is_bam: bool
 ):
-    if args.reference_genome is None and not is_bam:
-        LOG.error("Missing reference genome, please specify which one you want to use with -rg")
-        raise SystemExit("Missing reference genome")
-
-    reference = get_reference_path(args.reference_genome, True)
     files = get_files_with_extension(args.bamfile, '.bam')
     for input_file in files:
         LOG.info(f"Starting with running for {input_file}")
-        out_folder = PARENT_FOLDER / out_folder / input_file.name.split(".")[0]
+        out_folder = out_folder / input_file.name.split(".")[0]
         safe_create_dir(out_folder, args.force)
-        general_info_list = samtools(out_folder, input_file, reference if not is_bam else None, is_bam, args)
+        general_info_list = samtools(out_folder, input_file, is_bam, args)
         write_info_file(out_folder, general_info_list)
         if args.private_mutations:
-            find_private_mutations(out_folder, input_file, reference, args)
+            find_private_mutations(out_folder, input_file, args, is_bam)
         LOG.info(f"Finished running for {input_file.name}")
         print()
 
 
-def get_reference_path(requested_version: str, is_full: bool) -> Path:
+def get_reference_path(
+    requested_version: str,
+    is_full: bool
+) -> Union[Path, None]:
     # get the path to the correct reference file. If the files are not present make sure to download them
     if is_full:
-        reference_file = PARENT_FOLDER / FULL_REF_FILE
+        reference_file = PARENT_FOLDER / requested_version / FULL_REF_FILE
     else:
-        reference_file = PARENT_FOLDER / Y_REF_FILE
+        reference_file = PARENT_FOLDER / requested_version / Y_REF_FILE
     if not reference_file.exists():
         LOG.info(f"No reference genome version was found. Downloading the {requested_version} reference genome. This "
                  f"should be a one time thing.")
@@ -287,19 +278,22 @@ def get_reference_path(requested_version: str, is_full: bool) -> Path:
 def find_private_mutations(
     output_folder: Path,
     path_file: Path,
-    reference: Union[Path, None],
-    args: argparse.Namespace
+    args: argparse.Namespace,
+    is_bam: bool
 ):
     LOG.info("Starting with extracting private mutations...")
+    full_reference = get_reference_path(args.reference_genome, True) if not is_bam else None
     snp_reference_file = get_reference_path(args.reference_genome, False)
-    snp_database_file = PARENT_FOLDER / SNP_DATA_FILE
+    snp_database_file = PARENT_FOLDER / args.reference_genome / SNP_DATA_FILE
 
     # run mpileup
     pileup_file = output_folder / "temp_pileup.pu"
-    execute_mpileup(None, path_file, pileup_file, args.quality_thresh, reference)
+    execute_mpileup(None, path_file, pileup_file, args.quality_thresh, full_reference)
 
     LOG.info("Loading reference files")
-    filter_positions = load_filter_data(args.position)
+
+    position_file = get_position_file(args.reference_genome, args.use_old)
+    filter_positions = load_filter_data(position_file)
     known_snps = load_snp_database_file(snp_database_file, args.maximum_mutation_rate)
     ychrom_reference = load_reference_file(snp_reference_file)
 
@@ -318,7 +312,7 @@ def find_private_mutations(
             # not enough reads
             if int(count) < args.reads_treshold:
                 continue
-            if reference is not None:
+            if not is_bam:
                 aligned = replace_with_bases(ref_base, aligned)
             if position in filter_positions:
                 continue
@@ -704,7 +698,6 @@ def extract_haplogroups(
 def samtools(
     output_folder: Path,
     path_file: Path,
-    reference: Union[Path, None],
     is_bam_pathfile: bool,
     args: argparse.Namespace,
 ) -> List[str]:
@@ -712,6 +705,7 @@ def samtools(
     outputfile = output_folder / (output_folder.name + ".out")
     fmf_output = output_folder / (output_folder.name + ".fmf")
     pileupfile = output_folder / "temp_pileup.pu"
+    reference = get_reference_path(args.reference_genome, True) if not is_bam_pathfile else None
 
     if is_bam_pathfile:
         if not any([Path(str(path_file) + ".bai").exists(), Path(str(path_file).rstrip(".bam") + '.bai').exists()]):
@@ -723,14 +717,16 @@ def samtools(
             call_command(cmd)
     header, mapped, unmapped = chromosome_table(path_file, output_folder, output_folder.name)
 
-    bed = output_folder / (args.position.name.rsplit(".", 1)[0] + ".bed")
-    write_bed_file(bed, args.position, header)
+    position_file = get_position_file(args.reference_genome, args.use_old)
+
+    bed = output_folder / (position_file.name.rsplit(".", 1)[0] + ".bed")
+    write_bed_file(bed, position_file, header)
 
     execute_mpileup(bed, path_file, pileupfile, args.quality_thresh, reference)
 
     general_info_list = ["Total of mapped reads: " + str(mapped), "Total of unmapped reads: " + str(unmapped)]
 
-    extract_haplogroups(args.position, args.reads_treshold, args.base_majority,
+    extract_haplogroups(position_file, args.reads_treshold, args.base_majority,
                         pileupfile, fmf_output, outputfile, is_bam_pathfile, args.use_old, general_info_list)
 
     os.remove(pileupfile)
@@ -738,6 +734,14 @@ def samtools(
 
     LOG.info("Finished extracting haplogroups")
     return general_info_list
+
+
+def get_position_file(reference_name: str, use_old: bool) -> Path:
+    if use_old:
+        position_file = PARENT_FOLDER / reference_name / NEW_POSITION_FILE
+    else:
+        position_file = PARENT_FOLDER / reference_name / NEW_POSITION_FILE
+    return position_file
 
 
 def write_info_file(

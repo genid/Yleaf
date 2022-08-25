@@ -1,4 +1,5 @@
 /__pycache__
+*.fai
 test*
 chrY.fa
 full_reference.fa
