@@ -236,6 +236,8 @@ def main_bam_cram(
     is_bam: bool
 ):
     files = get_files_with_extension(args.bamfile, '.bam')
+    # make sure the reference genome is present before doing something else
+    check_reference(args.reference_genome)
     with multiprocessing.Pool(processes=args.threads) as p:
         p.map(partial(run_bam_cram, args, base_out_folder, is_bam), files)
 
@@ -292,20 +294,26 @@ def get_files_with_extension(
         return [path]
 
 
-def get_reference_path(
+def check_reference(
     requested_version: str,
-    is_full: bool
-) -> Union[Path, None]:
-    # get the path to the correct reference file. If the files are not present make sure to download them
-    if is_full:
-        reference_file = yleaf_constants.DATA_FOLDER / requested_version / yleaf_constants.FULL_REF_FILE
-    else:
-        reference_file = yleaf_constants.DATA_FOLDER / requested_version / yleaf_constants.Y_REF_FILE
+):
+    reference_file = get_reference_path(requested_version, True)
     if not reference_file.exists():
         LOG.info(f"No reference genome version was found. Downloading the {requested_version} reference genome. This "
                  f"should be a one time thing.")
         download_reference.main(requested_version)
         LOG.info("Finished downloading the reference genome.")
+
+
+def get_reference_path(
+    requested_version: str,
+    is_full: bool
+) -> Union[Path, None]:
+    if is_full:
+        reference_file = yleaf_constants.DATA_FOLDER / requested_version / yleaf_constants.FULL_REF_FILE
+    else:
+        reference_file = yleaf_constants.DATA_FOLDER / requested_version / yleaf_constants.Y_REF_FILE
+
     return reference_file
 
 
