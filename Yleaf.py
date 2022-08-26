@@ -9,13 +9,12 @@ License: GNU General Public License v3 or later
 A copy of GNU GPL v3 should have been included in this software package in LICENSE.txt.
 
 Autor: Diego Montiel Gonzalez
-Modified by: Bram van Wersch
+Extensively modified by: Bram van Wersch
 """
 
 import argparse
 import os
 import sys
-import re
 import logging
 import shutil
 import subprocess
@@ -85,6 +84,21 @@ def main():
         draw_haplogroups(hg_out, args.collapsed_draw_mode)
 
     LOG.info("Done!")
+
+
+def logo():
+    print(r"""
+
+                   |
+                  /|\          
+                 /\|/\    
+                \\\|///   
+                 \\|//  
+                  |||   
+                  |||    
+                  |||    
+
+        """)
 
 
 def get_arguments() -> argparse.Namespace:
@@ -197,6 +211,49 @@ def safe_create_dir(
             raise
 
 
+def main_fastq(
+    args: argparse.Namespace,
+    out_folder: Path
+):
+    files = get_files_with_extension(args.fastq, '.fastq')
+    reference = get_reference_path(args.reference_genome, True)
+    bam_folder = out_folder / "bam_files"
+    LOG.info("Creating bam files fasq files...")
+    for fastq_file in files:
+        LOG.info(f"Starting with running for {fastq_file}")
+        sam_file = bam_folder / "temp_fastq_sam.sam"
+
+        fastq_cmd = f"minimap2 -ax sr -t {args.threads} {reference} {fastq_file} > {sam_file}"
+        call_command(fastq_cmd)
+        bam_file = bam_folder / (fastq_file.name.rsplit(".", 1)[0] + ".bam")
+        cmd = "samtools view -@ {} -bS {} | samtools sort -@ {} -m 2G -o {}".format(args.threads, sam_file,
+                                                                                    args.threads, bam_file)
+        call_command(cmd)
+        cmd = "samtools index -@ {} {}".format(args.threads, bam_file)
+        call_command(cmd)
+        os.remove(sam_file)
+    args.bamfile = bam_folder
+    main_bam_cram(args, out_folder, True)
+
+
+def main_bam_cram(
+    args: argparse.Namespace,
+    base_out_folder: Path,
+    is_bam: bool
+):
+    files = get_files_with_extension(args.bamfile, '.bam')
+    for input_file in files:
+        LOG.info(f"Starting with running for {input_file}")
+        output_dir = base_out_folder / input_file.name.split(".")[0]
+        safe_create_dir(output_dir, args.force)
+        general_info_list = samtools(output_dir, input_file, is_bam, args)
+        write_info_file(output_dir, general_info_list)
+        if args.private_mutations:
+            find_private_mutations(output_dir, input_file, args, is_bam)
+        LOG.info(f"Finished running for {input_file.name}")
+        print()
+
+
 def call_command(
     command_str: str,
     stdout_location: TextIO = None
@@ -216,47 +273,20 @@ def call_command(
     LOG.info("Finished running the command")
 
 
-def main_fastq(
-    args: argparse.Namespace,
-    out_folder: Path
-):
-    files = get_files_with_extension(args.fastq, '.fastq')
-    reference = get_reference_path(args.reference_genome, True)
-    bam_folder = out_folder / "bam_files"
-    LOG.info("Creating bam files fasq files...")
-    for fastq_file in files:
-        LOG.info(f"Starting with running for {fastq_file}")
-        sam_file = bam_folder / "temp_sam.sam"
-
-        fastq_cmd = f"minimap2 -ax sr -t {args.threads} {reference} {fastq_file} > {sam_file}"
-        call_command(fastq_cmd)
-        bam_file = bam_folder / (fastq_file.name.rsplit(".", 1)[0] + ".bam")
-        cmd = "samtools view -@ {} -bS {} | samtools sort -@ {} -m 2G -o {}".format(args.threads, sam_file,
-                                                                                    args.threads, bam_file)
-        call_command(cmd)
-        cmd = "samtools index -@ {} {}".format(args.threads, bam_file)
-        call_command(cmd)
-        os.remove(sam_file)
-    args.bamfile = bam_folder
-    main_bam_cram(args, out_folder, True)
-
-
-def main_bam_cram(
-    args: argparse.Namespace,
-    out_folder: Path,
-    is_bam: bool
-):
-    files = get_files_with_extension(args.bamfile, '.bam')
-    for input_file in files:
-        LOG.info(f"Starting with running for {input_file}")
-        out_folder = out_folder / input_file.name.split(".")[0]
-        safe_create_dir(out_folder, args.force)
-        general_info_list = samtools(out_folder, input_file, is_bam, args)
-        write_info_file(out_folder, general_info_list)
-        if args.private_mutations:
-            find_private_mutations(out_folder, input_file, args, is_bam)
-        LOG.info(f"Finished running for {input_file.name}")
-        print()
+def get_files_with_extension(
+    path: Union[str, Path],
+    ext: str
+) -> List[Path]:
+    """Get all files with a certain extension from a path. The path can be a file or a dir."""
+    filtered_files = []
+    path = Path(path)  # to be sure
+    if path.is_dir():
+        for file in path.iterdir():
+            if file.suffix == ext:
+                filtered_files.append(file)
+        return filtered_files
+    else:
+        return [path]
 
 
 def get_reference_path(
@@ -276,218 +306,45 @@ def get_reference_path(
     return reference_file
 
 
-def find_private_mutations(
+def samtools(
     output_folder: Path,
     path_file: Path,
+    is_bam_pathfile: bool,
     args: argparse.Namespace,
-    is_bam: bool
-):
-    # identify mutations not part of haplogroups that are annotated in dbsnp or differ from the reference genome
-    LOG.info("Starting with extracting private mutations...")
-    full_reference = get_reference_path(args.reference_genome, True) if not is_bam else None
-    snp_reference_file = get_reference_path(args.reference_genome, False)
-    snp_database_file = PARENT_FOLDER / args.reference_genome / SNP_DATA_FILE
+) -> List[str]:
 
-    # run mpileup
-    pileup_file = output_folder / "temp_pileup.pu"
-    execute_mpileup(None, path_file, pileup_file, args.quality_thresh, full_reference)
+    outputfile = output_folder / (output_folder.name + ".out")
+    fmf_output = output_folder / (output_folder.name + ".fmf")
+    pileupfile = output_folder / "temp_haplogroup_pileup.pu"
+    reference = get_reference_path(args.reference_genome, True) if not is_bam_pathfile else None
 
-    LOG.info("Loading reference files")
+    if is_bam_pathfile:
+        if not any([Path(str(path_file) + ".bai").exists(), Path(str(path_file).rstrip(".bam") + '.bai').exists()]):
+            cmd = "samtools index -@{} {}".format(args.threads, path_file)
+            call_command(cmd)
+    else:
+        if not any([Path(str(path_file) + ".crai").exists(), Path(str(path_file).rstrip(".cram") + '.crai').exists()]):
+            cmd = "samtools index -@{} {}".format(args.threads, path_file)
+            call_command(cmd)
+    header, mapped, unmapped = chromosome_table(path_file, output_folder, output_folder.name)
 
     position_file = get_position_file(args.reference_genome, args.use_old)
-    filter_positions = load_filter_data(position_file)
-    known_snps = load_snp_database_file(snp_database_file, args.maximum_mutation_rate)
-    ychrom_reference = load_reference_file(snp_reference_file)
 
-    LOG.info("Finding private mutations...")
-    private_mutations = []
-    confirmed_private_mutations = []
-    with open(pileup_file) as f:
-        for index, line in enumerate(f):
-            try:
-                chrom, position, ref_base, count, aligned, quality = line.strip().split()
-            except ValueError:
-                LOG.warning(f"failed to read line {index} of pileupfile")
-                continue
-            if chrom != "chrY":
-                continue
-            # not enough reads
-            if int(count) < args.reads_treshold:
-                continue
-            if not is_bam:
-                aligned = replace_with_bases(ref_base, aligned)
-            if position in filter_positions:
-                continue
+    bed = output_folder / "temp_position_bed.bed"
+    write_bed_file(bed, position_file, header)
 
-            # not annotated in dbsnp
-            if position not in known_snps and snp_reference_file is not None:
-                freq_dict = get_frequencies(aligned)
-                actual_allele, allele_count = max(freq_dict.items(), key=lambda x: x[1])
-                called_percentage = allele_count / sum(freq_dict.values()) * 100
-                # not a high enough base majority measured, cannot be sure of real allele
-                if called_percentage < args.base_majority:
-                    continue
-                ref_base = ychrom_reference[int(position) - 1]
+    execute_mpileup(bed, path_file, pileupfile, args.quality_thresh, reference)
 
-                # do not match against insertions or repeat regions (lower case)
-                if ref_base not in ACCEPTED_REF_BASES or actual_allele not in ACCEPTED_REF_BASES:
-                    continue
-                if ref_base == actual_allele:
-                    continue
-                private_mutations.append(f"{chrom}\t{position}\t-\t{ref_base}->{actual_allele}\t{ref_base}\t"
-                                         f"{actual_allele}\t{allele_count}\t{called_percentage}\tNA\n")
-            elif position in known_snps and snp_database_file is not None:
-                freq_dict = get_frequencies(aligned)
-                actual_allele, allele_count = max(freq_dict.items(), key=lambda x: x[1])
-                called_percentage = allele_count / sum(freq_dict.values()) * 100
-                # not a high enough base majority measured, cannot be sure of real allele
-                if called_percentage < args.base_majority:
-                    continue
-                possible_minor_alleles = {dct["minor_allele"] for dct in known_snps[position]}
-                # measured allele is not the dbsnp allele
-                if actual_allele not in possible_minor_alleles:
-                    continue
+    general_info_list = ["Total of mapped reads: " + str(mapped), "Total of unmapped reads: " + str(unmapped)]
 
-                matched_pos_dct = [dct for dct in known_snps[position]
-                                   if dct["minor_allele"] == actual_allele][0]
-                rs, major_allele, minor_allele, frequency = matched_pos_dct.values()
-                confirmed_private_mutations.append(f"{chrom}\t{position}\t{rs}\t{major_allele}->{actual_allele}\t"
-                                                   f"{major_allele}\t{actual_allele}\t{allele_count}\t"
-                                                   f"{called_percentage}\t{frequency}\n")
-    os.remove(pileup_file)
-    with open(output_folder / "private_mutations.csv", "w") as f:
-        f.write(f"chrom\tposition\trs_nr\tmutation\treference\tactual\treads\tcalled_percentage\tfrequency\n")
-        f.write(''.join(confirmed_private_mutations))
-        f.write(''.join(private_mutations))
-    LOG.info("Finished extracting private mutations")
+    extract_haplogroups(position_file, args.reads_treshold, args.base_majority,
+                        pileupfile, fmf_output, outputfile, is_bam_pathfile, args.use_old, general_info_list)
 
+    os.remove(pileupfile)
+    os.remove(bed)
 
-def load_filter_data(
-    path: Path
-) -> Set[str]:
-    global CACHED_POSITION_DATA
-    if CACHED_POSITION_DATA is None:
-        CACHED_POSITION_DATA = set()
-        with open(path) as f:
-            for line in f:
-                CACHED_POSITION_DATA.add(line.strip().split("\t")[3])
-    return CACHED_POSITION_DATA
-
-
-def load_snp_database_file(
-    path: Path,
-    maximum_mutation_rate: float
-) -> Union[Dict[str, List[Dict[str, str]]], None]:
-    global CACHED_SNP_DATABASE
-
-    if path is not None:
-        if CACHED_SNP_DATABASE is None:
-            CACHED_SNP_DATABASE = defaultdict(list)
-            with open(path) as f:
-                f.readline()
-                for line in f:
-                    rs, position, major_allele, minor_allele, frequency = line.strip().split(",")
-                    if float(frequency) > maximum_mutation_rate:
-                        continue
-                    CACHED_SNP_DATABASE[position].append({"rs": rs, "major_allele": major_allele,
-                                                          "minor_allele": minor_allele, "frequency": frequency})
-            CACHED_SNP_DATABASE = dict(CACHED_SNP_DATABASE)
-        return CACHED_SNP_DATABASE
-    else:
-        return None
-
-
-def load_reference_file(
-    path: Path
-) -> Union[List[str], None]:
-    global CACHED_REFERENCE_FILE
-    if path is not None:
-        if CACHED_REFERENCE_FILE is None:
-            CACHED_REFERENCE_FILE = []
-            with open(path) as f:
-                for line in f:
-                    if line.startswith(">"):
-                        continue
-                    CACHED_REFERENCE_FILE.extend(line.strip())
-        return CACHED_REFERENCE_FILE
-    else:
-        return None
-
-
-def get_frequency_table(
-    mpileup: List[str]
-) -> Dict[str, List[int]]:
-    frequency_table = {}
-    for i in mpileup:
-        fastadict = get_frequencies(i[9])
-        frequency_table[i[3]] = list(fastadict.values())
-    return frequency_table
-
-
-def get_frequencies(
-    sequence: str
-) -> Dict[str, int]:
-    fastadict = {"A": 0, "T": 0, "G": 0, "C": 0, "-": 0, "+": 0, "*": 0}
-    sequence = sequence.upper()
-    index = 0
-    while index < len(sequence):
-        char = sequence[index]
-        if char in fastadict:
-            fastadict[char] += 1
-            index += 1
-        elif char == "^":
-            index += 2
-        elif char in {"-", "+"}:
-            index += 1
-            digit, index = find_digit(sequence, index)
-            index += digit
-        else:
-            index += 1
-    fastadict["-"] += fastadict["*"]
-    del fastadict["*"]
-    return fastadict
-
-
-def find_digit(sequence: str, index: int) -> Tuple[int, int]:
-    # first is always a digit
-    nr = [sequence[index]]
-    index += 1
-    while True:
-        char = sequence[index]
-        # this seems to be faster than isdigit()
-        if char in NUM_SET:
-            nr.append(char)
-            index += 1
-            continue
-        return int(''.join(nr)), index
-
-
-def write_bed_file(
-    bed: Path,
-    markerfile: Path,
-    header: str
-):
-    mf = pd.read_csv(markerfile, sep="\t", header=None)
-    mf = mf[[0, 3]]
-    mf[0] = header
-    mf.to_csv(str(bed), sep="\t", index=False, header=False)
-
-
-def execute_mpileup(
-    bed: Union[Path, None],
-    bam_file: Path,
-    pileupfile: Path,
-    quality_thresh: float,
-    reference: Union[Path, None]
-):
-    cmd = "samtools mpileup"
-    if bed is not None:
-        cmd += f" -l {str(bed)}"
-
-    if reference is not None:
-        cmd += f" -f {str(reference)}"
-    cmd += f" -AQ{quality_thresh}q1 {str(bam_file)} > {str(pileupfile)}"
-    call_command(cmd)
+    LOG.info("Finished extracting haplogroups")
+    return general_info_list
 
 
 def chromosome_table(
@@ -525,30 +382,43 @@ def chromosome_table(
         raise SystemExit("No Y-chromosomal data")
 
 
-def get_files_with_extension(
-    path: Union[str, Path],
-    ext: str
-) -> List[Path]:
-    """Get all files with a certain extension from a path. The path can be a file or a dir."""
-    filtered_files = []
-    path = Path(path)  # to be sure
-    if path.is_dir():
-        for file in path.iterdir():
-            if file.suffix == ext:
-                filtered_files.append(file)
-        return filtered_files
+def get_position_file(
+    reference_name: str,
+    use_old: bool
+) -> Path:
+    if use_old:
+        position_file = PARENT_FOLDER / reference_name / NEW_POSITION_FILE
     else:
-        return [path]
+        position_file = PARENT_FOLDER / reference_name / NEW_POSITION_FILE
+    return position_file
 
 
-def replace_with_bases(
-    base: str,
-    read_result: str
-) -> str:
-    if re.search("^[ACTG]", base):
-        return read_result.replace(",", base[0]).replace(".", base[0])
-    else:
-        return read_result
+def write_bed_file(
+    bed: Path,
+    markerfile: Path,
+    header: str
+):
+    mf = pd.read_csv(markerfile, sep="\t", header=None)
+    mf = mf[[0, 3]]
+    mf[0] = header
+    mf.to_csv(str(bed), sep="\t", index=False, header=False)
+
+
+def execute_mpileup(
+    bed: Union[Path, None],
+    bam_file: Path,
+    pileupfile: Path,
+    quality_thresh: float,
+    reference: Union[Path, None]
+):
+    cmd = "samtools mpileup"
+    if bed is not None:
+        cmd += f" -l {str(bed)}"
+
+    if reference is not None:
+        cmd += f" -f {str(reference)}"
+    cmd += f" -AQ{quality_thresh}q1 {str(bam_file)} > {str(pileupfile)}"
+    call_command(cmd)
 
 
 def extract_haplogroups(
@@ -701,53 +571,62 @@ def extract_haplogroups(
                 f.write('\t'.join(map(str, lst)) + f"\t{depth}\n")
 
 
-def samtools(
-    output_folder: Path,
-    path_file: Path,
-    is_bam_pathfile: bool,
-    args: argparse.Namespace,
-) -> List[str]:
-
-    outputfile = output_folder / (output_folder.name + ".out")
-    fmf_output = output_folder / (output_folder.name + ".fmf")
-    pileupfile = output_folder / "temp_pileup.pu"
-    reference = get_reference_path(args.reference_genome, True) if not is_bam_pathfile else None
-
-    if is_bam_pathfile:
-        if not any([Path(str(path_file) + ".bai").exists(), Path(str(path_file).rstrip(".bam") + '.bai').exists()]):
-            cmd = "samtools index -@{} {}".format(args.threads, path_file)
-            call_command(cmd)
-    else:
-        if not any([Path(str(path_file) + ".crai").exists(), Path(str(path_file).rstrip(".cram") + '.crai').exists()]):
-            cmd = "samtools index -@{} {}".format(args.threads, path_file)
-            call_command(cmd)
-    header, mapped, unmapped = chromosome_table(path_file, output_folder, output_folder.name)
-
-    position_file = get_position_file(args.reference_genome, args.use_old)
-
-    bed = output_folder / (position_file.name.rsplit(".", 1)[0] + ".bed")
-    write_bed_file(bed, position_file, header)
-
-    execute_mpileup(bed, path_file, pileupfile, args.quality_thresh, reference)
-
-    general_info_list = ["Total of mapped reads: " + str(mapped), "Total of unmapped reads: " + str(unmapped)]
-
-    extract_haplogroups(position_file, args.reads_treshold, args.base_majority,
-                        pileupfile, fmf_output, outputfile, is_bam_pathfile, args.use_old, general_info_list)
-
-    os.remove(pileupfile)
-    os.remove(bed)
-
-    LOG.info("Finished extracting haplogroups")
-    return general_info_list
+def replace_with_bases(
+    base: str,
+    read_result: str
+) -> str:
+    return read_result.replace(",", base[0]).replace(".", base[0])
 
 
-def get_position_file(reference_name: str, use_old: bool) -> Path:
-    if use_old:
-        position_file = PARENT_FOLDER / reference_name / NEW_POSITION_FILE
-    else:
-        position_file = PARENT_FOLDER / reference_name / NEW_POSITION_FILE
-    return position_file
+def get_frequency_table(
+    mpileup: List[str]
+) -> Dict[str, List[int]]:
+    frequency_table = {}
+    for i in mpileup:
+        fastadict = get_frequencies(i[9])
+        frequency_table[i[3]] = list(fastadict.values())
+    return frequency_table
+
+
+def get_frequencies(
+    sequence: str
+) -> Dict[str, int]:
+    fastadict = {"A": 0, "T": 0, "G": 0, "C": 0, "-": 0, "+": 0, "*": 0}
+    sequence = sequence.upper()
+    index = 0
+    while index < len(sequence):
+        char = sequence[index]
+        if char in fastadict:
+            fastadict[char] += 1
+            index += 1
+        elif char == "^":
+            index += 2
+        elif char in {"-", "+"}:
+            index += 1
+            digit, index = find_digit(sequence, index)
+            index += digit
+        else:
+            index += 1
+    fastadict["-"] += fastadict["*"]
+    del fastadict["*"]
+    return fastadict
+
+
+def find_digit(
+    sequence: str,
+    index: int
+) -> Tuple[int, int]:
+    # first is always a digit
+    nr = [sequence[index]]
+    index += 1
+    while True:
+        char = sequence[index]
+        # this seems to be faster than isdigit()
+        if char in NUM_SET:
+            nr.append(char)
+            index += 1
+            continue
+        return int(''.join(nr)), index
 
 
 def write_info_file(
@@ -763,19 +642,142 @@ def write_info_file(
         LOG.warning("Failed to write .info file")
 
 
-def logo():
-    print(r"""
+def find_private_mutations(
+    output_folder: Path,
+    path_file: Path,
+    args: argparse.Namespace,
+    is_bam: bool
+):
+    # identify mutations not part of haplogroups that are annotated in dbsnp or differ from the reference genome
+    LOG.info("Starting with extracting private mutations...")
+    full_reference = get_reference_path(args.reference_genome, True) if not is_bam else None
+    snp_reference_file = get_reference_path(args.reference_genome, False)
+    snp_database_file = PARENT_FOLDER / args.reference_genome / SNP_DATA_FILE
 
-                   |
-                  /|\          
-                 /\|/\    
-                \\\|///   
-                 \\|//  
-                  |||   
-                  |||    
-                  |||    
+    # run mpileup
+    pileup_file = output_folder / "temp_private_mutation_pileup.pu"
+    execute_mpileup(None, path_file, pileup_file, args.quality_thresh, full_reference)
 
-        """)
+    LOG.info("Loading reference files")
+
+    position_file = get_position_file(args.reference_genome, args.use_old)
+    filter_positions = load_filter_data(position_file)
+    known_snps = load_snp_database_file(snp_database_file, args.maximum_mutation_rate)
+    ychrom_reference = load_reference_file(snp_reference_file)
+
+    LOG.info("Finding private mutations...")
+    private_mutations = []
+    confirmed_private_mutations = []
+    with open(pileup_file) as f:
+        for index, line in enumerate(f):
+            try:
+                chrom, position, ref_base, count, aligned, quality = line.strip().split()
+            except ValueError:
+                LOG.warning(f"failed to read line {index} of pileupfile")
+                continue
+            if chrom != "chrY":
+                continue
+            # not enough reads
+            if int(count) < args.reads_treshold:
+                continue
+            if not is_bam:
+                aligned = replace_with_bases(ref_base, aligned)
+            if position in filter_positions:
+                continue
+
+            # not annotated in dbsnp
+            if position not in known_snps and snp_reference_file is not None:
+                freq_dict = get_frequencies(aligned)
+                actual_allele, allele_count = max(freq_dict.items(), key=lambda x: x[1])
+                called_percentage = round(allele_count / sum(freq_dict.values()) * 100, 2)
+                # not a high enough base majority measured, cannot be sure of real allele
+                if called_percentage < args.base_majority:
+                    continue
+                ref_base = ychrom_reference[int(position) - 1]
+
+                # do not match against insertions or repeat regions (lower case)
+                if ref_base not in ACCEPTED_REF_BASES or actual_allele not in ACCEPTED_REF_BASES:
+                    continue
+                if ref_base == actual_allele:
+                    continue
+                private_mutations.append(f"{chrom}\t{position}\t-\t{ref_base}->{actual_allele}\t{ref_base}\t"
+                                         f"{actual_allele}\t{allele_count}\t{called_percentage}\tNA\n")
+            elif position in known_snps and snp_database_file is not None:
+                freq_dict = get_frequencies(aligned)
+                actual_allele, allele_count = max(freq_dict.items(), key=lambda x: x[1])
+                called_percentage = round(allele_count / sum(freq_dict.values()) * 100, 2)
+                # not a high enough base majority measured, cannot be sure of real allele
+                if called_percentage < args.base_majority:
+                    continue
+                possible_minor_alleles = {dct["minor_allele"] for dct in known_snps[position]}
+                # measured allele is not the dbsnp allele
+                if actual_allele not in possible_minor_alleles:
+                    continue
+
+                matched_pos_dct = [dct for dct in known_snps[position]
+                                   if dct["minor_allele"] == actual_allele][0]
+                rs, major_allele, minor_allele, frequency = matched_pos_dct.values()
+                confirmed_private_mutations.append(f"{chrom}\t{position}\t{rs}\t{major_allele}->{actual_allele}\t"
+                                                   f"{major_allele}\t{actual_allele}\t{allele_count}\t"
+                                                   f"{called_percentage}\t{frequency}\n")
+    os.remove(pileup_file)
+    with open(output_folder / "private_mutations.csv", "w") as f:
+        f.write(f"chrom\tposition\trs_nr\tmutation\treference\tactual\treads\tcalled_percentage\tfrequency\n")
+        f.write(''.join(confirmed_private_mutations))
+        f.write(''.join(private_mutations))
+    LOG.info("Finished extracting private mutations")
+
+
+def load_filter_data(
+    path: Path
+) -> Set[str]:
+    global CACHED_POSITION_DATA
+    if CACHED_POSITION_DATA is None:
+        CACHED_POSITION_DATA = set()
+        with open(path) as f:
+            for line in f:
+                CACHED_POSITION_DATA.add(line.strip().split("\t")[3])
+    return CACHED_POSITION_DATA
+
+
+def load_snp_database_file(
+    path: Path,
+    maximum_mutation_rate: float
+) -> Union[Dict[str, List[Dict[str, str]]], None]:
+    global CACHED_SNP_DATABASE
+
+    if path is not None:
+        if CACHED_SNP_DATABASE is None:
+            CACHED_SNP_DATABASE = defaultdict(list)
+            with open(path) as f:
+                f.readline()
+                for line in f:
+                    rs, position, major_allele, minor_allele, frequency = line.strip().split(",")
+                    if float(frequency) > maximum_mutation_rate:
+                        continue
+                    CACHED_SNP_DATABASE[position].append({"rs": rs, "major_allele": major_allele,
+                                                          "minor_allele": minor_allele, "frequency": frequency})
+            CACHED_SNP_DATABASE = dict(CACHED_SNP_DATABASE)
+        return CACHED_SNP_DATABASE
+    else:
+        return None
+
+
+def load_reference_file(
+    path: Path
+) -> Union[List[str], None]:
+    global CACHED_REFERENCE_FILE
+    if path is not None:
+        if CACHED_REFERENCE_FILE is None:
+            CACHED_REFERENCE_FILE = []
+            with open(path) as f:
+                for line in f:
+                    if line.startswith(">"):
+                        continue
+                    CACHED_REFERENCE_FILE.extend(line.strip())
+        return CACHED_REFERENCE_FILE
+    else:
+        return None
 
 
 def predict_haplogroup(
