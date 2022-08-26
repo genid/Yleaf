@@ -224,7 +224,7 @@ def main_fastq(
         os.mkdir(bam_folder)
     except IOError:
         pass
-    LOG.info("Creating bam files fasq files...")
+    LOG.info("Creating bam files from fastq files...")
     for fastq_file in files:
         LOG.info(f"Starting with running for {fastq_file}")
         sam_file = bam_folder / "temp_fastq_sam.sam"
