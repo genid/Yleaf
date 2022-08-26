@@ -20,6 +20,8 @@ import shutil
 import subprocess
 import pandas as pd
 import numpy as np
+import multiprocessing
+from functools import partial
 from argparse import ArgumentParser
 from pathlib import Path
 from typing import Union, List, TextIO, Tuple, Dict, Set
@@ -246,16 +248,25 @@ def main_bam_cram(
     is_bam: bool
 ):
     files = get_files_with_extension(args.bamfile, '.bam')
-    for input_file in files:
-        LOG.info(f"Starting with running for {input_file}")
-        output_dir = base_out_folder / input_file.name.split(".")[0]
-        safe_create_dir(output_dir, args.force)
-        general_info_list = samtools(output_dir, input_file, is_bam, args)
-        write_info_file(output_dir, general_info_list)
-        if args.private_mutations:
-            find_private_mutations(output_dir, input_file, args, is_bam)
-        LOG.info(f"Finished running for {input_file.name}")
-        print()
+    with multiprocessing.Pool(processes=args.threads) as p:
+        p.map(partial(run_bam_cram, args, base_out_folder, is_bam), files)
+
+
+def run_bam_cram(
+    args: argparse.Namespace,
+    base_out_folder: Path,
+    is_bam: bool,
+    input_file: Path
+):
+    LOG.info(f"Starting with running for {input_file}")
+    output_dir = base_out_folder / input_file.name.split(".")[0]
+    safe_create_dir(output_dir, args.force)
+    general_info_list = samtools(output_dir, input_file, is_bam, args)
+    write_info_file(output_dir, general_info_list)
+    if args.private_mutations:
+        find_private_mutations(output_dir, input_file, args, is_bam)
+    LOG.info(f"Finished running for {input_file.name}")
+    print()
 
 
 def call_command(
