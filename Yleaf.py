@@ -39,7 +39,7 @@ ACCEPTED_REF_BASES: Set[str] = {"A", "C", "G", "T"}
 
 # path constants
 PREDICTION_OUT_FILE_NAME: str = "hg_prediction.hg"
-HAPLOGROUP_IMAGE_FILE_NAME: str = "hg_tree_image.pdf"
+HAPLOGROUP_IMAGE_FILE_NAME: str = "hg_tree_image"
 
 PARENT_FOLDER: Path = Path(__file__).absolute().parent
 HG19_NAME: str = "hg19"
@@ -218,6 +218,10 @@ def main_fastq(
     files = get_files_with_extension(args.fastq, '.fastq')
     reference = get_reference_path(args.reference_genome, True)
     bam_folder = out_folder / "bam_files"
+    try:
+        os.mkdir(bam_folder)
+    except IOError:
+        pass
     LOG.info("Creating bam files fasq files...")
     for fastq_file in files:
         LOG.info(f"Starting with running for {fastq_file}")
