@@ -17,7 +17,7 @@ from tree import Tree, Node
 from typing import Set, Dict, Iterator, List, Any, Union, Tuple
 import logging
 
-import yleaf_constants
+from src import yleaf_constants
 
 BACKBONE_GROUPS: Set = set()
 MAIN_HAPLO_GROUPS: Set = set()
@@ -91,7 +91,7 @@ def main(namespace: argparse.Namespace = None):
         global QC1_SCORE_CACHE
         QC1_SCORE_CACHE = {}
         haplotype_dict = read_yleaf_out_file(folder / (folder.name + ".out"))
-        tree = Tree("../data/hg_prediction_tables/tree.json")
+        tree = Tree(yleaf_constants.DATA_FOLDER / yleaf_constants.HG_PREDICTION_FOLDER / yleaf_constants.TREE_FILE)
         best_haplotype_score = get_most_likely_haplotype(tree, haplotype_dict, namespace.minimum_score)
         add_to_final_table(final_table, haplotype_dict, best_haplotype_score, folder)
     write_final_table(final_table, output)

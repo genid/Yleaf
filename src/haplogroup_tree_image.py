@@ -19,7 +19,7 @@ from collections import defaultdict
 import argparse
 import logging
 
-from tree import Tree
+from src.tree import Tree
 
 LOG = logging.getLogger("yleaf_logger")
 

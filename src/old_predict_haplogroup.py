@@ -19,7 +19,7 @@ import os
 import argparse
 from argparse import ArgumentParser
 
-import yleaf_constants
+from src import yleaf_constants
 
 
 def get_arguments():

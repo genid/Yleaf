@@ -19,7 +19,7 @@ import shutil
 import urllib.request
 import logging
 
-import yleaf_constants
+from src import yleaf_constants
 
 LOG: logging = logging.getLogger("yleaf_logger")
 

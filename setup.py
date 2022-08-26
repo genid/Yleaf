@@ -19,7 +19,7 @@ with open('requirements.txt') as f:
 
 
 setup(
-    name='male_pedigree_toolbox',
+    name='Yleaf',
     version=get_version(),
     packages=find_packages(),
     url='https://github.com/genid/Yleaf.git',
@@ -40,7 +40,7 @@ setup(
     python_requires=">=3.6",
     entry_points={
         'console_scripts': [
-            'Yleaf=MalePedigreeToolbox.Yleaf:main',
+            'Yleaf=src.Yleaf:main',
         ],
     },
     include_package_data=True,

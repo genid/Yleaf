@@ -28,9 +28,8 @@ from typing import Union, List, TextIO, Tuple, Dict, Set
 from collections import defaultdict
 
 from src import __version__
-from tree import Tree
-import yleaf_constants
-import download_reference
+from src.tree import Tree
+from src import yleaf_constants, download_reference
 
 pd.options.mode.chained_assignment = None  # default='warn'
 
@@ -563,7 +562,7 @@ def extract_haplogroups(
             mappable_df[lst[3]] = []
         mappable_df[lst[3]].append(lst)
 
-    tree = Tree("../data/hg_prediction_tables/tree.json")
+    tree = Tree(yleaf_constants.DATA_FOLDER / yleaf_constants.HG_PREDICTION_FOLDER / yleaf_constants.TREE_FILE)
     with open(outputfile, "w") as f:
         f.write('\t'.join(["chr", "pos", "marker_name", "haplogroup", "mutation", "anc", "der", "reads",
                            "called_perc", "called_base", "state", "depth\n"]))

@@ -15,3 +15,5 @@ Y_REF_FILE: str = "chrY.fa"
 SNP_DATA_FILE: str = "snp_data.csv"
 NEW_POSITION_FILE: str = "new_positions.txt"
 OLD_POSITION_FILE: str = "old_positions.txt"
+TREE_FILE: str = "tree.json"
+
