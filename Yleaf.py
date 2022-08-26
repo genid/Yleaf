@@ -36,6 +36,7 @@ CACHED_POSITION_DATA: Union[Set[str], None] = None
 CACHED_SNP_DATABASE: Union[Dict[str, List[Dict[str, str]]], None] = None
 CACHED_REFERENCE_FILE: Union[List[str], None] = None
 NUM_SET: Set[str] = {"0", "1", "2", "3", "4", "5", "6", "7", "8", "9"}
+ACCEPTED_REF_BASES: Set[str] = {"A", "C", "G", "T"}
 
 # path constants
 PREDICTION_OUT_FILE_NAME: str = "hg_prediction.hg"
@@ -281,6 +282,7 @@ def find_private_mutations(
     args: argparse.Namespace,
     is_bam: bool
 ):
+    # identify mutations not part of haplogroups that are annotated in dbsnp or differ from the reference genome
     LOG.info("Starting with extracting private mutations...")
     full_reference = get_reference_path(args.reference_genome, True) if not is_bam else None
     snp_reference_file = get_reference_path(args.reference_genome, False)
@@ -325,7 +327,11 @@ def find_private_mutations(
                 # not a high enough base majority measured, cannot be sure of real allele
                 if called_percentage < args.base_majority:
                     continue
-                ref_base = ychrom_reference[int(position) - 1].upper()
+                ref_base = ychrom_reference[int(position) - 1]
+
+                # do not match against insertions or repeat regions (lower case)
+                if ref_base not in ACCEPTED_REF_BASES or actual_allele not in ACCEPTED_REF_BASES:
+                    continue
                 if ref_base == actual_allele:
                     continue
                 private_mutations.append(f"{chrom}\t{position}\t-\t{ref_base}->{actual_allele}\t{ref_base}\t"
@@ -480,7 +486,7 @@ def execute_mpileup(
 
     if reference is not None:
         cmd += f" -f {str(reference)}"
-    cmd += f" -AQ{quality_thresh} {str(bam_file)} > {str(pileupfile)}"
+    cmd += f" -AQ{quality_thresh}q1 {str(bam_file)} > {str(pileupfile)}"
     call_command(cmd)
 
 
@@ -610,7 +616,7 @@ def extract_haplogroups(
     df = df.drop(['refbase', 'align', 'quality'], axis=1)
 
     list_col_indices = np.argmax(df_freq_table.values, axis=1)
-    called_base = df_freq_table.columns[list_col_indices]
+    called_base = df_freq_table.columns[list_col_indices]  # noqa
     total_count_bases = np.sum(df_freq_table.values, axis=1)
     max_count_bases = np.max(df_freq_table, axis=1)
     called_perc = round((max_count_bases / total_count_bases) * 100, 1)
