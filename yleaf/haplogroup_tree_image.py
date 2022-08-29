@@ -19,8 +19,8 @@ from collections import defaultdict
 import argparse
 import logging
 
-from src.tree import Tree
-from src import yleaf_constants
+from yleaf.tree import Tree
+from yleaf import yleaf_constants
 
 LOG = logging.getLogger("yleaf_logger")
 

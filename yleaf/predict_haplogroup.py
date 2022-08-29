@@ -16,8 +16,8 @@ from pathlib import Path
 from typing import Set, Dict, Iterator, List, Any, Union, Tuple
 import logging
 
-from src import yleaf_constants
-from src.tree import Tree, Node
+from yleaf import yleaf_constants
+from yleaf.tree import Tree, Node
 
 BACKBONE_GROUPS: Set = set()
 MAIN_HAPLO_GROUPS: Set = set()

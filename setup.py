@@ -5,7 +5,7 @@ import re
 
 def get_version():
     """Get version number from __init__.py"""
-    version_file = Path(__file__).resolve().parent / "src" / "__init__.py"
+    version_file = Path(__file__).resolve().parent / "yleaf" / "__init__.py"
     version_match = re.search(
         r"^__version__ = ['\"]([^'\"]*)['\"]", version_file.read_text(), re.M
     )
@@ -40,7 +40,7 @@ setup(
     python_requires=">=3.6",
     entry_points={
         'console_scripts': [
-            'Yleaf=src.Yleaf:main',
+            'Yleaf=yleaf.Yleaf:main',
         ],
     },
     include_package_data=True,
