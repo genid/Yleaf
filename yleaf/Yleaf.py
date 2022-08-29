@@ -298,7 +298,7 @@ def check_reference(
     requested_version: str,
 ):
     reference_file = get_reference_path(requested_version, True)
-    if not os.path.getsize(reference_file) == 0:
+    if os.path.getsize(reference_file) < 100:
         LOG.info(f"No reference genome version was found. Downloading the {requested_version} reference genome. This "
                  f"should be a one time thing.")
         download_reference.main(requested_version)
