@@ -2,7 +2,7 @@ from pathlib import Path
 
 
 SRC_FOLDER: Path = Path(__file__).absolute().parent
-DATA_FOLDER: Path = SRC_FOLDER.parent / "data"
+DATA_FOLDER: Path = SRC_FOLDER / "data"
 HG_PREDICTION_FOLDER: Path = DATA_FOLDER / "hg_prediction_tables"
 
 HG19: str = "hg19"

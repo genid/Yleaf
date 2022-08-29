@@ -44,5 +44,5 @@ setup(
         ],
     },
     include_package_data=True,
-    package_data={"data": ["hg19/*", "hg38/*"]}
+    package_data={"yleaf": ["data/*"]}
 )

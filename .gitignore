@@ -7,6 +7,6 @@ Position_files/new_position_files/WGS_Yfull_hg38.bed
 Position_files/new_position_files/WGS_Yfull_hg19.bed
 Yleaf.egg-info/
 build/
-data/hg38/full_reference.fa.gz
-data/hg19/full_reference.fa.gz
+yleaf/data/hg38/full_reference.fa.gz
+yleaf/data/hg19/full_reference.fa.gz
 male_pedigree_toolbox.egg-info/
