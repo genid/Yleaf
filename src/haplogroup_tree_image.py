@@ -20,6 +20,7 @@ import argparse
 import logging
 
 from src.tree import Tree
+from src import yleaf_constants
 
 LOG = logging.getLogger("yleaf_logger")
 
@@ -87,7 +88,7 @@ def add_main_haplogroups(haplogroups: List[str]):
 def haplogroup_tree_dict(
     haplogroups: List[str]
 ) -> Dict[str, Set[str]]:
-    tree = Tree("../data/hg_prediction_tables/tree.json")
+    tree = Tree(yleaf_constants.DATA_FOLDER / yleaf_constants.HG_PREDICTION_FOLDER / yleaf_constants.TREE_FILE)
     partial_tree_dict = defaultdict(set)
     for name in haplogroups:
         path = []

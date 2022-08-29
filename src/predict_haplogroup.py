@@ -13,11 +13,11 @@ Autor: Bram van Wersch
 
 import argparse
 from pathlib import Path
-from tree import Tree, Node
 from typing import Set, Dict, Iterator, List, Any, Union, Tuple
 import logging
 
 from src import yleaf_constants
+from src.tree import Tree, Node
 
 BACKBONE_GROUPS: Set = set()
 MAIN_HAPLO_GROUPS: Set = set()
@@ -118,7 +118,7 @@ def get_arguments() -> argparse.Namespace:
 def read_backbone_groups():
     """Read some basic data that is always needed"""
     global BACKBONE_GROUPS, MAIN_HAPLO_GROUPS
-    with open("../data/hg_prediction_tables/Intermediates.txt") as f:
+    with open(yleaf_constants.DATA_FOLDER / yleaf_constants.HG_PREDICTION_FOLDER / "Intermediates.txt") as f:
         for line in f:
             if "~" in line:
                 continue

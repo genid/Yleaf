@@ -801,7 +801,7 @@ def predict_haplogroup(
         cmd = "python {} -i {} -o {}".format(script, path_file, output)
         call_command(cmd)
     else:
-        import predict_haplogroup
+        from src import predict_haplogroup
         namespace = argparse.Namespace(input=path_file, outfile=output,
                                        minimum_score=predict_haplogroup.DEFAULT_MIN_SCORE)
         predict_haplogroup.main(namespace)
@@ -812,7 +812,7 @@ def draw_haplogroups(
     collapsed_draw_mode: bool
 ):
     # make sure that it is only imported if requested by user
-    import haplogroup_tree_image
+    from src import haplogroup_tree_image
     namespace = argparse.Namespace(input=haplogroup_file, collapse_mode=collapsed_draw_mode,
                                    outfile=haplogroup_file.parent / HAPLOGROUP_IMAGE_FILE_NAME)
     haplogroup_tree_image.main(namespace)
