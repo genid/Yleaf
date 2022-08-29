@@ -45,13 +45,6 @@ def install_genome_files(
     dir_path = yleaf_constants.DATA_FOLDER / reference_choice
     LOG.info(f"Starting with preparing {reference_choice}...")
 
-    if not dir_path.exists():
-        try:
-            os.mkdir(dir_path)
-        except IOError:
-            LOG.error("Failed to create directory for output files")
-            raise SystemExit("Failed to create directory for output files")
-
     ref_file = Path(dir_path / yleaf_constants.FULL_REF_FILE)
     ref_gz_file = Path(str(ref_file) + ".gz")
     try:
