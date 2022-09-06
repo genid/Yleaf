@@ -43,6 +43,5 @@ setup(
             'Yleaf=yleaf.Yleaf:main',
         ],
     },
-    include_package_data=True,
-    package_data={"yleaf": ["data/*"]}
+    package_data={"yleaf": ["yleaf/data/*/*"]}
 )
