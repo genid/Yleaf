@@ -23,7 +23,7 @@ setup(
     version=get_version(),
     packages=find_packages("yleaf"),
     url='https://github.com/genid/Yleaf.git',
-
+    package_dir={'': "yleaf"},
     license='MIT',
     author='Bram van Wersch and Diego Montiel Gonzalez',
     author_email='b.vanwersch@erasmusmc.nl',
@@ -44,6 +44,4 @@ setup(
         ],
     },
     include_package_data=True
-
-
 )
