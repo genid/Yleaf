@@ -30,7 +30,6 @@ setup(
     name='Yleaf',
     version=get_version(),
     packages=find_packages("yleaf"),
-    package_dir={"": "yleaf"},
     url='https://github.com/genid/Yleaf.git',
 
     license='MIT',
