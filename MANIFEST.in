@@ -1,0 +1,3 @@
+include yleaf/data/hg38/*
+include yleaf/data/hg19/*
+include yleaf/data/hg_prediction_tables/*
