@@ -1,7 +1,6 @@
 from setuptools import setup, find_packages
 from pathlib import Path
 import re
-import glob
 
 
 def get_version():
@@ -19,17 +18,10 @@ with open('requirements.txt') as f:
     required = f.read().splitlines()
 
 
-data_files = []
-directories = glob.glob('data/')
-for directory in directories:
-    files = glob.glob(directory+'*')
-    data_files.append((directory, files))
-
-
 setup(
     name='Yleaf',
     version=get_version(),
-    packages=find_packages("yleaf"),
+    packages=find_packages(),
     url='https://github.com/genid/Yleaf.git',
 
     license='MIT',
@@ -51,5 +43,6 @@ setup(
             'Yleaf=yleaf.Yleaf:main',
         ],
     },
-    data_files=data_files
+    include_package_data=True,
+    package_data={"yleaf": ["data/*"]}
 )
