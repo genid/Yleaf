@@ -310,10 +310,15 @@ def get_reference_path(
     is_full: bool
 ) -> Union[Path, None]:
     if is_full:
-        reference_file = yleaf_constants.DATA_FOLDER / requested_version / yleaf_constants.FULL_REF_FILE
+        if requested_version == yleaf_constants.HG19:
+            reference_file = yleaf_constants.HG19_FULL_GENOME
+        else:
+            reference_file = yleaf_constants.HG38_FULL_GENOME
     else:
-        reference_file = yleaf_constants.DATA_FOLDER / requested_version / yleaf_constants.Y_REF_FILE
-
+        if requested_version == yleaf_constants.HG19:
+            reference_file = yleaf_constants.HG19_Y_CHROMOSOME
+        else:
+            reference_file = yleaf_constants.HG38_Y_CHROMOSOME
     return reference_file
 
 

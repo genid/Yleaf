@@ -1,0 +1,4 @@
+full hg19 genome fasta location =
+hg19 chromosome Y fasta location =
+full hg38 genome fasta location =
+hg38 chromosome Y fasta location =
