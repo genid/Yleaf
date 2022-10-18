@@ -140,6 +140,9 @@ def read_input_folder(
     for folder in in_folder.iterdir():
         if not folder.is_dir():
             continue
+        if folder.name == yleaf_constants.FASTQ_BAM_FILE_FOLDER:
+            # generated for efficiency during fastq, needs to be ignored
+            continue
         yield folder
 
 

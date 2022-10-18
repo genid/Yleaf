@@ -43,6 +43,7 @@ ACCEPTED_REF_BASES: Set[str] = {"A", "C", "G", "T"}
 PREDICTION_OUT_FILE_NAME: str = "hg_prediction.hg"
 HAPLOGROUP_IMAGE_FILE_NAME: str = "hg_tree_image"
 
+
 LOG: logging.Logger = logging.getLogger("yleaf_logger")
 
 
@@ -210,7 +211,7 @@ def main_fastq(
 ):
     files = get_files_with_extension(args.fastq, '.fastq')
     reference = get_reference_path(args.reference_genome, True)
-    bam_folder = out_folder / "bam_files"
+    bam_folder = out_folder / yleaf_constants.FASTQ_BAM_FILE_FOLDER
     try:
         os.mkdir(bam_folder)
     except IOError:

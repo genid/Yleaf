@@ -57,3 +57,6 @@ with open(CONFIG_PATH) as f:
             HG19_Y_CHROMOSOME = get_path(name, value)
         elif name == "hg38 chromosome Y fasta location":
             HG38_Y_CHROMOSOME = get_path(name, value)
+
+
+FASTQ_BAM_FILE_FOLDER: str = "bam_files"
