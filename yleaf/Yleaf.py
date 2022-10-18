@@ -103,7 +103,10 @@ def get_arguments() -> argparse.Namespace:
     parser.add_argument("-force", "--force", action="store_true",
                         help="Delete files without asking")
     parser.add_argument("-rg", "--reference_genome",
-                        help="The reference genome of your bam/cram or fastq file.",
+                        help="The reference genome of your bam/cram or fastq file. If no reference is available "
+                             "they will be downloaded. If you added references in your config.txt file these"
+                             " will be used instead as reference or the location will be used to download the "
+                             "reference if those files are missing or empty.",
                         choices=[yleaf_constants.HG19, yleaf_constants.HG38], required=True)
     parser.add_argument("-o", "--output", required=True,
                         help="Folder name containing outputs", metavar="STRING")

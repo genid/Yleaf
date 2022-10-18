@@ -7,34 +7,28 @@
 
 ## Requirements
 
-    Operating system: Linux only. Tested on Ubuntu 16.04LTS, but should also work on newer version of Ubuntu. It should be easy to made it work on other Linux distributions. 
-    Python3 with pandas >= 0.23.0 and numpy >= 1.14.3
-    Internet connection during installation (for downloading and extracting hg19/hg38 reference genome).
-    Data storage: For installation we recommend a storage capacity of > 10 GB. 
+    Operating system: Linux only. 
+    Internet connection: when running for the first time for downloading the reference genome. Alternatively you 
+                         can configure your own references.
+    Data storage: For installation we recommend a storage capacity of > 8 GB. 
 
 ## Installation
 
-You can either build a conda environment with all dependencies
+The easiest way to get Yleaf up and running is by using a conda environment. 
 
 ```bash
-# create the conda environment
-conda create --name yleaf_env python=3.6
-# activat the environment
-conda activate yleaf_env
-# install required python libraries
-conda install pandas
-conda install numpy
-# install Burrows-Wheeler Aligner for fastQ files
-conda install -c bioconda bwa
-# install SAMtools
-conda install -c bioconda samtools
-# clone the yleaf repository
+# first clone this repository to get the environment_yleaf.yaml
 git clone https://github.com/genid/Yleaf.git
-
-# finally if you want to use FASTQ files use the provided install.py
-script to download required genome data
 cd Yleaf
-python install.py
+# create the conda environment from the .yaml the environment will be called yleaf
+conda env create --file environment_yleaf.yaml
+# activate the environment
+conda activate yleaf
+# pip install the cloned yleaf into your environment. Using the -e flag allows you to modify the config file in your cloned folder
+pip install -e .
+
+# verify that Yleaf is installed correctly. You can call this command from any directory on your system
+Yleaf -h 
 ```      
 or manually install everything
 ```bash
@@ -43,7 +37,7 @@ apt-get install python3.6
 pip3 install pandas
 pip3 install numpy
 # install Burrows-Wheeler Aligner for FASTQ files
-sudo apt-get install bwa
+sudo apt-get install minimap2 
 # install SAMtools
 wget https://github.com/samtools/samtools/releases/download/1.4.1/
 samtools-1.4.1.tar.bz2 -O samtools.tar.bz2
@@ -53,29 +47,31 @@ cd samtools-1.4.1/
 make install
 # clone the yleaf repository
 git clone https://github.com/genid/Yleaf.git
-
-# finally if you want to use FASTQ files use the provided install.py
-script to download required genome data
+# pip install the yleaf repository
 cd Yleaf
-python install.py
+pip install -e .
+
+# verify that Yleaf is installed correctly. You can call this command from any directory on your system
+Yleaf -h 
 ```
 ## Usage and examples
+Here follow some minimal working examples of how to use Yleaf with different input files. There are additional options
+that can be used to tune how strict Yleaf is as well as options to get private mutations as well as a graph showing 
+the positioning of predicted haplogroups of all your samples in the Haplogroup tree.
 
-In version 3.0 we switched to using YFull (v10.01) for the underlying tree structure of the haplogroups.
- This also means that predictions are a bit different compared to earlier versions.
+_Note: In version 3.0 we switched to using YFull (v10.01) for the underlying tree structure of the haplogroups.
+ This also means that predictions are a bit different compared to earlier versions._
 ### Yleaf: FASTQ (raw reads)
-    
-    python Yleaf.py -fastq raw_reads.fastq -f reference_indexed/genome.fasta -pos Position_files/new_position_files/[hg19.txt/hg38.txt] -out out -r 1 -q 20 -b 90 -t 4
+
+    Yleaf -fastq raw_reads.fastq -o fastq_output --reference_genome hg38
         
 ### Yleaf: BAM or CRAM format
-    
-    python Yleaf.py -bam file.bam -pos Position_files/new_position_files/[hg19.txt/hg38.txt] -out out -r 1 -q 20 -b 90 
+    Yleaf -bam file.bam -o bam_output --reference_genome hg19 
+    Yleaf -cram file.bam -o cram_output --reference_genome hg38 
 
-    python Yleaf.py -cram file.cram -pos Position_files/new_position_files/[hg19.txt/hg38.txt] -out out -r 1 -q 20 -b 90  -f genome.fasta
+### With drawing predicted haplogroups in a tree and showing all private mutations
 
-### Haplogroup prediction (w/output generated from Yleaf)
-
-    python predict_haplogroup.py -input Output_files/ -out output.hg
+    Yleaf -bam file.bam -o bam_output --reference_genome hg19 -dh -p
 
 ## Additional information
 

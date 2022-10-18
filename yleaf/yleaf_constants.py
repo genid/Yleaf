@@ -2,8 +2,8 @@ from pathlib import Path
 
 
 SRC_FOLDER: Path = Path(__file__).absolute().parent
-CONFIG_PATH: Path = SRC_FOLDER.parent / "config.txt"
 DATA_FOLDER: Path = SRC_FOLDER / "data"
+CONFIG_PATH: Path = SRC_FOLDER / "config.txt"
 HG_PREDICTION_FOLDER: Path = DATA_FOLDER / "hg_prediction_tables"
 
 HG19: str = "hg19"
@@ -31,7 +31,8 @@ def get_path(
     path = Path(value_)
     if not path.exists():
         if not path.parent.exists():
-            raise ValueError(f"Cant find provided config path for: '{name_}'. Try to define an absolute path!")
+            raise ValueError(f"Cant find provided config path ({path}) for: '{name_}'. Try to define an absolute"
+                             "path!")
         else:
             # create an empty file at the location
             open(path, "w").close()
@@ -46,6 +47,8 @@ with open(CONFIG_PATH) as f:
         name, value = line.strip().split('=')
         value = value.strip()
         name = name.strip()
+        if value == "":
+            continue
         if name == "full hg19 genome fasta location":
             HG19_FULL_GENOME = get_path(name, value)
         elif name == "full hg38 genome fasta location":
