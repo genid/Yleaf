@@ -54,6 +54,11 @@ pip install -e .
 # verify that Yleaf is installed correctly. You can call this command from any directory on your system
 Yleaf -h 
 ```
+After installation you can navigate to the yleaf/config.txt folder and add custom paths for the files listed there.
+This will make sure that Yleaf does not download the files on the first go and that you can use a custom reference if 
+you want. Please keep in mind that custom reference files migth cause other issues or give problems in combination with
+already existing data files. Positions are based on either hg38 or hg19.
+
 ## Usage and examples
 Here follow some minimal working examples of how to use Yleaf with different input files. There are additional options
 that can be used to tune how strict Yleaf is as well as options to get private mutations as well as a graph showing 
