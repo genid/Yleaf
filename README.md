@@ -1,3 +1,7 @@
+
+# WARNING:
+This is an experimental version of Yleaf, not all functionality has been properly tested. Please treat the results with a healthy amount of scepsis. Usage is at your own risk. For a better tested version and instructions how to use it, use the latest offically released version of Yleaf at https://github.com/genid/Yleaf/releases/tag/3.0.1 .
+
 # Yleaf: software for human Y-chromosomal haplogroup inference from next generation sequencing data
 
 #### Arwin Ralf, Diego Montiel Gonzalez, Kaiyin Zhong and Manfred Kayser
