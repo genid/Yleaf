@@ -60,6 +60,9 @@ def main():
 
     LOG.info(f"Running Yleaf with command: {' '.join(sys.argv)}")
 
+    # make sure the reference genome is present before doing something else, if not present it is downloaded
+    check_reference(args.reference_genome)
+
     if args.fastq:
         main_fastq(args, out_folder)
     elif args.bamfile:
@@ -240,8 +243,7 @@ def main_bam_cram(
     is_bam: bool
 ):
     files = get_files_with_extension(args.bamfile, '.bam')
-    # make sure the reference genome is present before doing something else
-    check_reference(args.reference_genome)
+
     with multiprocessing.Pool(processes=args.threads) as p:
         p.map(partial(run_bam_cram, args, base_out_folder, is_bam), files)
 
