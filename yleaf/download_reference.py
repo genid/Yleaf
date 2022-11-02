@@ -42,7 +42,6 @@ def main(
 def install_genome_files(
     reference_choice: str
 ):
-    dir_path = yleaf_constants.DATA_FOLDER / reference_choice
     LOG.info(f"Starting with preparing {reference_choice}...")
 
     if reference_choice == yleaf_constants.HG19:
@@ -54,11 +53,11 @@ def install_genome_files(
     try:
         if os.path.getsize(ref_file) < 100 and not ref_gz_file.exists():
 
-            LOG.info(f"Downloading the {reference_choice} genome...")
+            LOG.debug(f"Downloading the {reference_choice} genome...")
             urllib.request.urlretrieve(f"http://hgdownload.cse.ucsc.edu/goldenPath/{reference_choice}"
                                        f"/bigZips/{reference_choice}.fa.gz", ref_gz_file)
         if os.path.getsize(ref_file) < 100:
-            LOG.info("Unpacking the downloaded archive...")
+            LOG.debug("Unpacking the downloaded archive...")
             with gzip.open(ref_gz_file, 'rb') as f_in:
                 with open(ref_file, 'wb') as f_out:
                     shutil.copyfileobj(f_in, f_out)
@@ -70,7 +69,7 @@ def install_genome_files(
             ychrom_file = yleaf_constants.HG38_Y_CHROMOSOME
 
         if os.path.getsize(ychrom_file) < 100:
-            LOG.info("Writing Ychromosomal data")
+            LOG.debug("Writing Ychromosomal data")
             get_ychrom_data(ref_file, ychrom_file)
     # try and cleanup when user aborts, this attempts to not leave half downloaded files
     except KeyboardInterrupt:

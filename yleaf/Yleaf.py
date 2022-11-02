@@ -107,7 +107,7 @@ def get_arguments() -> argparse.Namespace:
     parser.add_argument("-force", "--force", action="store_true",
                         help="Delete files without asking")
     parser.add_argument("-rg", "--reference_genome",
-                        help="The reference genome of your bam/cram or fastq file. If no reference is available "
+                        help="The reference genome build to be used. If no reference is available "
                              "they will be downloaded. If you added references in your config.txt file these"
                              " will be used instead as reference or the location will be used to download the "
                              "reference if those files are missing or empty.",
@@ -115,16 +115,16 @@ def get_arguments() -> argparse.Namespace:
     parser.add_argument("-o", "--output", required=True,
                         help="Folder name containing outputs", metavar="STRING")
     parser.add_argument("-r", "--reads_treshold",
-                        help="The minimum number of reads for each base. (default=50)",
+                        help="The minimum number of reads for each base. (default=10)",
                         type=int, required=False,
-                        default=50, metavar="INT")
+                        default=10, metavar="INT")
     parser.add_argument("-q", "--quality_thresh",
-                        help="Minimum quality for each read, integer between 10 and 40. [10-40] (default=10)",
-                        type=int, required=False, metavar="INT", default=10)
+                        help="Minimum quality for each read, integer between 10 and 40. [10-40] (default=20)",
+                        type=int, required=False, metavar="INT", default=20)
     parser.add_argument("-b", "--base_majority",
                         help="The minimum percentage of a base result for acceptance, integer between 50 and 99."
-                             " [50-99] (default=50)",
-                        type=int, required=False, metavar="INT", default=50)
+                             " [50-99] (default=90)",
+                        type=int, required=False, metavar="INT", default=90)
     parser.add_argument("-t", "--threads", dest="threads",
                         help="The number of processes to use when running Yleaf.",
                         type=int, default=1, metavar="INT")
@@ -144,12 +144,14 @@ def get_arguments() -> argparse.Namespace:
 
     # arguments for private mutations
     parser.add_argument("-p", "--private_mutations",
-                        help="Add this flag to search for private mutations. These are mutations that are not part of"
-                             " a haplogroup but are annotated in dbsnp or differentiate from the reference genome.",
+                        help="Add this flag to search for private mutations. These are variations that are not"
+                             " considered in the phylogenetic tree and thus not used for haplogroup prediction, "
+                             "however can be informative and differentiate individuals within the same haplogroup "
+                             "prediction.",
                         action="store_true")
 
-    parser.add_argument("-mr", "--maximum_mutation_rate", help="Maximum rate of minor allele for it to be considered"
-                                                               " as a private mutation. (default=0.01)",
+    parser.add_argument("-maf", "--minor_allele_frequency", help="Maximum rate of minor allele for it to be considered"
+                                                                 " as a private mutation. (default=0.01)",
                         default=0.01, type=float, metavar="FLOAT")
 
     args = parser.parse_args()
@@ -170,16 +172,18 @@ def setup_logger(
     out_folder: Path
 ):
     """Setup logging"""
+    LOG.setLevel(logging.DEBUG)
     handler = logging.StreamHandler(sys.stdout)
-    formatter = logging.Formatter('%(levelname)s (%(relativeCreated)d ms) - %(message)s')
+    formatter = logging.Formatter('%(levelname)s (%(relativeCreated)d s) - %(message)s')
     handler.setFormatter(formatter)
+    handler.setLevel(logging.INFO)
     LOG.addHandler(handler)
 
     file_handler = logging.FileHandler(filename=out_folder / "run.log")
     file_handler.setFormatter(formatter)
+    file_handler.setLevel(logging.DEBUG)
     LOG.addHandler(file_handler)
 
-    LOG.setLevel(logging.INFO)
     LOG.debug("Logger created")
 
 
@@ -270,7 +274,7 @@ def call_command(
     stdout_location: TextIO = None
 ):
     """Call a command on the command line and make sure to exit if it fails."""
-    LOG.info(f"Started running the following command: {command_str}")
+    LOG.debug(f"Started running the following command: {command_str}")
     if stdout_location is None:
         process = subprocess.Popen(command_str, stderr=subprocess.PIPE, shell=True)
     else:
@@ -281,7 +285,7 @@ def call_command(
     if process.returncode != 0:
         LOG.error(f"Above call failed with message {stderr.decode('utf-8')}")
         raise SystemExit("Failed command execution")
-    LOG.info("Finished running the command")
+    LOG.debug("Finished running the command")
 
 
 def get_files_with_extension(
@@ -365,7 +369,7 @@ def samtools(
     os.remove(pileupfile)
     os.remove(bed)
 
-    LOG.info("Finished extracting haplogroups")
+    LOG.debug("Finished extracting haplogroups")
     return general_info_list
 
 
@@ -680,14 +684,14 @@ def find_private_mutations(
     pileup_file = output_folder / "temp_private_mutation_pileup.pu"
     execute_mpileup(None, path_file, pileup_file, args.quality_thresh, full_reference)
 
-    LOG.info("Loading reference files")
+    LOG.debug("Loading reference files")
 
     position_file = get_position_file(args.reference_genome, args.use_old)
     filter_positions = load_filter_data(position_file)
-    known_snps = load_snp_database_file(snp_database_file, args.maximum_mutation_rate)
+    known_snps = load_snp_database_file(snp_database_file, args.minor_allele_frequency)
     ychrom_reference = load_reference_file(snp_reference_file)
 
-    LOG.info("Finding private mutations...")
+    LOG.debug("Finding private mutations...")
     private_mutations = []
     confirmed_private_mutations = []
     with open(pileup_file) as f:
@@ -744,10 +748,11 @@ def find_private_mutations(
                                                    f"{called_percentage}\t{frequency}\n")
     os.remove(pileup_file)
     with open(output_folder / "private_mutations.csv", "w") as f:
-        f.write(f"chrom\tposition\trs_nr\tmutation\treference\tactual\treads\tcalled_percentage\tfrequency\n")
+        f.write(f"chrom\tposition\trn_no\tmutation\treference\tdetected\treads\tcalled_percentage\t"
+                f"minor allele frequency\n")
         f.write(''.join(confirmed_private_mutations))
         f.write(''.join(private_mutations))
-    LOG.info("Finished extracting private mutations")
+    LOG.debug("Finished extracting private mutations")
 
 
 def load_filter_data(
@@ -764,7 +769,7 @@ def load_filter_data(
 
 def load_snp_database_file(
     path: Path,
-    maximum_mutation_rate: float
+    minor_allele_frequency: float
 ) -> Union[Dict[str, List[Dict[str, str]]], None]:
     global CACHED_SNP_DATABASE
 
@@ -775,7 +780,7 @@ def load_snp_database_file(
                 f.readline()
                 for line in f:
                     rs, position, major_allele, minor_allele, frequency = line.strip().split(",")
-                    if float(frequency) > maximum_mutation_rate:
+                    if float(frequency) > minor_allele_frequency:
                         continue
                     CACHED_SNP_DATABASE[position].append({"rs": rs, "major_allele": major_allele,
                                                           "minor_allele": minor_allele, "frequency": frequency})
