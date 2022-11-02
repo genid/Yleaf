@@ -26,6 +26,8 @@ from argparse import ArgumentParser
 from pathlib import Path
 from typing import Union, List, TextIO, Tuple, Dict, Set
 from collections import defaultdict
+import time
+import datetime
 
 from yleaf import __version__
 from yleaf.tree import Tree
@@ -45,6 +47,25 @@ HAPLOGROUP_IMAGE_FILE_NAME: str = "hg_tree_image"
 
 
 LOG: logging.Logger = logging.getLogger("yleaf_logger")
+
+
+class MyFormatter(logging.Formatter):
+    """
+    Copied from MultiGeneBlast (my code)
+    """
+    def __init__(self, fmt, starttime=time.time()):
+        logging.Formatter.__init__(self, fmt)
+        self._start_time = starttime
+
+    def format(self, record):
+        """
+        Overwrite of the format function that prints the passed time and adds
+        current time to the existing format
+        :See: logging.Formatter.format()
+        """
+        record.passedTime = "{:.3f}".format(time.time() - self._start_time)
+        record.currentTime = datetime.datetime.now().time()
+        return super(MyFormatter, self).format(record)
 
 
 def main():
@@ -174,7 +195,9 @@ def setup_logger(
     """Setup logging"""
     LOG.setLevel(logging.DEBUG)
     handler = logging.StreamHandler(sys.stdout)
-    formatter = logging.Formatter('%(levelname)s (%(relativeCreated)d s) - %(message)s')
+    start_time = time.time()
+    formatter = MyFormatter('%(levelname)s %(currentTime)s (%(passedTime)s s) - %(message)s',
+                            starttime=start_time)
     handler.setFormatter(formatter)
     handler.setLevel(logging.INFO)
     LOG.addHandler(handler)
@@ -265,7 +288,7 @@ def run_bam_cram(
     write_info_file(output_dir, general_info_list)
     if args.private_mutations:
         find_private_mutations(output_dir, input_file, args, is_bam)
-    LOG.info(f"Finished running for {input_file.name}")
+    LOG.debug(f"Finished running for {input_file.name}")
     print()
 
 
@@ -458,7 +481,7 @@ def extract_haplogroups(
     use_old: bool,
     general_info_list: List[str]
 ):
-    LOG.info("Starting with extracting haplogroups...")
+    LOG.debug("Starting with extracting haplogroups...")
     markerfile = pd.read_csv(path_markerfile, header=None, sep="\t")
     markerfile.columns = ["chr", "marker_name", "haplogroup", "pos", "mutation", "anc", "der"]
     markerfile = markerfile.drop_duplicates(subset='pos', keep='first', inplace=False)
@@ -675,14 +698,13 @@ def find_private_mutations(
     is_bam: bool
 ):
     # identify mutations not part of haplogroups that are annotated in dbsnp or differ from the reference genome
-    LOG.info("Starting with extracting private mutations...")
-    full_reference = get_reference_path(args.reference_genome, True) if not is_bam else None
+    LOG.debug("Starting with extracting private mutations...")
     snp_reference_file = get_reference_path(args.reference_genome, False)
     snp_database_file = yleaf_constants.DATA_FOLDER / args.reference_genome / yleaf_constants.SNP_DATA_FILE
 
     # run mpileup
     pileup_file = output_folder / "temp_private_mutation_pileup.pu"
-    execute_mpileup(None, path_file, pileup_file, args.quality_thresh, full_reference)
+    execute_mpileup(None, path_file, pileup_file, args.quality_thresh, snp_reference_file if not is_bam else None)
 
     LOG.debug("Loading reference files")
 

@@ -95,7 +95,7 @@ def main(namespace: argparse.Namespace = None):
         best_haplotype_score = get_most_likely_haplotype(tree, haplotype_dict, namespace.minimum_score)
         add_to_final_table(final_table, haplotype_dict, best_haplotype_score, folder)
     write_final_table(final_table, output)
-    LOG.info("Finished haplogroup prediction")
+    LOG.debug("Finished haplogroup prediction")
 
 
 def get_arguments() -> argparse.Namespace:
@@ -246,7 +246,7 @@ def get_most_likely_haplotype(
 
         # if above filter we found the hit
         if total_score > treshold:
-            ancestral_children = get_ancestral_children(node, haplotype_dict)
+            ancestral_children = get_ancestral_children(node, haplotype_dict, tree)
             best_score = (node.name, ancestral_children, qc1_score, qc2_score, qc3_score, total_score, node.depth)
             break
 
@@ -304,15 +304,23 @@ def get_qc1_score(
 
 def get_ancestral_children(
     node: Node,
-    haplotype_dict: Dict[str, HgMarkersLinker]
+    haplotype_dict: Dict[str, HgMarkersLinker],
+    tree: Tree
 ) -> List[str]:
-    """Get the names of all the child nodes of a node that have more than 60% ancestral markers"""
+    """Get the names of the first nodes that are ancestral children of the given node do this until no nodes are left
+    or all ancestral children are found"""
     ancestral_children = []
-    for name in node.children:
-        if name in haplotype_dict:
-            state = haplotype_dict[name].get_state()
-            if state == HgMarkersLinker.ANCESTRAL:
-                ancestral_children.append(name)
+    # make sure to not modify the original
+    to_cover = [node]
+    while len(to_cover) > 0:
+        node = to_cover.pop()
+        for name in node.children:
+            if name in haplotype_dict:
+                state = haplotype_dict[name].get_state()
+                if state == HgMarkersLinker.ANCESTRAL:
+                    ancestral_children.append(name)
+                    continue
+            to_cover.append(tree.get(name))
     return ancestral_children
 
 
@@ -334,8 +342,7 @@ def add_to_final_table(
     if len(marker_list) > 2:
         marker_list = marker_list[:2] + ["etc."]
     if len(ancestral_children) > 0:
-        ancestral_string = "x" + ','.join([f'{name.split("-")[1] if "-" in name else name}'
-                                           for name in ancestral_children])
+        ancestral_string = "x" + ','.join(ancestral_children)
         final_table.append([folder.name, f"{hg}*({ancestral_string})", ';'.join(marker_list), total_reads,
                             valid_markers, total, qc1, qc2, qc3])
     else:
