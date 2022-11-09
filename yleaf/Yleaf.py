@@ -282,7 +282,7 @@ def run_bam_cram(
     input_file: Path
 ):
     LOG.info(f"Starting with running for {input_file}")
-    output_dir = base_out_folder / input_file.name.split(".")[0]
+    output_dir = base_out_folder / input_file.name.rsplit(".", 1)[0]
     safe_create_dir(output_dir, args.force)
     general_info_list = samtools(output_dir, input_file, is_bam, args)
     write_info_file(output_dir, general_info_list)
@@ -769,7 +769,7 @@ def find_private_mutations(
                                                    f"{major_allele}\t{actual_allele}\t{allele_count}\t"
                                                    f"{called_percentage}\t{frequency}\n")
     os.remove(pileup_file)
-    with open(output_folder / "private_mutations.csv", "w") as f:
+    with open(output_folder / f"{output_folder.name}.pmu", "w") as f:
         f.write(f"chrom\tposition\trn_no\tmutation\treference\tdetected\treads\tcalled_percentage\t"
                 f"minor allele frequency\n")
         f.write(''.join(confirmed_private_mutations))
