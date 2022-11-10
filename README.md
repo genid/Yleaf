@@ -58,10 +58,7 @@ pip install -e .
 # verify that Yleaf is installed correctly. You can call this command from any directory on your system
 Yleaf -h 
 ```
-After installation you can navigate to the yleaf/config.txt folder and add custom paths for the files listed there.
-This will make sure that Yleaf does not download the files on the first go and that you can use a custom reference if 
-you want. Please keep in mind that custom reference files migth cause other issues or give problems in combination with
-already existing data files. Positions are based on either hg38 or hg19.
+After installation you can navigate to the yleaf/config.txt folder and add custom paths for the files listed there. This will make sure that Yleaf does not download the files on the first go or downloads the files in the provided location. This allows you to use a custom reference if you want. Please keep in mind that custom reference files might cause other issues or give problems in combination with already existing data files. Positions are based on either hg38 or hg19.
 
 ## Usage and examples
 Here follow some minimal working examples of how to use Yleaf with different input files. There are additional options
@@ -87,7 +84,7 @@ _Note: In version 3.0 we switched to using YFull (v10.01) for the underlying tre
 For a more comprehensive manual please have a look at the [yleaf_manual](yleaf_manual.pdf).
 
 If you have a bug to report or a question about installation consider sending an email to 
- b.vanwersch at erasmusmc.nl or create an issue on GitHub.
+ a.ralf at erasmusmc.nl or create an issue on GitHub.
 
 
 ### References and Supporting Information
