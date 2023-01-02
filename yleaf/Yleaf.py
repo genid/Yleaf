@@ -306,7 +306,7 @@ def call_command(
     stdout, stderr = process.communicate()
     # will only fail if returncode is not 0
     if process.returncode != 0:
-        LOG.error(f"Above call failed with message {stderr.decode('utf-8')}")
+        LOG.error(f"Call: '{command_str}' failed. Reason given: '{stderr.decode('utf-8')}'")
         raise SystemExit("Failed command execution")
     LOG.debug("Finished running the command")
 
