@@ -436,7 +436,7 @@ def get_position_file(
     use_old: bool
 ) -> Path:
     if use_old:
-        position_file = yleaf_constants.DATA_FOLDER / reference_name / yleaf_constants.NEW_POSITION_FILE
+        position_file = yleaf_constants.DATA_FOLDER / reference_name / yleaf_constants.OLD_POSITION_FILE
     else:
         position_file = yleaf_constants.DATA_FOLDER / reference_name / yleaf_constants.NEW_POSITION_FILE
     return position_file
