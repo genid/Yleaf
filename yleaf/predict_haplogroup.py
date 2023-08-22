@@ -196,7 +196,7 @@ def get_most_likely_haplotype(
     """
     sorted_depth_haplotypes = sorted(haplotype_dict.keys(), key=lambda k: tree.get(k).depth, reverse=True)
     covered_nodes = set()
-    best_score = ("NA", "NA", 0, 0, 0, 0, 0)
+    best_score = ("NA", "NA", "NA", "NA", "NA", "NA", "NA")
     for haplotype_name in sorted_depth_haplotypes:
         node = tree.get(haplotype_name)
 
@@ -249,7 +249,11 @@ def get_most_likely_haplotype(
             ancestral_children = get_ancestral_children(node, haplotype_dict, tree)
             best_score = (node.name, ancestral_children, qc1_score, qc2_score, qc3_score, total_score, node.depth)
             break
-
+            
+        # else, no hit is found, but still report Quality Scores
+        else:
+            best_score = ("NA", "NA", qc1_score, qc2_score, qc3_score, total_score, "NA")
+            
         # make sure that less specific nodes are not recorded
         for node_name in path:
             covered_nodes.add(node_name)
