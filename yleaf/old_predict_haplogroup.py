@@ -83,7 +83,7 @@ def get_hg_root(hg):
 
 def get_intermediate_branch(init_hg, path_hg_prediction_tables):
     tmp_init_hg = init_hg + "_int.txt"
-    hg_intermediate_file = path_hg_prediction_tables + tmp_init_hg
+    hg_intermediate_file = path_hg_prediction_tables + "/" + tmp_init_hg
     try:
         df_intermediate = pd.read_csv(hg_intermediate_file, header=None, sep="\t", engine='python')
         return df_intermediate
@@ -141,13 +141,9 @@ def get_putative_hg_list(init_hg, hg, df_haplogroup_trimmed, df_haplogroup_all):
         except ZeroDivisionError:
             qc_two = 0.0
         if qc_two >= hg_threshold:
-            try:
-                qc_three = calc_score_three(df_haplogroup_trimmed, putative_hg, init_hg)
-            except ZeroDivisionError:
-                qc_three = 0.0
+            qc_three = calc_score_three(df_haplogroup_trimmed, putative_hg, init_hg)
             dict_hg[putative_hg] = [qc_two, qc_three]
-            # if dictionary empty
-    # print(dict_hg)
+
     if not bool(dict_hg):
         return dict_hg
     # in case of a A haplogroup
@@ -209,10 +205,10 @@ def calc_score_three(df_haplogroup, putative_hg, init_hg):
                 total_match += 1
                 if i[1] == "A":
                     a_match += 1
-        try:
-            qc_three = round((total_match - a_match) / total_match, 3)
-        except ZeroDivisionError:
-            qc_three = 0.0
+    try:
+        qc_three = round((total_match - a_match) / total_match, 3)
+    except ZeroDivisionError:
+        qc_three = 0.0
     return qc_three
 
 
@@ -280,7 +276,7 @@ def main():
     samples = check_if_folder(path_samples, '.out')
     out_file = args.Outputfile
     hg_intermediate = str(yleaf_constants.DATA_FOLDER / yleaf_constants.HG_PREDICTION_FOLDER)
-    intermediate_tree_table = hg_intermediate + "Intermediates.txt"
+    intermediate_tree_table = hg_intermediate + "/Intermediates.txt"
     h_flag = True
     log_output = []
     for sample_name in samples:
@@ -321,9 +317,10 @@ def main():
         hg = df_derived[(df_derived.haplogroup.str.startswith(init_hg))].haplogroup.values
 
         dict_hg = get_putative_hg_list(init_hg, hg, df_haplogroup_trimmed, df_haplogroup_all)
-        keys = sorted(dict_hg.keys(), reverse=True)
+        keys = sorted(dict_hg.keys(), reverse=True, key=lambda x: x.replace("~", ""))  # apparently tilde has a
+        # higher ASCII value, resulting in a wrong order
 
-        keys, tmp_hg = process_keys(keys)  # tmp_hg stores hg with tilde ~
+        tmp_hg = [key for key in keys if "~" not in key]
 
         mismatches = []
         t = 2  # max mismatch for preffix
