@@ -251,7 +251,7 @@ def main_fastq(
         LOG.info(f"Starting with running for {fastq_file}")
         sam_file = bam_folder / "temp_fastq_sam.sam"
 
-        fastq_cmd = f"minimap2 -ax sr -t {args.threads} {reference} {fastq_file} > {sam_file}"
+        fastq_cmd = f"minimap2 -ax sr -k14 -w7 -t {args.threads} {reference} {fastq_file} > {sam_file}"
         call_command(fastq_cmd)
         bam_file = bam_folder / (fastq_file.name.rsplit(".", 1)[0] + ".bam")
         cmd = "samtools view -@ {} -bS {} | samtools sort -@ {} -m 2G -o {}".format(args.threads, sam_file,
