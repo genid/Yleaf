@@ -319,16 +319,15 @@ def main():
         keys = sorted(dict_hg.keys(), reverse=True, key=lambda x: x.replace("~", ""))  # apparently tilde has a
         # higher ASCII value, resulting in a wrong order
 
-        tmp_hg = [key for key in keys if "~" not in key]
-
         mismatches = []
         t = 2  # max mismatch for preffix
         # look for the preffix from bottom to the root of the tree
         for k in range(len(keys)):
             mismatch = 0
             for j in range(k + 1, len(keys)):
-                if keys[j] not in keys[k]:
+                if keys[j].replace("~", "") not in keys[k].replace("~", ""):
                     mismatch += 1
+
             if mismatch < t:
                 putative_hg = keys[k]
                 qc_two = dict_hg[keys[k]][0]
@@ -338,8 +337,8 @@ def main():
 
         hg_list = []
         flag = False
-        for i in tmp_hg:
-            if putative_hg in i:
+        for i in keys:
+            if putative_hg.replace("~", "") in i:
                 hg_list.append(i)
                 flag = True
         if flag:
