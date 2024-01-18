@@ -12,6 +12,8 @@ Autor: Bram van Wersch
 """
 
 import argparse
+import multiprocessing
+from functools import partial
 from pathlib import Path
 from typing import Set, Dict, Iterator, List, Any, Union, Tuple
 import logging
@@ -23,7 +25,7 @@ BACKBONE_GROUPS: Set = set()
 MAIN_HAPLO_GROUPS: Set = set()
 QC1_SCORE_CACHE: Dict[str, float] = {}
 
-DEFAULT_MIN_SCORE = 0.7
+DEFAULT_MIN_SCORE = 0.95
 
 LOG = logging.getLogger("yleaf_logger")
 
@@ -77,6 +79,24 @@ class HgMarkersLinker:
         return self.UNDEFINED
 
 
+def main_predict_haplogroup(
+    namespace: argparse.Namespace,
+    folder: Path,
+):
+    # make sure to reset this for each sample
+    global QC1_SCORE_CACHE
+    QC1_SCORE_CACHE = {}
+    try:
+        haplotype_dict = read_yleaf_out_file(folder / (folder.name + ".out"))
+    except FileNotFoundError:
+        LOG.warning(f"WARNING: failed to find .out file from yleaf run for sample {folder.name}. This sample will"
+                    " be skipped.")
+        return
+    tree = Tree(yleaf_constants.DATA_FOLDER / yleaf_constants.HG_PREDICTION_FOLDER / yleaf_constants.TREE_FILE)
+    best_haplotype_score = get_most_likely_haplotype(tree, haplotype_dict, namespace.minimum_score)
+    return [haplotype_dict, best_haplotype_score, folder]
+
+
 def main(namespace: argparse.Namespace = None):
     """Main entry point for prediction script"""
     LOG.info("Starting haplogroup prediction...")
@@ -84,16 +104,18 @@ def main(namespace: argparse.Namespace = None):
         namespace = get_arguments()
     in_folder = namespace.input
     output = namespace.outfile
+    threads = namespace.threads
     read_backbone_groups()
     final_table = []
-    for folder in read_input_folder(in_folder):
-        # make sure to reset this for each sample
-        global QC1_SCORE_CACHE
-        QC1_SCORE_CACHE = {}
-        haplotype_dict = read_yleaf_out_file(folder / (folder.name + ".out"))
-        tree = Tree(yleaf_constants.DATA_FOLDER / yleaf_constants.HG_PREDICTION_FOLDER / yleaf_constants.TREE_FILE)
-        best_haplotype_score = get_most_likely_haplotype(tree, haplotype_dict, namespace.minimum_score)
+
+    with multiprocessing.Pool(processes=threads) as p:
+        predictions = p.map(partial(main_predict_haplogroup, namespace), read_input_folder(in_folder))
+
+    for haplotype_dict, best_haplotype_score, folder in predictions:
+        if haplotype_dict is None:
+            continue
         add_to_final_table(final_table, haplotype_dict, best_haplotype_score, folder)
+
     write_final_table(final_table, output)
     LOG.debug("Finished haplogroup prediction")
 
@@ -118,17 +140,17 @@ def get_arguments() -> argparse.Namespace:
 def read_backbone_groups():
     """Read some basic data that is always needed"""
     global BACKBONE_GROUPS, MAIN_HAPLO_GROUPS
-    with open(yleaf_constants.DATA_FOLDER / yleaf_constants.HG_PREDICTION_FOLDER / "Intermediates.txt") as f:
+    with open(yleaf_constants.DATA_FOLDER / yleaf_constants.HG_PREDICTION_FOLDER / "major_tables/Intermediates.txt") as f:
         for line in f:
             if "~" in line:
                 continue
             BACKBONE_GROUPS.add(line.strip())
 
     # add capitals A-Z to get all groups
-    for nr in range(66, 85):
-        MAIN_HAPLO_GROUPS.add(chr(nr))
-    MAIN_HAPLO_GROUPS.add("A0-T")
-    MAIN_HAPLO_GROUPS.add("A00")
+    major_tree_list = ['A00', 'A00a', 'A00b', 'A00c', 'A0-T', 'A1', 'A1b', 'A1b1', 'BT', 'CT', 'CF', 'F', 'F4', 'F2', 'F3', 'GHIJK', 'G', 'HIJK', 'H', 'IJK', 'IJ', 'I', 'I2', 'I1', 'J', 'J1', 'J2', 'K', 'K2', 'K2d', 'K2c', 'K2b', 'P', 'R', 'R2', 'R1', 'R1b', 'R1a', 'Q', 'K2b1', 'S', 'M', 'NO', 'O', 'N', 'LT', 'L', 'T', 'F1', 'C', 'DE', 'D', 'E', 'B', 'A1a', 'A0']
+
+    for major_hg in major_tree_list:
+        MAIN_HAPLO_GROUPS.add(major_hg)
 
 
 def read_input_folder(
@@ -197,6 +219,7 @@ def get_most_likely_haplotype(
     sorted_depth_haplotypes = sorted(haplotype_dict.keys(), key=lambda k: tree.get(k).depth, reverse=True)
     covered_nodes = set()
     best_score = ("NA", "NA", "NA", "NA", "NA", "NA", "NA")
+
     for haplotype_name in sorted_depth_haplotypes:
         node = tree.get(haplotype_name)
 
@@ -225,6 +248,7 @@ def get_most_likely_haplotype(
             parent = parent.parent
 
         qc1_score = get_qc1_score(path, haplotype_dict)
+
         # if any of the scores are below treshold, the total can not be above so ignore
         if qc1_score < treshold:
             continue
@@ -282,7 +306,7 @@ def get_qc1_score(
         return QC1_SCORE_CACHE[most_specific_backbone]
     else:
         expected_states = {}
-        with open(hg_folder / f"{most_specific_backbone}_int.txt") as f:
+        with open(f"{hg_folder}/major_tables/{most_specific_backbone}_int.txt") as f:
             for line in f:
                 if line == "":
                     continue
@@ -365,9 +389,9 @@ def process_info_file(
         with open(info_file) as f:
             for line in f:
                 if line.startswith("Total of mapped reads:"):
-                    total_reads = int(line.replace("Total of mapped reads:", "").strip())
+                    total_reads = line.replace("Total of mapped reads:", "").strip()
                 elif line.startswith("Markers with haplogroup information"):
-                    valid_markers = int(line.replace("Markers with haplogroup information:", "").strip())
+                    valid_markers = line.replace("Markers with haplogroup information:", "").strip()
     except FileNotFoundError:
         LOG.warning("WARNING: failed to find .info file from yleaf run. This information is not critical but there"
                     " will be some missing values in the output.")

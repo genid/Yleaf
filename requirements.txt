@@ -1,4 +1,8 @@
-pandas
-numpy
-setuptools
-graphviz
+setuptools==65.6.3
+graphviz==0.19.2
+networkx==2.6.3
+numpy==1.18.5
+pandas==1.1.5
+python-dateutil==2.8.2
+pytz==2022.2.1
+six==1.16.0

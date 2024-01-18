@@ -16,6 +16,8 @@ Y_REF_FILE: str = "chrY.fa"
 SNP_DATA_FILE: str = "snp_data.csv"
 NEW_POSITION_FILE: str = "new_positions.txt"
 OLD_POSITION_FILE: str = "old_positions.txt"
+NEW_POSITION_BED_FILE: str = "new_positions.bed"
+OLD_POSITION_BED_FILE: str = "old_positions.bed"
 TREE_FILE: str = "tree.json"
 
 HG19_FULL_GENOME: Path = __HG19_FOLDER / FULL_REF_FILE

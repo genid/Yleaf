@@ -7,4 +7,9 @@ Yleaf.egg-info/
 build/
 yleaf/data/hg38/full_reference.fa.gz
 yleaf/data/hg19/full_reference.fa.gz
+yleaf/data/hg38/full_reference.fa
+yleaf/data/hg19/full_reference.fa
+yleaf/data/hg38/chrY.fa
+yleaf/data/hg19/chrY.fa
 male_pedigree_toolbox.egg-info/
+/venv/
