@@ -256,14 +256,39 @@ def main_vcf(
             cmd = f"bcftools index -f {sorted_vcf_file}"
             call_command(cmd)
 
+            # get chromosome annotation using bcftools query -f '%CHROM\n' sorted.vcf.gz | uniq
+            cmd = f"bcftools query -f '%CHROM\n' {sorted_vcf_file} | uniq"
+            process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
+            stdout, stderr = process.communicate()
+            if process.returncode != 0:
+                LOG.error(f"Call: '{cmd}' failed. Reason given: '{stderr.decode('utf-8')}'")
+                raise SystemExit("Failed command execution")
+            chromosomes = stdout.decode('utf-8').strip().split("\n")
+            chry = [x for x in chromosomes if "y" in x.lower()]
+            if len(chry) == 0:
+                LOG.error("Unable to find Y-chromosome in the vcf file. Exiting...")
+                raise SystemExit("Unable to find Y-chromosome in the vcf file.")
+            elif len(chry) > 1:
+                LOG.error("Multiple Y-chromosome annotations found in the vcf file. Exiting...")
+                raise SystemExit("Multiple Y-chromosome annotations found in the vcf file.")
+            else:
+                LOG.info(f"Found Y-chromosome annotation: {chry[0]}")
+                # make new position_bed_file with correct chrY annotation
+                new_position_bed_file = base_out_folder / (vcf_file.name.replace(".vcf.gz", "temp_position_bed.bed"))
+                with open(position_bed_file, "r") as f:
+                    with open(new_position_bed_file, "w") as f2:
+                        for line in f:
+                            line = line.replace("chrY", chry[0])
+                            f2.write(line)
+
             # filter the vcf file using the reference bed file
             filtered_vcf_file = base_out_folder / (sorted_vcf_file.name.replace(".sorted.vcf.gz", ".filtered.vcf.gz"))
-            cmd = f"bcftools view -O z -R {position_bed_file} {sorted_vcf_file} > {filtered_vcf_file}"
+            cmd = f"bcftools view -O z -R {new_position_bed_file} {sorted_vcf_file} > {filtered_vcf_file}"
             call_command(cmd)
 
-            # split the vcf file into separate files for each sample
-            split_vcf_folder = base_out_folder / (vcf_file.name.replace(".vcf.gz", "_split"))
-            safe_create_dir(split_vcf_folder, args.force)
+            # remover temp_position_bed.bed
+            cmd = f"rm {new_position_bed_file}"
+            call_command(cmd)
 
             # check number of samples in the vcf file
             cmd = f"bcftools query -l {filtered_vcf_file} | wc -l"
@@ -275,13 +300,20 @@ def main_vcf(
             num_samples = int(stdout.decode('utf-8').strip())
 
             if num_samples > 1:
+                # split the vcf file into separate files for each sample
+                split_vcf_folder = base_out_folder / (vcf_file.name.replace(".vcf.gz", "_split"))
+                safe_create_dir(split_vcf_folder, args.force)
+
                 LOG.info(f"Splitting the vcf file into {num_samples} separate files.")
                 cmd = f"bcftools +split {filtered_vcf_file} -Oz -o {split_vcf_folder}"
                 call_command(cmd)
                 sample_vcf_files = get_files_with_extension(split_vcf_folder, '.vcf.gz')
-            else:
+            elif num_samples == 1:
                 LOG.info("Only one sample found in the vcf file. Skipping splitting the vcf file.")
                 sample_vcf_files = [filtered_vcf_file]
+            else:
+                LOG.error("No samples found in the vcf file. Exiting...")
+                raise SystemExit("No samples found in the vcf file.")
 
             with multiprocessing.Pool(processes=args.threads) as p:
                 p.map(partial(run_vcf, path_markerfile, base_out_folder, args), sample_vcf_files)
@@ -352,7 +384,7 @@ def get_arguments() -> argparse.Namespace:
     parser.add_argument("-cr", "--cram_reference", required=False, help="Reference genome for the CRAM file. Required when using CRAM files.",
                         metavar="PATH", type=check_file)
     parser.add_argument("-vcf", "--vcffile", required=False,
-                        help="input VCF file", metavar="PATH", type=check_file)
+                        help="input VCF file (.vcf.gz)", metavar="PATH", type=check_file)
     parser.add_argument("-ra", "--reanalyze", required=False,
                         help="reanalyze (skip filtering and splitting) the vcf file", action="store_true")
     parser.add_argument("-force", "--force", action="store_true",

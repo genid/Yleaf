@@ -4,6 +4,7 @@ from pathlib import Path
 SRC_FOLDER: Path = Path(__file__).absolute().parent
 DATA_FOLDER: Path = SRC_FOLDER / "data"
 CONFIG_PATH: Path = SRC_FOLDER / "config.txt"
+CHR_NAMING_CONVENTION_FILE: Path = SRC_FOLDER / "chr_naming_convention.txt"
 HG_PREDICTION_FOLDER: Path = DATA_FOLDER / "hg_prediction_tables"
 
 HG19: str = "hg19"
@@ -18,6 +19,7 @@ NEW_POSITION_FILE: str = "new_positions.txt"
 OLD_POSITION_FILE: str = "old_positions.txt"
 NEW_POSITION_BED_FILE: str = "new_positions.bed"
 OLD_POSITION_BED_FILE: str = "old_positions.bed"
+
 TREE_FILE: str = "tree.json"
 
 HG19_FULL_GENOME: Path = __HG19_FOLDER / FULL_REF_FILE
