@@ -271,7 +271,6 @@ def main_vcf_split(
         LOG.error("Multiple Y-chromosome annotations found in the vcf file. Exiting...")
         raise SystemExit("Multiple Y-chromosome annotations found in the vcf file.")
     else:
-        LOG.info(f"Found Y-chromosome annotation: {chry[0]}")
         # make new position_bed_file with correct chrY annotation
         new_position_bed_file = base_out_folder / (vcf_file.name.replace(".vcf.gz", "temp_position_bed.bed"))
         with open(position_bed_file, "r") as f:
@@ -302,13 +301,10 @@ def main_vcf_split(
         # split the vcf file into separate files for each sample
         split_vcf_folder = base_out_folder / (vcf_file.name.replace(".vcf.gz", "_split"))
         safe_create_dir(split_vcf_folder, args.force)
-
-        LOG.info(f"Splitting the vcf file into {num_samples} separate files.")
         cmd = f"bcftools +split {filtered_vcf_file} -Oz -o {split_vcf_folder}"
         call_command(cmd)
         sample_vcf_files = get_files_with_extension(split_vcf_folder, '.vcf.gz')
     elif num_samples == 1:
-        LOG.info("Only one sample found in the vcf file. Skipping splitting the vcf file.")
         sample_vcf_files = [filtered_vcf_file]
     else:
         LOG.error("No samples found in the vcf file. Exiting...")
