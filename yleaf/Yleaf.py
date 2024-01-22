@@ -330,6 +330,9 @@ def main_vcf(
         with multiprocessing.Pool(processes=args.threads) as p:
             sample_vcf_files = p.map(partial(main_vcf_split, position_bed_file, base_out_folder, args), files)
 
+        sample_vcf_files = [x for x in sample_vcf_files if x is not None]
+        sample_vcf_files = [item for sublist in sample_vcf_files for item in sublist]
+
         with multiprocessing.Pool(processes=args.threads) as p:
             p.map(partial(run_vcf, path_markerfile, base_out_folder, args), sample_vcf_files)
 
