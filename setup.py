@@ -41,6 +41,7 @@ setup(
     entry_points={
         'console_scripts': [
             'Yleaf=yleaf.Yleaf:main',
+            'predict_haplogroup=yleaf.predict_haplogroup:main',
         ],
     },
     include_package_data=True,
