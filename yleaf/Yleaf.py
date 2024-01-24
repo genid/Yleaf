@@ -78,7 +78,15 @@ def run_vcf(
     LOG.debug("Starting with extracting haplogroups...")
     markerfile = pd.read_csv(path_markerfile, header=None, sep="\t",
                              names=["chr", "marker_name", "haplogroup", "pos", "mutation", "anc",
-                                    "der"]).drop_duplicates(subset='pos', keep='first', inplace=False)
+                                    "der"],
+                             dtype={"chr": str,
+                                    "marker_name": str,
+                                    "haplogroup": str,
+                                    "pos": int,
+                                    "mutation": str,
+                                    "anc": str,
+                                    "der": str,
+                                    }).drop_duplicates(subset='pos', keep='first', inplace=False)
 
     sample_vcf_folder = base_out_folder / (sample_vcf_file.name.replace(".vcf.gz", ""))
     safe_create_dir(sample_vcf_folder, args.force)
@@ -87,13 +95,15 @@ def run_vcf(
     cmd = f"bcftools query -f '%CHROM\t%POS\t%REF\t%ALT[\t%AD]\n' {sample_vcf_file} > {sample_vcf_file_txt}"
     call_command(cmd)
 
-    pileupfile = pd.read_csv(sample_vcf_file_txt, header=None, sep="\t")
+    pileupfile = pd.read_csv(sample_vcf_file_txt,
+                             dtype=str, header=None, sep="\t")
 
     # remove sample_vcf_file_txt
     cmd = f"rm {sample_vcf_file_txt}"
     call_command(cmd)
 
     pileupfile.columns = ['chr', 'pos', 'refbase', 'altbase', 'reads']
+    pileupfile['pos'] = pileupfile['pos'].astype(int)
 
     pileupfile['altbase'] = pileupfile['altbase'].str.split(',')
     pileupfile['reads'] = pileupfile['reads'].str.split(',')
@@ -235,6 +245,8 @@ def run_vcf(
             for lst in mappable_df[node_key]:
                 f.write('\t'.join(map(str, lst)) + f"\t{depth}\n")
 
+    LOG.info(f"Finished extracting genotypes for {sample_vcf_file.name}")
+
 
 def main_vcf_split(
         position_bed_file: Path,
@@ -280,12 +292,18 @@ def main_vcf_split(
                     f2.write(line)
 
     # filter the vcf file using the reference bed file
-    filtered_vcf_file = base_out_folder / (sorted_vcf_file.name.replace(".sorted.vcf.gz", ".filtered.vcf.gz"))
+    filtered_vcf_file = base_out_folder / "filtered_vcf_files" / (sorted_vcf_file.name.replace(".sorted.vcf.gz", ".filtered.vcf.gz"))
     cmd = f"bcftools view -O z -R {new_position_bed_file} {sorted_vcf_file} > {filtered_vcf_file}"
     call_command(cmd)
 
     # remover temp_position_bed.bed
     cmd = f"rm {new_position_bed_file}"
+    call_command(cmd)
+
+    # remove sorted.vcf.gz and sorted.vcf.gz.csi
+    cmd = f"rm {sorted_vcf_file}"
+    call_command(cmd)
+    cmd = f"rm {sorted_vcf_file}.csi"
     call_command(cmd)
 
     # check number of samples in the vcf file
@@ -319,6 +337,8 @@ def main_vcf(
 ):
     position_bed_file = get_position_bed_file(args.reference_genome, args.use_old)
     path_markerfile = get_position_file(args.reference_genome, args.use_old)
+
+    safe_create_dir(base_out_folder / "filtered_vcf_files", args.force)
 
     files = get_files_with_extension(args.vcffile, '.vcf.gz')
 
@@ -594,7 +614,7 @@ def call_command(
     if process.returncode != 0:
         LOG.error(f"Call: '{command_str}' failed. Reason given: '{stderr.decode('utf-8')}'")
         raise SystemExit("Failed command execution")
-    LOG.debug("Finished running the command")
+    LOG.debug(f"Finished running the command {command_str}")
 
 
 def get_files_with_extension(

@@ -86,12 +86,16 @@ def main_predict_haplogroup(
     # make sure to reset this for each sample
     global QC1_SCORE_CACHE
     QC1_SCORE_CACHE = {}
+
+    if folder.name == "filtered_vcf_files":
+        return [None, None, None]
+
     try:
         haplotype_dict = read_yleaf_out_file(folder / (folder.name + ".out"))
     except FileNotFoundError:
         LOG.warning(f"WARNING: failed to find .out file from yleaf run for sample {folder.name}. This sample will"
                     " be skipped.")
-        return
+        return [None, None, None]
     tree = Tree(yleaf_constants.DATA_FOLDER / yleaf_constants.HG_PREDICTION_FOLDER / yleaf_constants.TREE_FILE)
     best_haplotype_score = get_most_likely_haplotype(tree, haplotype_dict, namespace.minimum_score)
     return [haplotype_dict, best_haplotype_score, folder]
@@ -132,6 +136,8 @@ def get_arguments() -> argparse.Namespace:
                         type=float, default=DEFAULT_MIN_SCORE)
 
     parser.add_argument("-o", "--outfile", required=True, help="Output file name", metavar="FILE")
+
+    parser.add_argument("-t", "--threads", help="Number of threads to use (default=1).", type=int, default=1)
 
     args = parser.parse_args()
     return args
