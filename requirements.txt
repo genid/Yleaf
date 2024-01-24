@@ -1,4 +1,8 @@
-pandas
-numpy
 setuptools
 graphviz
+networkx
+numpy
+pandas
+python-dateutil
+pytz
+six
