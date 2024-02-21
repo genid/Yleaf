@@ -243,7 +243,7 @@ def get_most_likely_haplotype(
             path.append(parent.name)
             if parent.name in haplotype_dict:
                 # in the same overal haplogroup
-                if parent.name[0] == node.name[0] and parent.name != node.name[0]:
+                if node.name[0] in parent.name and parent.name != node.name[0]:
                     state = haplotype_dict[parent.name].get_state()
                     if state == HgMarkersLinker.DERIVED:
                         qc3_score[0] += 1
@@ -251,6 +251,9 @@ def get_most_likely_haplotype(
                     # in case it can not be decided what the state is ratio between 0.4 and 0.6
                     if state != HgMarkersLinker.UNDEFINED:
                         qc3_score[1] += 1
+
+                    if haplotype_name == "E-M75":
+                        print(f"haplotype_name: {haplotype_name}, parent: {parent.name}, state: {state}, qc3_score: {qc3_score}")
             parent = parent.parent
 
         qc1_score = get_qc1_score(path, haplotype_dict)
