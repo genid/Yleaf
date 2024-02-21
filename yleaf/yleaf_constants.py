@@ -19,6 +19,10 @@ NEW_POSITION_FILE: str = "new_positions.txt"
 OLD_POSITION_FILE: str = "old_positions.txt"
 NEW_POSITION_BED_FILE: str = "new_positions.bed"
 OLD_POSITION_BED_FILE: str = "old_positions.bed"
+NEW_POSITION_ANCIENT_FILE: str = "new_positions_ancient.txt"
+OLD_POSITION_ANCIENT_FILE: str = "old_positions_ancient.txt"
+NEW_POSITION_ANCIENT_BED_FILE: str = "new_positions_ancient.bed"
+OLD_POSITION_ANCIENT_BED_FILE: str = "old_positions_ancient.bed"
 
 TREE_FILE: str = "tree.json"
 
