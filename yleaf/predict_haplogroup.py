@@ -252,8 +252,6 @@ def get_most_likely_haplotype(
                     if state != HgMarkersLinker.UNDEFINED:
                         qc3_score[1] += 1
 
-                    if haplotype_name == "E-M75":
-                        print(f"haplotype_name: {haplotype_name}, parent: {parent.name}, state: {state}, qc3_score: {qc3_score}")
             parent = parent.parent
 
         qc1_score = get_qc1_score(path, haplotype_dict)
