@@ -568,7 +568,7 @@ def main_fastq(
             cmd = "samtools index -@ {} {}".format(args.threads, bam_file)
             call_command(cmd)
             os.remove(sam_file)
-        else:
+        elif "_R1" not in str(fastq_file) and "_R2" not in str(fastq_file) and ".gz" in str(fastq_file):
             LOG.info(f"Starting with running for {fastq_file}")
             sam_file = bam_folder / "temp_fastq_sam.sam"
 
