@@ -41,9 +41,9 @@ sudo apt-get install minimap2
 # install SAMtools
 wget https://github.com/samtools/samtools/releases/download/1.4.1/
 samtools-1.4.1.tar.bz2 -O samtools.tar.bz2
-tar -xjvf samtools.tar.bz2 3. 
+tar -xjvf samtools.tar.bz2
 cd samtools-1.4.1/
-./configure 5. make
+./configure make
 make install
 # clone the yleaf repository
 git clone https://github.com/genid/Yleaf.git
