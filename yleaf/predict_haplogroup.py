@@ -132,7 +132,7 @@ def get_arguments() -> argparse.Namespace:
                         help="Output file or path produced from Yleaf", metavar="FILE")
 
     parser.add_argument("-ms", "--minimum_score", help="Minimum score needed in order for a prediction to be considered"
-                                                       "for inclusion in the final data (default=0.7).",
+                                                       "for inclusion in the final data (default=0.95).",
                         type=float, default=DEFAULT_MIN_SCORE)
 
     parser.add_argument("-o", "--outfile", required=True, help="Output file name", metavar="FILE")
