@@ -369,8 +369,11 @@ def main():
 
     LOG.info(f"Running Yleaf with command: {' '.join(sys.argv)}")
 
+    # Validate custom references if provided
+    validate_custom_references(args)
+
     # make sure the reference genome is present before doing something else, if not present it is downloaded
-    check_reference(args.reference_genome)
+    check_reference(args)
 
     if args.fastq:
         main_fastq(args, out_folder)
@@ -430,6 +433,10 @@ def get_arguments() -> argparse.Namespace:
                              " will be used instead as reference or the location will be used to download the "
                              "reference if those files are missing or empty.",
                         choices=[yleaf_constants.HG19, yleaf_constants.HG38], required=True)
+    parser.add_argument("-fg", "--full_genome_reference", required=False, type=check_file,
+                        help="Custom full genome reference fasta file (.fa, .fasta, or .fna)", metavar="PATH")
+    parser.add_argument("-yr", "--y_chromosome_reference", required=False, type=check_file,
+                        help="Custom Y chromosome reference fasta file (.fa, .fasta, or .fna)", metavar="PATH")
     parser.add_argument("-o", "--output", required=True,
                         help="Folder name containing outputs", metavar="STRING")
     parser.add_argument("-r", "--reads_treshold",
@@ -545,7 +552,7 @@ def main_fastq(
 ):
     files = get_files_with_extension(args.fastq, '.fastq')
     files += get_files_with_extension(args.fastq, '.fastq.gz')
-    reference = get_reference_path(args.reference_genome, True)
+    reference = get_reference_path(args, True)
     bam_folder = out_folder / yleaf_constants.FASTQ_BAM_FILE_FOLDER
     try:
         os.mkdir(bam_folder)
@@ -657,27 +664,44 @@ def get_files_with_extension(
 
 
 def check_reference(
-        requested_version: str,
+        args: argparse.Namespace,
 ):
-    reference_file = get_reference_path(requested_version, True)
+    # Skip reference check if custom full genome reference is provided
+    if args.full_genome_reference:
+        return
+
+    # Use default reference path
+    mock_args = argparse.Namespace(
+        reference_genome=args.reference_genome,
+        full_genome_reference=None,
+        y_chromosome_reference=None
+    )
+    reference_file = get_reference_path(mock_args, True)
     if os.path.getsize(reference_file) < 100:
-        LOG.info(f"No reference genome version was found. Downloading the {requested_version} reference genome. This "
+        LOG.info(f"No reference genome version was found. Downloading the {args.reference_genome} reference genome. This "
                  f"should be a one time thing.")
-        download_reference.main(requested_version)
+        download_reference.main(args.reference_genome)
         LOG.info("Finished downloading the reference genome.")
 
 
 def get_reference_path(
-        requested_version: str,
+        args: argparse.Namespace,
         is_full: bool
 ) -> Union[Path, None]:
+    # First check if custom references were provided via command line
+    if is_full and args.full_genome_reference:
+        return args.full_genome_reference
+    elif not is_full and args.y_chromosome_reference:
+        return args.y_chromosome_reference
+
+    # Fall back to default references
     if is_full:
-        if requested_version == yleaf_constants.HG19:
+        if args.reference_genome == yleaf_constants.HG19:
             reference_file = yleaf_constants.HG19_FULL_GENOME
         else:
             reference_file = yleaf_constants.HG38_FULL_GENOME
     else:
-        if requested_version == yleaf_constants.HG19:
+        if args.reference_genome == yleaf_constants.HG19:
             reference_file = yleaf_constants.HG19_Y_CHROMOSOME
         else:
             reference_file = yleaf_constants.HG38_Y_CHROMOSOME
@@ -1052,7 +1076,7 @@ def find_private_mutations(
 ):
     # identify mutations not part of haplogroups that are annotated in dbsnp or differ from the reference genome
     LOG.debug("Starting with extracting private mutations...")
-    snp_reference_file = get_reference_path(args.reference_genome, False)
+    snp_reference_file = get_reference_path(args, False)
     snp_database_file = yleaf_constants.DATA_FOLDER / args.reference_genome / yleaf_constants.SNP_DATA_FILE
 
     # run mpileup
@@ -1209,6 +1233,33 @@ def draw_haplogroups(
     namespace = argparse.Namespace(input=haplogroup_file, collapse_mode=collapsed_draw_mode,
                                    outfile=haplogroup_file.parent / HAPLOGROUP_IMAGE_FILE_NAME)
     haplogroup_tree_image.main(namespace)
+
+
+def validate_custom_references(
+        args: argparse.Namespace
+):
+    """Validate custom reference files if provided."""
+    if args.full_genome_reference:
+        if not os.path.exists(args.full_genome_reference):
+            LOG.error(f"Custom full genome reference file {args.full_genome_reference} not found.")
+            raise ValueError(f"Custom full genome reference file {args.full_genome_reference} not found.")
+
+        if args.full_genome_reference.suffix not in [".fa", ".fasta", ".fna"]:
+            LOG.error(f"Custom full genome reference file must be in FASTA format (.fa, .fasta, or .fna).")
+            raise ValueError(f"Custom full genome reference file must be in FASTA format (.fa, .fasta, or .fna).")
+
+        LOG.info(f"Using custom full genome reference: {args.full_genome_reference}")
+
+    if args.y_chromosome_reference:
+        if not os.path.exists(args.y_chromosome_reference):
+            LOG.error(f"Custom Y chromosome reference file {args.y_chromosome_reference} not found.")
+            raise ValueError(f"Custom Y chromosome reference file {args.y_chromosome_reference} not found.")
+
+        if args.y_chromosome_reference.suffix not in [".fa", ".fasta", ".fna"]:
+            LOG.error(f"Custom Y chromosome reference file must be in FASTA format (.fa, .fasta, or .fna).")
+            raise ValueError(f"Custom Y chromosome reference file must be in FASTA format (.fa, .fasta, or .fna).")
+
+        LOG.info(f"Using custom Y chromosome reference: {args.y_chromosome_reference}")
 
 
 if __name__ == "__main__":

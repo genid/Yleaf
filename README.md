@@ -75,6 +75,24 @@ _Note: In version 3.0 we switched to using YFull (v10.01) for the underlying tre
 
     Yleaf -bam file.bam -o bam_output --reference_genome hg19 -dh -p
 
+### Using custom reference genomes
+
+You can specify custom reference genomes instead of using the default downloaded ones:
+
+    Yleaf -bam file.bam -o bam_output -rg hg19 -fg /path/to/full_genome.fa -yr /path/to/chrY.fa
+
+Where:
+- `-fg` or `--full_genome_reference` specifies the path to a custom full genome reference file
+- `-yr` or `--y_chromosome_reference` specifies the path to a custom Y chromosome reference file
+
+Both references must be in FASTA format (`.fa`, `.fasta`, or `.fna`).
+
+### Extracting Y chromosome from a reference genome
+
+If you have a full genome reference but need to extract just the Y chromosome, use the included extraction tool:
+
+    python -m yleaf.extract_y_chromosome -i /path/to/full_genome.fa -o /path/to/output_chrY.fa
+
 ## Additional information
 
 For a more comprehensive manual please have a look at the [yleaf_manual](yleaf_manual.pdf).
