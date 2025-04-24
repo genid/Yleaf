@@ -42,6 +42,7 @@ setup(
         'console_scripts': [
             'Yleaf=yleaf.Yleaf:main',
             'predict_haplogroup=yleaf.predict_haplogroup:main',
+            'extract_y_chromosome=yleaf.extract_y_chromosome:main',
         ],
     },
     include_package_data=True,
