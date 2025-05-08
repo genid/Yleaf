@@ -81,8 +81,15 @@ class HgMarkersLinker:
 
 def main_predict_haplogroup(
     namespace: argparse.Namespace,
+    backbone_groups: Set[str],
+    main_haplo_groups: Set[str],
     folder: Path,
 ):
+    # set these global vars because we might be inside a new process
+    global BACKBONE_GROUPS, MAIN_HAPLO_GROUPS
+    BACKBONE_GROUPS = backbone_groups
+    MAIN_HAPLO_GROUPS = main_haplo_groups
+
     # make sure to reset this for each sample
     global QC1_SCORE_CACHE
     QC1_SCORE_CACHE = {}
@@ -113,7 +120,7 @@ def main(namespace: Optional[argparse.Namespace] = None):
     final_table = []
 
     with multiprocessing.Pool(processes=threads) as p:
-        predictions = p.map(partial(main_predict_haplogroup, namespace), read_input_folder(in_folder))
+        predictions = p.map(partial(main_predict_haplogroup, namespace, BACKBONE_GROUPS, MAIN_HAPLO_GROUPS), read_input_folder(in_folder))
 
     for haplotype_dict, best_haplotype_score, folder in predictions:
         if haplotype_dict is None:
@@ -146,6 +153,7 @@ def get_arguments() -> argparse.Namespace:
 def read_backbone_groups():
     """Read some basic data that is always needed"""
     global BACKBONE_GROUPS, MAIN_HAPLO_GROUPS
+
     with open(yleaf_constants.DATA_FOLDER / yleaf_constants.HG_PREDICTION_FOLDER / "major_tables/Intermediates.txt") as f:
         for line in f:
             if "~" in line:
