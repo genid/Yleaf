@@ -15,14 +15,14 @@ import argparse
 import multiprocessing
 from functools import partial
 from pathlib import Path
-from typing import Set, Dict, Iterator, List, Any, Union, Tuple
+from typing import Set, Dict, Iterator, List, Any, Union, Tuple, Optional
 import logging
 
 from yleaf import yleaf_constants
 from yleaf.tree import Tree, Node
 
-BACKBONE_GROUPS: Set = set()
-MAIN_HAPLO_GROUPS: Set = set()
+BACKBONE_GROUPS: Set[str] = set()
+MAIN_HAPLO_GROUPS: Set[str] = set()
 QC1_SCORE_CACHE: Dict[str, float] = {}
 
 DEFAULT_MIN_SCORE = 0.95
@@ -101,7 +101,7 @@ def main_predict_haplogroup(
     return [haplotype_dict, best_haplotype_score, folder]
 
 
-def main(namespace: argparse.Namespace = None):
+def main(namespace: Optional[argparse.Namespace] = None):
     """Main entry point for prediction script"""
     LOG.info("Starting haplogroup prediction...")
     if namespace is None:
