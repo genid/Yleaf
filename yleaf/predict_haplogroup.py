@@ -8,7 +8,7 @@ Developed at Erasmus Medical Center Department of Genetic Identification
 License: GNU General Public License v3 or later
 A copy of GNU GPL v3 should have been included in this software package in LICENSE.txt.
 
-Autor: Bram van Wersch
+Author: Bram van Wersch
 """
 
 import argparse
@@ -192,9 +192,9 @@ def read_yleaf_out_file(
 def get_most_likely_haplotype(
     tree: Tree,
     haplotype_dict: Dict[str, HgMarkersLinker],
-    treshold: float
+    threshold: float,
 ) -> Tuple[str, str, int, int, int, int, int]:
-    """Get the most specific haplogroup with a score above the treshold. The score is build up from 3 parts:
+    """Get the most specific haplogroup with a score above the threshold. The score is build up from 3 parts:
     QC1: This score indicates whether the predicted haplogroup follows the
         expected backbone of the haplogroup tree structure (i.e. if haplogroup E
         is predicted the markers defining: A0-T, A1, A1b, BT, CT, DE should be
@@ -220,7 +220,7 @@ def get_most_likely_haplotype(
         in the haplogroup prediction.
 
     First all possible haplogroups are sorted based on the depth in the tree. This is the order haplogroup scores will
-    be calculated to determine if they are above the treshold. As soon as the treshold is reached the function returns.
+    be calculated to determine if they are above the threshold. As soon as the threshold is reached the function returns.
     """
     sorted_depth_haplotypes = sorted(haplotype_dict.keys(), key=lambda k: tree.get(k).depth, reverse=True)
     covered_nodes = set()
@@ -256,27 +256,27 @@ def get_most_likely_haplotype(
 
         qc1_score = get_qc1_score(path, haplotype_dict)
 
-        # if any of the scores are below treshold, the total can not be above so ignore
-        if qc1_score < treshold:
+        # if any of the scores are below threshold, the total can not be above so ignore
+        if qc1_score < threshold:
             continue
 
         if haplotype_dict[node.name].nr_total == 0:
             qc2_score = 0
         else:
             qc2_score = haplotype_dict[node.name].nr_derived / haplotype_dict[node.name].nr_total
-            if qc2_score < treshold:
+            if qc2_score < threshold:
                 continue
         if qc3_score[1] == 0:
             qc3_score = 0
         else:
             qc3_score = qc3_score[0] / qc3_score[1]
-            if qc3_score < treshold:
+            if qc3_score < threshold:
                 continue
 
         total_score = product([qc1_score, qc2_score, qc3_score])
 
         # if above filter we found the hit
-        if total_score > treshold:
+        if total_score > threshold:
             ancestral_children = get_ancestral_children(node, haplotype_dict, tree)
             best_score = (node.name, ancestral_children, qc1_score, qc2_score, qc3_score, total_score, node.depth)
             break
