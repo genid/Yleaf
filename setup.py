@@ -28,6 +28,9 @@ setup(
     author='Bram van Wersch and Diego Montiel Gonzalez',
     author_email='b.vanwersch@erasmusmc.nl',
     description='Tool for human Y-chromosomal phylogenetic analysis and haplogroup inference.',
+    long_description='Tool for human Y-chromosomal phylogenetic analysis and haplogroup inference.',
+    long_description_content_type='text/plain',
+    platforms=[],
     classifiers=[
         "Programming Language :: Python :: 3",
         "Programming Language :: Python :: 3.6",
