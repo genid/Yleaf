@@ -51,12 +51,12 @@ def install_genome_files(
 
     ref_gz_file = Path(str(ref_file) + ".gz")
     try:
-        if os.path.getsize(ref_file) < 100 and not ref_gz_file.exists():
+        if (not ref_file.exists() or os.path.getsize(ref_file) < 100) and not ref_gz_file.exists():
 
             LOG.debug(f"Downloading the {reference_choice} genome...")
             urllib.request.urlretrieve(f"http://hgdownload.cse.ucsc.edu/goldenPath/{reference_choice}"
                                        f"/bigZips/{reference_choice}.fa.gz", ref_gz_file)
-        if os.path.getsize(ref_file) < 100:
+        if not ref_file.exists() or os.path.getsize(ref_file) < 100:
             LOG.debug("Unpacking the downloaded archive...")
             with gzip.open(ref_gz_file, 'rb') as f_in:
                 with open(ref_file, 'wb') as f_out:
@@ -68,7 +68,7 @@ def install_genome_files(
         else:
             ychrom_file = yleaf_constants.HG38_Y_CHROMOSOME
 
-        if os.path.getsize(ychrom_file) < 100:
+        if not ychrom_file.exists() or os.path.getsize(ychrom_file) < 100:
             LOG.debug("Writing Ychromosomal data")
             get_ychrom_data(ref_file, ychrom_file)
     # try and cleanup when user aborts, this attempts to not leave half downloaded files

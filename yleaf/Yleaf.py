@@ -205,7 +205,7 @@ def run_vcf(
     # positions from the downloaded chrY FASTA we can recover the vast majority of markers.
     ref_inferred_count = 0
     chry_ref_path = get_reference_path(args.reference_genome, False)
-    if os.path.getsize(chry_ref_path) > 0:
+    if chry_ref_path and chry_ref_path.exists() and os.path.getsize(chry_ref_path) > 0:
         try:
             with open(chry_ref_path) as _ref_f:
                 chry_seq = ''.join(line.strip().upper() for line in _ref_f if not line.startswith('>'))
@@ -705,7 +705,7 @@ def check_reference(
         requested_version: str,
 ):
     reference_file = get_reference_path(requested_version, True)
-    if os.path.getsize(reference_file) < 100:
+    if not reference_file.exists() or os.path.getsize(reference_file) < 100:
         LOG.info(f"No reference genome version was found. Downloading the {requested_version} reference genome. This "
                  f"should be a one time thing.")
         download_reference.main(requested_version)
