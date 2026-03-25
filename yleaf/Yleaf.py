@@ -133,6 +133,10 @@ def run_vcf(
         lambda row: row['ref_reads'] if row['called_ref_perc'] >= row['called_alt_perc'] else row['highest_alt_reads'],
         axis=1).astype(int)
 
+    # Save full marker list before intersection — needed to infer states for positions
+    # absent from the VCF (where the sample matches the reference genome).
+    full_markerfile = markerfile
+
     intersect_pos = np.intersect1d(pileupfile['pos'], markerfile['pos'])
     markerfile = markerfile.loc[markerfile['pos'].isin(intersect_pos)]
     markerfile = markerfile.sort_values(by=['pos'])
@@ -195,6 +199,46 @@ def run_vcf(
     df_out = df_out[['chr', 'pos', 'marker_name', 'haplogroup', 'mutation', 'anc', 'der', 'reads',
                      'called_perc', 'called_base', 'state']]
 
+    # Infer states for marker positions absent from the VCF.
+    # Standard VCFs only contain variant positions; ancestral positions where the sample
+    # matches the reference are not emitted. By looking up the reference allele at those
+    # positions from the downloaded chrY FASTA we can recover the vast majority of markers.
+    ref_inferred_count = 0
+    chry_ref_path = get_reference_path(args.reference_genome, False)
+    if os.path.getsize(chry_ref_path) > 0:
+        try:
+            with open(chry_ref_path) as _ref_f:
+                chry_seq = ''.join(line.strip().upper() for line in _ref_f if not line.startswith('>'))
+            covered_pos_set = set(intersect_pos)
+            missing_markers = full_markerfile[~full_markerfile['pos'].isin(covered_pos_set)].copy()
+            if len(missing_markers) > 0:
+                missing_markers['ref_allele'] = missing_markers['pos'].apply(
+                    lambda p: chry_seq[p - 1] if 0 < p <= len(chry_seq) else 'N')
+                missing_markers = missing_markers[missing_markers.apply(
+                    lambda row: row['ref_allele'] in ACCEPTED_REF_BASES
+                                and row['ref_allele'] in (row['anc'], row['der']), axis=1)].copy()
+                if len(missing_markers) > 0:
+                    missing_markers['state'] = missing_markers.apply(
+                        lambda row: 'A' if row['ref_allele'] == row['anc'] else 'D', axis=1)
+                    missing_markers['reads'] = 0
+                    missing_markers['called_perc'] = 100.0
+                    missing_markers['called_base'] = missing_markers['ref_allele']
+                    ref_inferred_df = missing_markers[[
+                        'chr', 'pos', 'marker_name', 'haplogroup', 'mutation', 'anc', 'der',
+                        'reads', 'called_perc', 'called_base', 'state']]
+                    df_out = pd.concat([df_out, ref_inferred_df], axis=0, sort=False)
+                    ref_inferred_count = len(ref_inferred_df)
+                    LOG.debug(
+                        f"Reference inference: added {ref_inferred_count} markers "
+                        f"({(missing_markers['state'] == 'A').sum()} A, "
+                        f"{(missing_markers['state'] == 'D').sum()} D)")
+        except Exception as e:
+            LOG.warning(f"Could not infer states from reference genome for VCF input: {e}")
+    else:
+        LOG.warning(
+            "chrY reference FASTA not available — VCF prediction will use only variant positions. "
+            "Run Yleaf once with -bam to download the reference, or use -bam/-cram input.")
+
     general_info_list.append("Markers with zero reads: " + str(len(df_belowzero)))
     general_info_list.append(
         "Markers below the read threshold {" + str(reads_thresh) + "}: " + str(len(df_readsthreshold)))
@@ -202,6 +246,7 @@ def run_vcf(
         "Markers below the base majority threshold {" + str(base_majority) + "}: " + str(len(df_basemajority)))
     general_info_list.append("Markers with discordant genotype: " + str(len(df_discordantgenotype)))
     general_info_list.append("Markers without haplogroup information: " + str(len(df_fmf)))
+    general_info_list.append("Reference-inferred markers: " + str(ref_inferred_count))
     general_info_list.append("Markers with haplogroup information: " + str(len(df_out)))
 
     write_info_file(sample_vcf_folder, general_info_list)
