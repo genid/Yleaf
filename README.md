@@ -75,6 +75,12 @@ _Note: In version 3.0 we switched to using YFull (v10.01) for the underlying tre
 
     Yleaf -bam file.bam -o bam_output --reference_genome hg19 -dh -p
 
+### Ancient DNA samples
+
+Use the `-aDNA` / `--ancient_DNA` flag when working with ancient DNA. This ignores G>A and C>T mutations, which are common post-mortem deamination artefacts and would otherwise be misinterpreted as derived alleles.
+
+    Yleaf -bam ancient_sample.bam -o output --reference_genome hg38 --ancient_DNA
+
 ## Additional information
 
 For a more comprehensive manual please have a look at the [yleaf_manual](yleaf_manual.pdf).
