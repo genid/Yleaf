@@ -31,7 +31,7 @@ setup(
     classifiers=[
         "Programming Language :: Python :: 3",
         "Programming Language :: Python :: 3.6",
-        "License :: OSI Approved :: GNU License",
+        "License :: OSI Approved :: MIT License",
         "Operating System :: Linux",
         "Intended Audience :: Science/Research",
         "Topic :: Scientific/Engineering :: Bio-Informatics",
