@@ -708,7 +708,17 @@ def check_reference(
     if not reference_file.exists() or os.path.getsize(reference_file) < 100:
         LOG.info(f"No reference genome version was found. Downloading the {requested_version} reference genome. This "
                  f"should be a one time thing.")
-        download_reference.main(requested_version)
+        try:
+            download_reference.main(requested_version)
+        except Exception as e:
+            LOG.error(
+                f"Failed to download the {requested_version} reference genome: {e}\n"
+                f"Please check your internet connection and ensure that the data directory "
+                f"({reference_file.parent}) is writable, then re-run Yleaf. "
+                f"Alternatively, place the reference FASTA manually and set its path in "
+                f"yleaf/config.txt."
+            )
+            sys.exit(1)
         LOG.info("Finished downloading the reference genome.")
 
 
