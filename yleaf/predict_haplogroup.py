@@ -81,10 +81,17 @@ class HgMarkersLinker:
 
 def main_predict_haplogroup(
     namespace: argparse.Namespace,
+    backbone_groups: Set,
+    main_haplo_groups: Set,
     folder: Path,
 ):
+    # Re-assign globals so spawned worker processes (which don't inherit parent
+    # state on platforms using the "spawn" start method, e.g. macOS) have the
+    # required data available (fixes issue #34).
+    global BACKBONE_GROUPS, MAIN_HAPLO_GROUPS, QC1_SCORE_CACHE
+    BACKBONE_GROUPS = backbone_groups
+    MAIN_HAPLO_GROUPS = main_haplo_groups
     # make sure to reset this for each sample
-    global QC1_SCORE_CACHE
     QC1_SCORE_CACHE = {}
 
     if folder.name == "filtered_vcf_files":
@@ -113,7 +120,7 @@ def main(namespace: argparse.Namespace = None):
     final_table = []
 
     with multiprocessing.Pool(processes=threads) as p:
-        predictions = p.map(partial(main_predict_haplogroup, namespace), read_input_folder(in_folder))
+        predictions = p.map(partial(main_predict_haplogroup, namespace, BACKBONE_GROUPS, MAIN_HAPLO_GROUPS), read_input_folder(in_folder))
 
     for haplotype_dict, best_haplotype_score, folder in predictions:
         if haplotype_dict is None:
