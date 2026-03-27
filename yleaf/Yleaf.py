@@ -1043,15 +1043,20 @@ def get_frequencies(
     index = 0
     while index < len(sequence):
         char = sequence[index]
-        if char in fastadict:
+        if char in {"-", "+"}:
+            # Indel notation: +<n><bases> or -<n><bases>. Count the marker but
+            # skip the following bases so they are not counted as real reads.
+            # This check must come before the fastadict check because "-" and "+"
+            # are also keys in fastadict (issue #31).
             fastadict[char] += 1
-            index += 1
-        elif char == "^":
-            index += 2
-        elif char in {"-", "+"}:
             index += 1
             digit, index = find_digit(sequence, index)
             index += digit
+        elif char == "^":
+            index += 2
+        elif char in fastadict:
+            fastadict[char] += 1
+            index += 1
         else:
             index += 1
     fastadict["-"] += fastadict["*"]
