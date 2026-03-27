@@ -479,6 +479,10 @@ def get_arguments() -> argparse.Namespace:
                         help="input VCF file (.vcf.gz)", metavar="PATH", type=check_file)
     parser.add_argument("-ra", "--reanalyze", required=False,
                         help="reanalyze (skip filtering and splitting) the vcf file", action="store_true")
+    parser.add_argument("-rp", "--reuse_pileup", required=False,
+                        help="reuse existing pileup file (.pu) if present, skipping samtools mpileup. "
+                             "The .pu file is kept on disk when this flag is set.",
+                        action="store_true")
     parser.add_argument("-force", "--force", action="store_true",
                         help="Delete files without asking")
     parser.add_argument("-rg", "--reference_genome",
@@ -785,10 +789,14 @@ def samtools(
 
     position_file = get_position_file(args.reference_genome, args.use_old, args.ancient_DNA, args.tree)
 
-    bed = output_folder / "temp_position_bed.bed"
-    write_bed_file(bed, position_file, header)
-
-    execute_mpileup(bed, path_file, pileupfile, args.quality_thresh, reference)
+    reuse_pileup = getattr(args, 'reuse_pileup', False)
+    if reuse_pileup and pileupfile.exists():
+        LOG.info(f"Reusing existing pileup file: {pileupfile}")
+        bed = None
+    else:
+        bed = output_folder / "temp_position_bed.bed"
+        write_bed_file(bed, position_file, header)
+        execute_mpileup(bed, path_file, pileupfile, args.quality_thresh, reference)
 
     general_info_list = ["Total of mapped reads: " + str(mapped), "Total of unmapped reads: " + str(unmapped)]
 
@@ -796,8 +804,10 @@ def samtools(
                         pileupfile, fmf_output, outputfile, is_bam_pathfile, args.use_old, general_info_list,
                         args.tree)
 
-    os.remove(pileupfile)
-    os.remove(bed)
+    if not reuse_pileup:
+        os.remove(pileupfile)
+    if bed is not None:
+        os.remove(bed)
 
     LOG.debug("Finished extracting haplogroups")
     return general_info_list
