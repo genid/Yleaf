@@ -278,7 +278,7 @@ def run_vcf(
             mappable_df[lst[3]] = []
         mappable_df[lst[3]].append(lst)
 
-    tree = Tree(yleaf_constants.DATA_FOLDER / yleaf_constants.HG_PREDICTION_FOLDER / yleaf_constants.TREE_FILE)
+    tree = Tree(get_tree_path(args.tree))
     with open(outputfile, "w") as f:
         f.write('\t'.join(["chr", "pos", "marker_name", "haplogroup", "mutation", "anc", "der", "reads",
                            "called_perc", "called_base", "state", "depth\n"]))
@@ -380,8 +380,8 @@ def main_vcf(
         args: argparse.Namespace,
         base_out_folder: Path
 ):
-    position_bed_file = get_position_bed_file(args.reference_genome, args.use_old, args.ancient_DNA)
-    path_markerfile = get_position_file(args.reference_genome, args.use_old, args.ancient_DNA)
+    position_bed_file = get_position_bed_file(args.reference_genome, args.use_old, args.ancient_DNA, args.tree)
+    path_markerfile = get_position_file(args.reference_genome, args.use_old, args.ancient_DNA, args.tree)
 
     safe_create_dir(base_out_folder / "filtered_vcf_files", args.force)
 
@@ -414,6 +414,18 @@ def main():
 
     LOG.info(f"Running Yleaf with command: {' '.join(sys.argv)}")
 
+    # validate tree/reference combination
+    if args.tree == yleaf_constants.TREE_FTDNA:
+        if args.reference_genome != yleaf_constants.HG38:
+            LOG.error("The FTDNA tree is only available for hg38.")
+            raise ValueError("The FTDNA tree is only available for hg38.")
+        if args.use_old:
+            LOG.error("--use_old is not compatible with --tree ftdna.")
+            raise ValueError("--use_old is not compatible with --tree ftdna.")
+        if args.ancient_DNA:
+            LOG.error("--ancient_DNA is not compatible with --tree ftdna.")
+            raise ValueError("--ancient_DNA is not compatible with --tree ftdna.")
+
     # make sure the reference genome is present before doing something else, if not present it is downloaded
     check_reference(args.reference_genome)
 
@@ -429,7 +441,7 @@ def main():
         LOG.error("Please specify either a bam, a cram, a fastq, or a vcf file")
         raise ValueError("Please specify either a bam, a cram, a fastq, or a vcf file")
     hg_out = out_folder / PREDICTION_OUT_FILE_NAME
-    predict_haplogroup(out_folder, hg_out, args.use_old, args.prediction_quality, args.threads)
+    predict_haplogroup(out_folder, hg_out, args.use_old, args.prediction_quality, args.threads, args.tree)
     if args.draw_haplogroups:
         draw_haplogroups(hg_out, args.collapsed_draw_mode)
 
@@ -493,6 +505,13 @@ def get_arguments() -> argparse.Namespace:
                         type=int, default=1, metavar="INT")
     parser.add_argument("-pq", "--prediction_quality", type=float, required=False, default=0.95, metavar="FLOAT",
                         help="The minimum quality of the prediction (QC-scores) for it to be accepted. [0-1] (default=0.95)")
+
+    parser.add_argument("-tree", "--tree",
+                        help="The haplogroup tree to use for prediction. 'yfull' uses the YFull-based tree with the "
+                             "standard position tables. 'ftdna' uses the FamilyTreeDNA tree with its own position "
+                             "tables (hg38 only). (default=yfull)",
+                        choices=[yleaf_constants.TREE_YFULL, yleaf_constants.TREE_FTDNA],
+                        default=yleaf_constants.TREE_YFULL)
 
     # arguments for prediction
     parser.add_argument("-old", "--use_old", dest="use_old",
@@ -764,7 +783,7 @@ def samtools(
             call_command(cmd)
     header, mapped, unmapped = chromosome_table(path_file, output_folder, output_folder.name)
 
-    position_file = get_position_file(args.reference_genome, args.use_old, args.ancient_DNA)
+    position_file = get_position_file(args.reference_genome, args.use_old, args.ancient_DNA, args.tree)
 
     bed = output_folder / "temp_position_bed.bed"
     write_bed_file(bed, position_file, header)
@@ -774,7 +793,8 @@ def samtools(
     general_info_list = ["Total of mapped reads: " + str(mapped), "Total of unmapped reads: " + str(unmapped)]
 
     extract_haplogroups(position_file, args.reads_treshold, args.base_majority,
-                        pileupfile, fmf_output, outputfile, is_bam_pathfile, args.use_old, general_info_list)
+                        pileupfile, fmf_output, outputfile, is_bam_pathfile, args.use_old, general_info_list,
+                        args.tree)
 
     os.remove(pileupfile)
     os.remove(bed)
@@ -818,11 +838,20 @@ def chromosome_table(
         raise SystemExit("No Y-chromosomal data")
 
 
+def get_tree_path(tree: str) -> Path:
+    if tree == yleaf_constants.TREE_FTDNA:
+        return yleaf_constants.HG_PREDICTION_FOLDER / yleaf_constants.FTDNA_TREE_FILE
+    return yleaf_constants.HG_PREDICTION_FOLDER / yleaf_constants.TREE_FILE
+
+
 def get_position_file(
         reference_name: str,
         use_old: bool,
         ancient_DNA: bool,
+        tree: str = yleaf_constants.TREE_YFULL,
 ) -> Path:
+    if tree == yleaf_constants.TREE_FTDNA:
+        return yleaf_constants.DATA_FOLDER / reference_name / yleaf_constants.FTDNA_POSITION_FILE
     if use_old:
         if ancient_DNA:
             position_file = yleaf_constants.DATA_FOLDER / reference_name / yleaf_constants.OLD_POSITION_ANCIENT_FILE
@@ -840,7 +869,10 @@ def get_position_bed_file(
         reference_name: str,
         use_old: bool,
         ancient_DNA: bool,
+        tree: str = yleaf_constants.TREE_YFULL,
 ) -> Path:
+    if tree == yleaf_constants.TREE_FTDNA:
+        return yleaf_constants.DATA_FOLDER / reference_name / yleaf_constants.FTDNA_POSITION_BED_FILE
     if use_old:
         if ancient_DNA:
             position_file = yleaf_constants.DATA_FOLDER / reference_name / yleaf_constants.OLD_POSITION_ANCIENT_BED_FILE
@@ -891,7 +923,8 @@ def extract_haplogroups(
         outputfile: Path,
         is_bam_file: bool,
         use_old: bool,
-        general_info_list: List[str]
+        general_info_list: List[str],
+        tree: str = yleaf_constants.TREE_YFULL,
 ):
     LOG.debug("Starting with extracting haplogroups...")
     markerfile = pd.read_csv(path_markerfile, header=None, sep="\t")
@@ -1020,7 +1053,7 @@ def extract_haplogroups(
             mappable_df[lst[3]] = []
         mappable_df[lst[3]].append(lst)
 
-    tree = Tree(yleaf_constants.DATA_FOLDER / yleaf_constants.HG_PREDICTION_FOLDER / yleaf_constants.TREE_FILE)
+    tree = Tree(get_tree_path(tree))
     with open(outputfile, "w") as f:
         f.write('\t'.join(["chr", "pos", "marker_name", "haplogroup", "mutation", "anc", "der", "reads",
                            "called_perc", "called_base", "state", "depth\n"]))
@@ -1125,7 +1158,7 @@ def find_private_mutations(
 
     LOG.debug("Loading reference files")
 
-    position_file = get_position_file(args.reference_genome, args.use_old, args.ancient_DNA)
+    position_file = get_position_file(args.reference_genome, args.use_old, args.ancient_DNA, args.tree)
     filter_positions = load_filter_data(position_file)
     known_snps = load_snp_database_file(snp_database_file, args.minor_allele_frequency)
     ychrom_reference = load_reference_file(snp_reference_file)
@@ -1252,6 +1285,7 @@ def predict_haplogroup(
         use_old: bool,
         prediction_quality: float,
         threads: int,
+        tree: str = yleaf_constants.TREE_YFULL,
 ):
     if use_old:
         script = yleaf_constants.SRC_FOLDER / "old_predict_haplogroup.py"
@@ -1260,7 +1294,8 @@ def predict_haplogroup(
     else:
         from yleaf import predict_haplogroup
         namespace = argparse.Namespace(input=path_file, outfile=output,
-                                       minimum_score=prediction_quality, threads=threads)
+                                       minimum_score=prediction_quality, threads=threads,
+                                       tree_file=get_tree_path(tree))
         predict_haplogroup.main(namespace)
 
 
