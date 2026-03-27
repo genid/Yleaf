@@ -9,8 +9,10 @@ HG_PREDICTION_FOLDER: Path = DATA_FOLDER / "hg_prediction_tables"
 
 HG19: str = "hg19"
 HG38: str = "hg38"
+T2T: str = "t2t"
 __HG19_FOLDER: Path = DATA_FOLDER / HG19
 __HG38_FOLDER: Path = DATA_FOLDER / HG38
+__T2T_FOLDER: Path = DATA_FOLDER / T2T
 
 FULL_REF_FILE: str = "full_reference.fa"
 Y_REF_FILE: str = "chrY.fa"
@@ -30,6 +32,8 @@ HG19_FULL_GENOME: Path = __HG19_FOLDER / FULL_REF_FILE
 HG19_Y_CHROMOSOME: Path = __HG19_FOLDER / Y_REF_FILE
 HG38_FULL_GENOME: Path = __HG38_FOLDER / FULL_REF_FILE
 HG38_Y_CHROMOSOME: Path = __HG38_FOLDER / Y_REF_FILE
+T2T_FULL_GENOME: Path = __T2T_FOLDER / FULL_REF_FILE
+T2T_Y_CHROMOSOME: Path = __T2T_FOLDER / Y_REF_FILE
 
 
 def get_path(
@@ -65,6 +69,10 @@ with open(CONFIG_PATH) as f:
             HG19_Y_CHROMOSOME = get_path(name, value)
         elif name == "hg38 chromosome Y fasta location":
             HG38_Y_CHROMOSOME = get_path(name, value)
+        elif name == "full t2t genome fasta location":
+            T2T_FULL_GENOME = get_path(name, value)
+        elif name == "t2t chromosome Y fasta location":
+            T2T_Y_CHROMOSOME = get_path(name, value)
 
 
 FASTQ_BAM_FILE_FOLDER: str = "bam_files"

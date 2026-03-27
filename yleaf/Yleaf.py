@@ -474,7 +474,7 @@ def get_arguments() -> argparse.Namespace:
                              "they will be downloaded. If you added references in your config.txt file these"
                              " will be used instead as reference or the location will be used to download the "
                              "reference if those files are missing or empty.",
-                        choices=[yleaf_constants.HG19, yleaf_constants.HG38], required=True)
+                        choices=[yleaf_constants.HG19, yleaf_constants.HG38, yleaf_constants.T2T], required=True)
     parser.add_argument("-o", "--output", required=True,
                         help="Folder name containing outputs", metavar="STRING")
     parser.add_argument("-r", "--reads_treshold",
@@ -729,11 +729,15 @@ def get_reference_path(
     if is_full:
         if requested_version == yleaf_constants.HG19:
             reference_file = yleaf_constants.HG19_FULL_GENOME
+        elif requested_version == yleaf_constants.T2T:
+            reference_file = yleaf_constants.T2T_FULL_GENOME
         else:
             reference_file = yleaf_constants.HG38_FULL_GENOME
     else:
         if requested_version == yleaf_constants.HG19:
             reference_file = yleaf_constants.HG19_Y_CHROMOSOME
+        elif requested_version == yleaf_constants.T2T:
+            reference_file = yleaf_constants.T2T_Y_CHROMOSOME
         else:
             reference_file = yleaf_constants.HG38_Y_CHROMOSOME
     return reference_file

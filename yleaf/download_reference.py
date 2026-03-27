@@ -31,6 +31,8 @@ def main(
         reference_choice = [yleaf_constants.HG19]
     elif choice == yleaf_constants.HG38:
         reference_choice = [yleaf_constants.HG38]
+    elif choice == yleaf_constants.T2T:
+        reference_choice = [yleaf_constants.T2T]
     else:
         reference_choice = [yleaf_constants.HG19, yleaf_constants.HG38]
 
@@ -46,6 +48,8 @@ def install_genome_files(
 
     if reference_choice == yleaf_constants.HG19:
         ref_file = yleaf_constants.HG19_FULL_GENOME
+    elif reference_choice == yleaf_constants.T2T:
+        ref_file = yleaf_constants.T2T_FULL_GENOME
     else:
         ref_file = yleaf_constants.HG38_FULL_GENOME
 
@@ -54,8 +58,10 @@ def install_genome_files(
         if (not ref_file.exists() or os.path.getsize(ref_file) < 100) and not ref_gz_file.exists():
 
             LOG.debug(f"Downloading the {reference_choice} genome...")
-            urllib.request.urlretrieve(f"http://hgdownload.cse.ucsc.edu/goldenPath/{reference_choice}"
-                                       f"/bigZips/{reference_choice}.fa.gz", ref_gz_file)
+            # T2T (CHM13v2.0 + HG002 Y) is hosted on UCSC as "hs1"
+            ucsc_name = "hs1" if reference_choice == yleaf_constants.T2T else reference_choice
+            urllib.request.urlretrieve(f"http://hgdownload.cse.ucsc.edu/goldenPath/{ucsc_name}"
+                                       f"/bigZips/{ucsc_name}.fa.gz", ref_gz_file)
         if not ref_file.exists() or os.path.getsize(ref_file) < 100:
             LOG.debug("Unpacking the downloaded archive...")
             with gzip.open(ref_gz_file, 'rb') as f_in:
@@ -65,6 +71,8 @@ def install_genome_files(
 
         if reference_choice == yleaf_constants.HG19:
             ychrom_file = yleaf_constants.HG19_Y_CHROMOSOME
+        elif reference_choice == yleaf_constants.T2T:
+            ychrom_file = yleaf_constants.T2T_Y_CHROMOSOME
         else:
             ychrom_file = yleaf_constants.HG38_Y_CHROMOSOME
 
