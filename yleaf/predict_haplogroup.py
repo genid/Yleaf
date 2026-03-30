@@ -25,6 +25,7 @@ BACKBONE_GROUPS: Set = set()
 MAIN_HAPLO_GROUPS: Set = set()
 QC1_SCORE_CACHE: Dict[str, float] = {}
 IS_FTDNA_TREE: bool = False
+ACTIVE_TREE: str = "yfull"  # tracks which tree is active for QC routing
 
 DEFAULT_MIN_SCORE = 0.95
 
@@ -86,14 +87,16 @@ def main_predict_haplogroup(
     main_haplo_groups: Set,
     is_ftdna_tree: bool,
     folder: Path,
+    active_tree: str = "yfull",
 ):
     # Re-assign globals so spawned worker processes (which don't inherit parent
     # state on platforms using the "spawn" start method, e.g. macOS) have the
     # required data available (fixes issue #34).
-    global BACKBONE_GROUPS, MAIN_HAPLO_GROUPS, QC1_SCORE_CACHE, IS_FTDNA_TREE
+    global BACKBONE_GROUPS, MAIN_HAPLO_GROUPS, QC1_SCORE_CACHE, IS_FTDNA_TREE, ACTIVE_TREE
     BACKBONE_GROUPS = backbone_groups
     MAIN_HAPLO_GROUPS = main_haplo_groups
     IS_FTDNA_TREE = is_ftdna_tree
+    ACTIVE_TREE = active_tree
     # make sure to reset this for each sample
     QC1_SCORE_CACHE = {}
 
@@ -125,7 +128,7 @@ def main(namespace: argparse.Namespace = None):
     final_table = []
 
     with multiprocessing.Pool(processes=threads) as p:
-        predictions = p.map(partial(main_predict_haplogroup, namespace, BACKBONE_GROUPS, MAIN_HAPLO_GROUPS, IS_FTDNA_TREE), read_input_folder(in_folder))
+        predictions = p.map(partial(main_predict_haplogroup, namespace, BACKBONE_GROUPS, MAIN_HAPLO_GROUPS, IS_FTDNA_TREE, active_tree=ACTIVE_TREE), read_input_folder(in_folder))
 
     for haplotype_dict, best_haplotype_score, folder in predictions:
         if haplotype_dict is None:
@@ -157,15 +160,20 @@ def get_arguments() -> argparse.Namespace:
 
 def read_backbone_groups(tree_file: Path = None):
     """Read some basic data that is always needed"""
-    global BACKBONE_GROUPS, MAIN_HAPLO_GROUPS, IS_FTDNA_TREE
+    global BACKBONE_GROUPS, MAIN_HAPLO_GROUPS, IS_FTDNA_TREE, ACTIVE_TREE
     hg_folder = yleaf_constants.HG_PREDICTION_FOLDER
 
     IS_FTDNA_TREE = tree_file is not None and str(tree_file).endswith(yleaf_constants.FTDNA_TREE_FILE)
+    is_openY = tree_file is not None and str(tree_file).endswith(yleaf_constants.OPENYTREE_TREE_FILE)
 
-    # Use FTDNA-specific tables when the FTDNA tree is active
     if IS_FTDNA_TREE:
+        ACTIVE_TREE = yleaf_constants.TREE_FTDNA
         major_tables_dir = hg_folder / "ftdna_major_tables"
+    elif is_openY:
+        ACTIVE_TREE = yleaf_constants.TREE_OPENYTREE
+        major_tables_dir = hg_folder / "openY_major_tables"
     else:
+        ACTIVE_TREE = yleaf_constants.TREE_YFULL
         major_tables_dir = hg_folder / "major_tables"
 
     with open(major_tables_dir / "Intermediates.txt") as f:
@@ -177,7 +185,7 @@ def read_backbone_groups(tree_file: Path = None):
                 BACKBONE_GROUPS.add(name)
                 MAIN_HAPLO_GROUPS.add(name)
 
-    if not IS_FTDNA_TREE:
+    if ACTIVE_TREE == yleaf_constants.TREE_YFULL:
         # YFull also needs these intermediate nodes in MAIN_HAPLO_GROUPS
         major_tree_list = ['A00', 'A00a', 'A00b', 'A00c', 'A0-T', 'A1', 'A1b', 'A1b1', 'BT', 'CT', 'CF', 'F', 'F4', 'F2', 'F3', 'GHIJK', 'G', 'HIJK', 'H', 'IJK', 'IJ', 'I', 'I2', 'I1', 'J', 'J1', 'J2', 'K', 'K2', 'K2d', 'K2c', 'K2b', 'P', 'R', 'R2', 'R1', 'R1b', 'R1a', 'Q', 'K2b1', 'S', 'M', 'NO', 'O', 'N', 'LT', 'L', 'T', 'F1', 'C', 'DE', 'D', 'E', 'B', 'A1a', 'A0']
         for major_hg in major_tree_list:
@@ -337,11 +345,14 @@ def get_qc1_score(
     if most_specific_backbone in QC1_SCORE_CACHE:
         return QC1_SCORE_CACHE[most_specific_backbone]
 
-    if IS_FTDNA_TREE:
+    if ACTIVE_TREE == yleaf_constants.TREE_FTDNA:
         # Require at least 3 markers for a backbone group to contribute to QC1.
         # Single-marker states are too noisy given the FTDNA tree's shallow backbone.
         intermediate_states = {k: v for k, v in intermediate_states.items() if v.nr_total >= 3}
         tables_subdir = "ftdna_major_tables"
+    elif ACTIVE_TREE == yleaf_constants.TREE_OPENYTREE:
+        intermediate_states = {k: v for k, v in intermediate_states.items() if v.nr_total >= 3}
+        tables_subdir = "openY_major_tables"
     else:
         tables_subdir = "major_tables"
 

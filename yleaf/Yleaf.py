@@ -511,10 +511,10 @@ def get_arguments() -> argparse.Namespace:
                         help="The minimum quality of the prediction (QC-scores) for it to be accepted. [0-1] (default=0.95)")
 
     parser.add_argument("-tree", "--tree",
-                        help="The haplogroup tree to use for prediction. 'yfull' uses the YFull-based tree with the "
-                             "standard position tables. 'ftdna' uses the FamilyTreeDNA tree with its own position "
-                             "tables (hg38 only). (default=yfull)",
-                        choices=[yleaf_constants.TREE_YFULL, yleaf_constants.TREE_FTDNA],
+                        help="The haplogroup tree to use for prediction. 'yfull' uses the YFull v14.01 tree. "
+                             "'ftdna' uses the FamilyTreeDNA tree (hg38 only). "
+                             "'openY' uses the Open Y combined tree (FTDNA+YFull+TheYTree). (default=yfull)",
+                        choices=[yleaf_constants.TREE_YFULL, yleaf_constants.TREE_FTDNA, yleaf_constants.TREE_OPENYTREE],
                         default=yleaf_constants.TREE_YFULL)
 
     # arguments for prediction
@@ -851,6 +851,8 @@ def chromosome_table(
 def get_tree_path(tree: str) -> Path:
     if tree == yleaf_constants.TREE_FTDNA:
         return yleaf_constants.HG_PREDICTION_FOLDER / yleaf_constants.FTDNA_TREE_FILE
+    if tree == yleaf_constants.TREE_OPENYTREE:
+        return yleaf_constants.HG_PREDICTION_FOLDER / yleaf_constants.OPENYTREE_TREE_FILE
     return yleaf_constants.HG_PREDICTION_FOLDER / yleaf_constants.TREE_FILE
 
 
@@ -862,6 +864,10 @@ def get_position_file(
 ) -> Path:
     if tree == yleaf_constants.TREE_FTDNA:
         return yleaf_constants.DATA_FOLDER / reference_name / yleaf_constants.FTDNA_POSITION_FILE
+    if tree == yleaf_constants.TREE_OPENYTREE:
+        ref_tag = {"hg38": "hg38", "hg19": "hg19", "t2t": "t2t"}.get(reference_name, reference_name)
+        fname = yleaf_constants.OPENYTREE_POSITION_FILE.format(ref=ref_tag)
+        return yleaf_constants.DATA_FOLDER / reference_name / fname
     if use_old:
         if ancient_DNA:
             position_file = yleaf_constants.DATA_FOLDER / reference_name / yleaf_constants.OLD_POSITION_ANCIENT_FILE
@@ -883,6 +889,10 @@ def get_position_bed_file(
 ) -> Path:
     if tree == yleaf_constants.TREE_FTDNA:
         return yleaf_constants.DATA_FOLDER / reference_name / yleaf_constants.FTDNA_POSITION_BED_FILE
+    if tree == yleaf_constants.TREE_OPENYTREE:
+        ref_tag = {"hg38": "hg38", "hg19": "hg19", "t2t": "t2t"}.get(reference_name, reference_name)
+        fname = yleaf_constants.OPENYTREE_POSITION_BED_FILE.format(ref=ref_tag)
+        return yleaf_constants.DATA_FOLDER / reference_name / fname
     if use_old:
         if ancient_DNA:
             position_file = yleaf_constants.DATA_FOLDER / reference_name / yleaf_constants.OLD_POSITION_ANCIENT_BED_FILE
