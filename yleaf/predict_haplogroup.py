@@ -165,6 +165,7 @@ def read_backbone_groups(tree_file: Path = None):
 
     IS_FTDNA_TREE = tree_file is not None and str(tree_file).endswith(yleaf_constants.FTDNA_TREE_FILE)
     is_openY = tree_file is not None and str(tree_file).endswith(yleaf_constants.OPENYTREE_TREE_FILE)
+    is_isogg = tree_file is not None and str(tree_file).endswith(yleaf_constants.ISOGG_TREE_FILE)
 
     if IS_FTDNA_TREE:
         ACTIVE_TREE = yleaf_constants.TREE_FTDNA
@@ -172,6 +173,9 @@ def read_backbone_groups(tree_file: Path = None):
     elif is_openY:
         ACTIVE_TREE = yleaf_constants.TREE_OPENYTREE
         major_tables_dir = hg_folder / "openY_major_tables"
+    elif is_isogg:
+        ACTIVE_TREE = yleaf_constants.TREE_ISOGG
+        major_tables_dir = hg_folder / "isogg_major_tables"
     else:
         ACTIVE_TREE = yleaf_constants.TREE_YFULL
         major_tables_dir = hg_folder / "major_tables"
@@ -353,6 +357,9 @@ def get_qc1_score(
     elif ACTIVE_TREE == yleaf_constants.TREE_OPENYTREE:
         intermediate_states = {k: v for k, v in intermediate_states.items() if v.nr_total >= 3}
         tables_subdir = "openY_major_tables"
+    elif ACTIVE_TREE == yleaf_constants.TREE_ISOGG:
+        intermediate_states = {k: v for k, v in intermediate_states.items() if v.nr_total >= 3}
+        tables_subdir = "isogg_major_tables"
     else:
         tables_subdir = "major_tables"
 

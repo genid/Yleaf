@@ -513,8 +513,10 @@ def get_arguments() -> argparse.Namespace:
     parser.add_argument("-tree", "--tree",
                         help="The haplogroup tree to use for prediction. 'yfull' uses the YFull v14.01 tree. "
                              "'ftdna' uses the FamilyTreeDNA tree (hg38 only). "
-                             "'openY' uses the Open Y combined tree (FTDNA+YFull+TheYTree). (default=yfull)",
-                        choices=[yleaf_constants.TREE_YFULL, yleaf_constants.TREE_FTDNA, yleaf_constants.TREE_OPENYTREE],
+                             "'openY' uses the Open Y combined tree (FTDNA+YFull+TheYTree). "
+                             "'isogg' uses the ISOGG tree (legacy, for reproducibility). (default=yfull)",
+                        choices=[yleaf_constants.TREE_YFULL, yleaf_constants.TREE_FTDNA,
+                                 yleaf_constants.TREE_OPENYTREE, yleaf_constants.TREE_ISOGG],
                         default=yleaf_constants.TREE_YFULL)
 
     # arguments for prediction
@@ -853,6 +855,8 @@ def get_tree_path(tree: str) -> Path:
         return yleaf_constants.HG_PREDICTION_FOLDER / yleaf_constants.FTDNA_TREE_FILE
     if tree == yleaf_constants.TREE_OPENYTREE:
         return yleaf_constants.HG_PREDICTION_FOLDER / yleaf_constants.OPENYTREE_TREE_FILE
+    if tree == yleaf_constants.TREE_ISOGG:
+        return yleaf_constants.HG_PREDICTION_FOLDER / yleaf_constants.ISOGG_TREE_FILE
     return yleaf_constants.HG_PREDICTION_FOLDER / yleaf_constants.TREE_FILE
 
 
@@ -867,6 +871,10 @@ def get_position_file(
     if tree == yleaf_constants.TREE_OPENYTREE:
         ref_tag = {"hg38": "hg38", "hg19": "hg19", "t2t": "t2t"}.get(reference_name, reference_name)
         fname = yleaf_constants.OPENYTREE_POSITION_FILE.format(ref=ref_tag)
+        return yleaf_constants.DATA_FOLDER / reference_name / fname
+    if tree == yleaf_constants.TREE_ISOGG:
+        ref_tag = {"hg38": "hg38", "hg19": "hg19", "t2t": "t2t"}.get(reference_name, reference_name)
+        fname = yleaf_constants.ISOGG_POSITION_FILE.format(ref=ref_tag)
         return yleaf_constants.DATA_FOLDER / reference_name / fname
     if use_old:
         if ancient_DNA:
@@ -892,6 +900,10 @@ def get_position_bed_file(
     if tree == yleaf_constants.TREE_OPENYTREE:
         ref_tag = {"hg38": "hg38", "hg19": "hg19", "t2t": "t2t"}.get(reference_name, reference_name)
         fname = yleaf_constants.OPENYTREE_POSITION_BED_FILE.format(ref=ref_tag)
+        return yleaf_constants.DATA_FOLDER / reference_name / fname
+    if tree == yleaf_constants.TREE_ISOGG:
+        ref_tag = {"hg38": "hg38", "hg19": "hg19", "t2t": "t2t"}.get(reference_name, reference_name)
+        fname = yleaf_constants.ISOGG_POSITION_BED_FILE.format(ref=ref_tag)
         return yleaf_constants.DATA_FOLDER / reference_name / fname
     if use_old:
         if ancient_DNA:
