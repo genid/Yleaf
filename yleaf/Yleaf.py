@@ -414,20 +414,37 @@ def main():
 
     LOG.info(f"Running Yleaf with command: {' '.join(sys.argv)}")
 
-    # validate tree/reference combination
-    if args.tree == yleaf_constants.TREE_FTDNA:
-        if args.reference_genome != yleaf_constants.HG38:
-            LOG.error("The FTDNA tree is only available for hg38.")
-            raise ValueError("The FTDNA tree is only available for hg38.")
-        if args.use_old:
-            LOG.error("--use_old is not compatible with --tree ftdna.")
-            raise ValueError("--use_old is not compatible with --tree ftdna.")
-        if args.ancient_DNA:
-            LOG.error("--ancient_DNA is not compatible with --tree ftdna.")
-            raise ValueError("--ancient_DNA is not compatible with --tree ftdna.")
+    # Normalize --tree: unwrap single-element list to string for backward compatibility
+    if isinstance(args.tree, list) and len(args.tree) == 1:
+        args.tree = args.tree[0]
+
+    multi_tree = isinstance(args.tree, list)  # True when multiple trees were specified
+    trees = args.tree if multi_tree else [args.tree]
+
+    # validate tree/reference combinations
+    for tree in trees:
+        if tree == yleaf_constants.TREE_FTDNA:
+            if args.reference_genome != yleaf_constants.HG38:
+                LOG.error("The FTDNA tree is only available for hg38.")
+                raise ValueError("The FTDNA tree is only available for hg38.")
+            if args.use_old:
+                LOG.error("--use_old is not compatible with --tree ftdna.")
+                raise ValueError("--use_old is not compatible with --tree ftdna.")
+            if args.ancient_DNA:
+                LOG.error("--ancient_DNA is not compatible with --tree ftdna.")
+                raise ValueError("--ancient_DNA is not compatible with --tree ftdna.")
 
     # make sure the reference genome is present before doing something else, if not present it is downloaded
     check_reference(args.reference_genome)
+
+    if multi_tree:
+        if args.fastq or args.vcffile:
+            LOG.error("Multi-tree mode is only supported for BAM/CRAM input.")
+            raise ValueError("Multi-tree mode is only supported for BAM/CRAM input.")
+        is_bam = args.bamfile is not None
+        main_bam_cram_multi_tree(args, out_folder, is_bam, trees)
+        LOG.info("Done!")
+        return
 
     if args.fastq:
         main_fastq(args, out_folder)
@@ -510,14 +527,18 @@ def get_arguments() -> argparse.Namespace:
     parser.add_argument("-pq", "--prediction_quality", type=float, required=False, default=0.95, metavar="FLOAT",
                         help="The minimum quality of the prediction (QC-scores) for it to be accepted. [0-1] (default=0.95)")
 
+    _tree_choices = [yleaf_constants.TREE_YFULL, yleaf_constants.TREE_YFULL_V10,
+                     yleaf_constants.TREE_FTDNA, yleaf_constants.TREE_OPENYTREE,
+                     yleaf_constants.TREE_ISOGG]
     parser.add_argument("-tree", "--tree",
-                        help="The haplogroup tree to use for prediction. 'yfull' uses the YFull v14.01 tree. "
-                             "'ftdna' uses the FamilyTreeDNA tree (hg38 only). "
-                             "'openY' uses the Open Y combined tree (FTDNA+YFull+TheYTree). "
-                             "'isogg' uses the ISOGG tree (legacy, for reproducibility). (default=yfull)",
-                        choices=[yleaf_constants.TREE_YFULL, yleaf_constants.TREE_FTDNA,
-                                 yleaf_constants.TREE_OPENYTREE, yleaf_constants.TREE_ISOGG],
-                        default=yleaf_constants.TREE_YFULL)
+                        help="One or more haplogroup trees to use for prediction. Accepted values: "
+                             "yfull (YFull v14.01), yfull_v10 (YFull v10.01 legacy), "
+                             "ftdna (FamilyTreeDNA, hg38 only), openY (Open Y combined tree), "
+                             "isogg (ISOGG legacy). When multiple trees are given a single combined "
+                             "pileup is built and prediction is run per tree. (default=yfull)",
+                        nargs='+',
+                        choices=_tree_choices,
+                        default=[yleaf_constants.TREE_YFULL])
 
     # arguments for prediction
     parser.add_argument("-old", "--use_old", dest="use_old",
@@ -672,6 +693,176 @@ def main_bam_cram(
 
     with multiprocessing.Pool(processes=args.threads) as p:
         p.map(partial(run_bam_cram, args, base_out_folder, is_bam), files)
+
+
+def main_bam_cram_multi_tree(
+        args: argparse.Namespace,
+        base_out_folder: Path,
+        is_bam: bool,
+        trees: List[str]
+):
+    """Run multi-tree analysis: one merged pileup per sample, prediction per tree, combined output."""
+    if args.bamfile is not None:
+        files = get_files_with_extension(args.bamfile, '.bam')
+    elif args.cramfile is not None:
+        if args.cram_reference is None:
+            raise ValueError("Please specify a reference genome for the CRAM file.")
+        files = get_files_with_extension(args.cramfile, '.cram')
+    else:
+        return
+
+    with multiprocessing.Pool(processes=args.threads) as p:
+        p.map(partial(run_bam_cram_multi_tree, args, base_out_folder, is_bam, trees), files)
+
+    # Write combined prediction table
+    combined_out = base_out_folder / "hg_prediction_combined.hg"
+    write_combined_prediction_table(base_out_folder, trees, combined_out,
+                                    args.use_old, args.prediction_quality, args.threads)
+
+
+def run_bam_cram_multi_tree(
+        args: argparse.Namespace,
+        base_out_folder: Path,
+        is_bam: bool,
+        trees: List[str],
+        input_file: Path
+):
+    """Per-sample multi-tree: one pileup covering all trees, extract haplogroups per tree."""
+    LOG.info(f"Starting multi-tree run for {input_file}")
+    output_dir = base_out_folder / input_file.name.rsplit(".", 1)[0]
+    safe_create_dir(output_dir, args.force)
+
+    if is_bam:
+        if not any([Path(str(input_file) + ".bai").exists(),
+                    Path(str(input_file).rstrip(".bam") + '.bai').exists()]):
+            call_command(f"samtools index -{args.threads} {input_file}")
+    else:
+        if not any([Path(str(input_file) + ".crai").exists(),
+                    Path(str(input_file).rstrip(".cram") + '.crai').exists()]):
+            call_command(f"samtools index -{args.threads} {input_file}")
+
+    header, mapped, unmapped = chromosome_table(input_file, output_dir, output_dir.name)
+    general_info_list = [f"Total of mapped reads: {mapped}", f"Total of unmapped reads: {unmapped}"]
+
+    # Build merged BED from all trees
+    pileupfile = output_dir / "temp_haplogroup_pileup.pu"
+    reuse_pileup = getattr(args, 'reuse_pileup', False)
+
+    if reuse_pileup and pileupfile.exists():
+        LOG.info(f"Reusing existing pileup file: {pileupfile}")
+    else:
+        merged_bed = output_dir / "temp_position_bed_combined.bed"
+        _write_merged_bed(merged_bed, trees, args.reference_genome, args.use_old, args.ancient_DNA, header)
+        reference = args.cram_reference if not is_bam else None
+        execute_mpileup(merged_bed, input_file, pileupfile, args.quality_thresh, reference)
+        os.remove(merged_bed)
+
+    # Extract haplogroups per tree
+    for tree in trees:
+        position_file = get_position_file(args.reference_genome, args.use_old, args.ancient_DNA, tree)
+        out_suffix = f".{tree}"
+        fmf_output = output_dir / (output_dir.name + out_suffix + ".fmf")
+        outputfile = output_dir / (output_dir.name + out_suffix + ".out")
+        extract_haplogroups(position_file, args.reads_treshold, args.base_majority,
+                            pileupfile, fmf_output, outputfile, is_bam, args.use_old,
+                            general_info_list, tree)
+
+    if not reuse_pileup:
+        os.remove(pileupfile)
+
+    LOG.debug(f"Finished multi-tree extraction for {input_file}")
+
+
+def _write_merged_bed(
+        merged_bed: Path,
+        trees: List[str],
+        reference_genome: str,
+        use_old: bool,
+        ancient_dna: bool,
+        header: str
+):
+    """Merge BED files from multiple trees, deduplicate positions, write sorted output."""
+    import pandas as pd
+    dfs = []
+    for tree in trees:
+        pos_file = get_position_file(reference_genome, use_old, ancient_dna, tree)
+        df = pd.read_csv(pos_file, sep='\t', header=None, usecols=[0, 3])
+        df.columns = ['chr', 'pos']
+        df['chr'] = header
+        dfs.append(df)
+    merged = pd.concat(dfs).drop_duplicates(subset='pos').sort_values('pos').reset_index(drop=True)
+    merged.to_csv(str(merged_bed), sep='\t', index=False, header=False)
+
+
+def write_combined_prediction_table(
+        base_out_folder: Path,
+        trees: List[str],
+        combined_out: Path,
+        use_old: bool,
+        prediction_quality: float,
+        threads: int
+):
+    """Run predict_haplogroup per tree and write combined TSV with one row per sample."""
+    # Collect per-tree predictions
+    tree_results = {}  # tree -> {sample_name -> (hg, valid_markers, qc)}
+    for tree in trees:
+        tree_hg_out = base_out_folder / f"hg_prediction_{tree}.hg"
+        _predict_for_tree(base_out_folder, tree, tree_hg_out, use_old, prediction_quality, threads)
+        tree_results[tree] = _read_hg_file(tree_hg_out)
+
+    # Collect all sample names
+    sample_names = set()
+    for results in tree_results.values():
+        sample_names.update(results.keys())
+
+    with open(combined_out, 'w') as f:
+        header_cols = ['Sample_name']
+        for tree in trees:
+            header_cols += [f'{tree}_Hg', f'{tree}_Valid_markers', f'{tree}_QC']
+        f.write('\t'.join(header_cols) + '\n')
+        for sample in sorted(sample_names):
+            row = [sample]
+            for tree in trees:
+                result = tree_results[tree].get(sample, ('NA', 'NA', 'NA'))
+                row += list(result)
+            f.write('\t'.join(str(x) for x in row) + '\n')
+
+    LOG.info(f"Combined prediction table written to {combined_out}")
+
+
+def _predict_for_tree(
+        base_out_folder: Path,
+        tree: str,
+        hg_out: Path,
+        use_old: bool,
+        prediction_quality: float,
+        threads: int
+):
+    """Run haplogroup prediction for one tree, reading tree-specific .{tree}.out files."""
+    from yleaf import predict_haplogroup
+    namespace = argparse.Namespace(
+        input=base_out_folder,
+        outfile=hg_out,
+        minimum_score=prediction_quality,
+        threads=threads,
+        tree_file=get_tree_path(tree),
+        out_file_suffix=f".{tree}.out",
+    )
+    predict_haplogroup.main(namespace)
+
+
+def _read_hg_file(hg_file: Path) -> dict:
+    """Read a hg_prediction.hg file, return {sample_name: (Hg, Valid_markers, QC)}."""
+    results = {}
+    if not hg_file.exists():
+        return results
+    with open(hg_file) as f:
+        next(f)  # skip header
+        for line in f:
+            parts = line.strip().split('\t')
+            if len(parts) >= 6:
+                results[parts[0]] = (parts[1], parts[4], parts[5])
+    return results
 
 
 def run_bam_cram(
@@ -857,6 +1048,8 @@ def get_tree_path(tree: str) -> Path:
         return yleaf_constants.HG_PREDICTION_FOLDER / yleaf_constants.OPENYTREE_TREE_FILE
     if tree == yleaf_constants.TREE_ISOGG:
         return yleaf_constants.HG_PREDICTION_FOLDER / yleaf_constants.ISOGG_TREE_FILE
+    if tree == yleaf_constants.TREE_YFULL_V10:
+        return yleaf_constants.HG_PREDICTION_FOLDER / yleaf_constants.YFULL_V10_TREE_FILE
     return yleaf_constants.HG_PREDICTION_FOLDER / yleaf_constants.TREE_FILE
 
 
@@ -875,6 +1068,10 @@ def get_position_file(
     if tree == yleaf_constants.TREE_ISOGG:
         ref_tag = {"hg38": "hg38", "hg19": "hg19", "t2t": "t2t"}.get(reference_name, reference_name)
         fname = yleaf_constants.ISOGG_POSITION_FILE.format(ref=ref_tag)
+        return yleaf_constants.DATA_FOLDER / reference_name / fname
+    if tree == yleaf_constants.TREE_YFULL_V10:
+        ref_tag = {"hg38": "hg38", "hg19": "hg19", "t2t": "t2t"}.get(reference_name, reference_name)
+        fname = yleaf_constants.YFULL_V10_POSITION_FILE.format(ref=ref_tag)
         return yleaf_constants.DATA_FOLDER / reference_name / fname
     if use_old:
         if ancient_DNA:
@@ -904,6 +1101,10 @@ def get_position_bed_file(
     if tree == yleaf_constants.TREE_ISOGG:
         ref_tag = {"hg38": "hg38", "hg19": "hg19", "t2t": "t2t"}.get(reference_name, reference_name)
         fname = yleaf_constants.ISOGG_POSITION_BED_FILE.format(ref=ref_tag)
+        return yleaf_constants.DATA_FOLDER / reference_name / fname
+    if tree == yleaf_constants.TREE_YFULL_V10:
+        ref_tag = {"hg38": "hg38", "hg19": "hg19", "t2t": "t2t"}.get(reference_name, reference_name)
+        fname = yleaf_constants.YFULL_V10_POSITION_BED_FILE.format(ref=ref_tag)
         return yleaf_constants.DATA_FOLDER / reference_name / fname
     if use_old:
         if ancient_DNA:

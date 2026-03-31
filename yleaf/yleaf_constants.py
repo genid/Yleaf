@@ -27,6 +27,7 @@ NEW_POSITION_ANCIENT_BED_FILE: str = "new_positions_ancient.bed"
 OLD_POSITION_ANCIENT_BED_FILE: str = "old_positions_ancient.bed"
 
 TREE_YFULL: str = "yfull"
+TREE_YFULL_V10: str = "yfull_v10"
 TREE_FTDNA: str = "ftdna"
 TREE_OPENYTREE: str = "openY"
 TREE_ISOGG: str = "isogg"
@@ -41,6 +42,9 @@ OPENYTREE_POSITION_BED_FILE: str = "openY_positions_{ref}.bed"
 ISOGG_TREE_FILE: str = "isogg_tree.json"
 ISOGG_POSITION_FILE: str = "isogg_positions_{ref}.txt"
 ISOGG_POSITION_BED_FILE: str = "isogg_positions_{ref}.bed"
+YFULL_V10_TREE_FILE: str = "yfull_v10_tree.json"
+YFULL_V10_POSITION_FILE: str = "yfull_v10_positions_{ref}.txt"
+YFULL_V10_POSITION_BED_FILE: str = "yfull_v10_positions_{ref}.bed"
 
 HG19_FULL_GENOME: Path = __HG19_FOLDER / FULL_REF_FILE
 HG19_Y_CHROMOSOME: Path = __HG19_FOLDER / Y_REF_FILE

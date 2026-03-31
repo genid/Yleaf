@@ -88,6 +88,7 @@ def main_predict_haplogroup(
     is_ftdna_tree: bool,
     folder: Path,
     active_tree: str = "yfull",
+    out_file_suffix: str = ".out",
 ):
     # Re-assign globals so spawned worker processes (which don't inherit parent
     # state on platforms using the "spawn" start method, e.g. macOS) have the
@@ -104,7 +105,7 @@ def main_predict_haplogroup(
         return [None, None, None]
 
     try:
-        haplotype_dict = read_yleaf_out_file(folder / (folder.name + ".out"))
+        haplotype_dict = read_yleaf_out_file(folder / (folder.name + out_file_suffix))
     except FileNotFoundError:
         LOG.warning(f"WARNING: failed to find .out file from yleaf run for sample {folder.name}. This sample will"
                     " be skipped.")
@@ -124,11 +125,14 @@ def main(namespace: argparse.Namespace = None):
     output = namespace.outfile
     threads = namespace.threads
     tree_file = getattr(namespace, 'tree_file', None)
+    out_file_suffix = getattr(namespace, 'out_file_suffix', '.out')
     read_backbone_groups(tree_file)
     final_table = []
 
     with multiprocessing.Pool(processes=threads) as p:
-        predictions = p.map(partial(main_predict_haplogroup, namespace, BACKBONE_GROUPS, MAIN_HAPLO_GROUPS, IS_FTDNA_TREE, active_tree=ACTIVE_TREE), read_input_folder(in_folder))
+        predictions = p.map(partial(main_predict_haplogroup, namespace, BACKBONE_GROUPS, MAIN_HAPLO_GROUPS,
+                                    IS_FTDNA_TREE, active_tree=ACTIVE_TREE, out_file_suffix=out_file_suffix),
+                            read_input_folder(in_folder))
 
     for haplotype_dict, best_haplotype_score, folder in predictions:
         if haplotype_dict is None:
@@ -166,6 +170,7 @@ def read_backbone_groups(tree_file: Path = None):
     IS_FTDNA_TREE = tree_file is not None and str(tree_file).endswith(yleaf_constants.FTDNA_TREE_FILE)
     is_openY = tree_file is not None and str(tree_file).endswith(yleaf_constants.OPENYTREE_TREE_FILE)
     is_isogg = tree_file is not None and str(tree_file).endswith(yleaf_constants.ISOGG_TREE_FILE)
+    is_yfull_v10 = tree_file is not None and str(tree_file).endswith(yleaf_constants.YFULL_V10_TREE_FILE)
 
     if IS_FTDNA_TREE:
         ACTIVE_TREE = yleaf_constants.TREE_FTDNA
@@ -176,6 +181,9 @@ def read_backbone_groups(tree_file: Path = None):
     elif is_isogg:
         ACTIVE_TREE = yleaf_constants.TREE_ISOGG
         major_tables_dir = hg_folder / "isogg_major_tables"
+    elif is_yfull_v10:
+        ACTIVE_TREE = yleaf_constants.TREE_YFULL_V10
+        major_tables_dir = hg_folder / "yfull_v10_major_tables"
     else:
         ACTIVE_TREE = yleaf_constants.TREE_YFULL
         major_tables_dir = hg_folder / "major_tables"
@@ -189,8 +197,8 @@ def read_backbone_groups(tree_file: Path = None):
                 BACKBONE_GROUPS.add(name)
                 MAIN_HAPLO_GROUPS.add(name)
 
-    if ACTIVE_TREE == yleaf_constants.TREE_YFULL:
-        # YFull also needs these intermediate nodes in MAIN_HAPLO_GROUPS
+    if ACTIVE_TREE in (yleaf_constants.TREE_YFULL, yleaf_constants.TREE_YFULL_V10):
+        # YFull (v10 and v14) also needs these intermediate nodes in MAIN_HAPLO_GROUPS
         major_tree_list = ['A00', 'A00a', 'A00b', 'A00c', 'A0-T', 'A1', 'A1b', 'A1b1', 'BT', 'CT', 'CF', 'F', 'F4', 'F2', 'F3', 'GHIJK', 'G', 'HIJK', 'H', 'IJK', 'IJ', 'I', 'I2', 'I1', 'J', 'J1', 'J2', 'K', 'K2', 'K2d', 'K2c', 'K2b', 'P', 'R', 'R2', 'R1', 'R1b', 'R1a', 'Q', 'K2b1', 'S', 'M', 'NO', 'O', 'N', 'LT', 'L', 'T', 'F1', 'C', 'DE', 'D', 'E', 'B', 'A1a', 'A0']
         for major_hg in major_tree_list:
             MAIN_HAPLO_GROUPS.add(major_hg)
