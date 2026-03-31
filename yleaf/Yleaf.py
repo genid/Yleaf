@@ -424,9 +424,6 @@ def main():
     # validate tree/reference combinations
     for tree in trees:
         if tree == yleaf_constants.TREE_FTDNA:
-            if args.reference_genome != yleaf_constants.HG38:
-                LOG.error("The FTDNA tree is only available for hg38.")
-                raise ValueError("The FTDNA tree is only available for hg38.")
             if args.use_old:
                 LOG.error("--use_old is not compatible with --tree ftdna.")
                 raise ValueError("--use_old is not compatible with --tree ftdna.")
@@ -533,7 +530,7 @@ def get_arguments() -> argparse.Namespace:
     parser.add_argument("-tree", "--tree",
                         help="One or more haplogroup trees to use for prediction. Accepted values: "
                              "yfull (YFull v14.01), yfull_v10 (YFull v10.01 legacy), "
-                             "ftdna (FamilyTreeDNA, hg38 only), openY (Open Y combined tree), "
+                             "ftdna (FamilyTreeDNA, all references), openY (Open Y combined tree), "
                              "isogg (ISOGG legacy). When multiple trees are given a single combined "
                              "pileup is built and prediction is run per tree. (default=yfull)",
                         nargs='+',
@@ -1071,7 +1068,8 @@ def get_position_file(
         tree: str = yleaf_constants.TREE_YFULL,
 ) -> Path:
     if tree == yleaf_constants.TREE_FTDNA:
-        return yleaf_constants.DATA_FOLDER / reference_name / yleaf_constants.FTDNA_POSITION_FILE
+        fname = yleaf_constants.FTDNA_POSITION_FILE.format(ref=reference_name)
+        return yleaf_constants.DATA_FOLDER / reference_name / fname
     if tree == yleaf_constants.TREE_OPENYTREE:
         ref_tag = {"hg38": "hg38", "hg19": "hg19", "t2t": "t2t"}.get(reference_name, reference_name)
         fname = yleaf_constants.OPENYTREE_POSITION_FILE.format(ref=ref_tag)
@@ -1104,7 +1102,8 @@ def get_position_bed_file(
         tree: str = yleaf_constants.TREE_YFULL,
 ) -> Path:
     if tree == yleaf_constants.TREE_FTDNA:
-        return yleaf_constants.DATA_FOLDER / reference_name / yleaf_constants.FTDNA_POSITION_BED_FILE
+        fname = yleaf_constants.FTDNA_POSITION_BED_FILE.format(ref=reference_name)
+        return yleaf_constants.DATA_FOLDER / reference_name / fname
     if tree == yleaf_constants.TREE_OPENYTREE:
         ref_tag = {"hg38": "hg38", "hg19": "hg19", "t2t": "t2t"}.get(reference_name, reference_name)
         fname = yleaf_constants.OPENYTREE_POSITION_BED_FILE.format(ref=ref_tag)
