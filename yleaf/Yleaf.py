@@ -714,10 +714,12 @@ def main_bam_cram_multi_tree(
     with multiprocessing.Pool(processes=args.threads) as p:
         p.map(partial(run_bam_cram_multi_tree, args, base_out_folder, is_bam, trees), files)
 
-    # Write combined prediction table
+    # Write combined prediction table (and optionally draw per-tree haplogroup images)
     combined_out = base_out_folder / "hg_prediction_combined.hg"
     write_combined_prediction_table(base_out_folder, trees, combined_out,
-                                    args.use_old, args.prediction_quality, args.threads)
+                                    args.use_old, args.prediction_quality, args.threads,
+                                    draw_hg=args.draw_haplogroups,
+                                    collapsed_draw_mode=args.collapsed_draw_mode)
 
 
 def run_bam_cram_multi_tree(
@@ -769,8 +771,7 @@ def run_bam_cram_multi_tree(
                             tree_info_list, tree)
         write_info_file(output_dir, tree_info_list, suffix=f".{tree}.info")
 
-    if not reuse_pileup:
-        os.remove(pileupfile)
+    # TODO (production): delete pileup when no longer needed: os.remove(pileupfile)
 
     LOG.debug(f"Finished multi-tree extraction for {input_file}")
 
@@ -802,7 +803,9 @@ def write_combined_prediction_table(
         combined_out: Path,
         use_old: bool,
         prediction_quality: float,
-        threads: int
+        threads: int,
+        draw_hg: bool = False,
+        collapsed_draw_mode: bool = False
 ):
     """Run predict_haplogroup per tree and write combined TSV with one row per sample."""
     # Collect per-tree predictions
@@ -811,6 +814,12 @@ def write_combined_prediction_table(
         tree_hg_out = base_out_folder / f"hg_prediction_{tree}.hg"
         _predict_for_tree(base_out_folder, tree, tree_hg_out, use_old, prediction_quality, threads)
         tree_results[tree] = _read_hg_file(tree_hg_out)
+        if draw_hg:
+            draw_haplogroups(
+                tree_hg_out, collapsed_draw_mode,
+                outfile=base_out_folder / f"hg_tree_image_{tree}",
+                tree_file=get_tree_path(tree)
+            )
 
     # Collect all sample names
     sample_names = set()
@@ -1000,8 +1009,7 @@ def samtools(
                         pileupfile, fmf_output, outputfile, is_bam_pathfile, args.use_old, general_info_list,
                         args.tree)
 
-    if not reuse_pileup:
-        os.remove(pileupfile)
+    # TODO (production): delete pileup when no longer needed: os.remove(pileupfile)
     if bed is not None:
         os.remove(bed)
 
@@ -1538,12 +1546,16 @@ def predict_haplogroup(
 
 def draw_haplogroups(
         haplogroup_file: Path,
-        collapsed_draw_mode: bool
+        collapsed_draw_mode: bool,
+        outfile: Path = None,
+        tree_file: Path = None
 ):
     # make sure that it is only imported if requested by user
     from yleaf import haplogroup_tree_image
+    if outfile is None:
+        outfile = haplogroup_file.parent / HAPLOGROUP_IMAGE_FILE_NAME
     namespace = argparse.Namespace(input=haplogroup_file, collapse_mode=collapsed_draw_mode,
-                                   outfile=haplogroup_file.parent / HAPLOGROUP_IMAGE_FILE_NAME)
+                                   outfile=outfile, tree_file=tree_file)
     haplogroup_tree_image.main(namespace)
 
 

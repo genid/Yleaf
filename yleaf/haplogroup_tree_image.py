@@ -34,7 +34,8 @@ def main(namespace: argparse.Namespace = None):
         LOG.warning("No haplogroups found in provided input file.")
         return
     add_main_haplogroups(haplogroups)
-    partial_haplogroup_dict = haplogroup_tree_dict(haplogroups)
+    tree_file = getattr(namespace, 'tree_file', None)
+    partial_haplogroup_dict = haplogroup_tree_dict(haplogroups, tree_file)
     if namespace.collapse_mode:
         edge_mapping = collapse_tree_dict(partial_haplogroup_dict, sample_mapping)
     else:
@@ -86,13 +87,19 @@ def add_main_haplogroups(haplogroups: List[str]):
 
 
 def haplogroup_tree_dict(
-    haplogroups: List[str]
+    haplogroups: List[str],
+    tree_file=None
 ) -> Dict[str, Set[str]]:
-    tree = Tree(yleaf_constants.DATA_FOLDER / yleaf_constants.HG_PREDICTION_FOLDER / yleaf_constants.TREE_FILE)
+    if tree_file is None:
+        tree_file = yleaf_constants.DATA_FOLDER / yleaf_constants.HG_PREDICTION_FOLDER / yleaf_constants.TREE_FILE
+    tree = Tree(tree_file)
     partial_tree_dict = defaultdict(set)
     for name in haplogroups:
         path = []
-        node = tree.get(name)
+        try:
+            node = tree.get(name)
+        except KeyError:
+            continue
         while node is not None:
             path.append(node.name)
             node = node.parent
