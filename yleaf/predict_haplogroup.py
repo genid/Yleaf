@@ -165,6 +165,9 @@ def get_arguments() -> argparse.Namespace:
 def read_backbone_groups(tree_file: Path = None):
     """Read some basic data that is always needed"""
     global BACKBONE_GROUPS, MAIN_HAPLO_GROUPS, IS_FTDNA_TREE, ACTIVE_TREE
+    # Reset per-tree globals so sequential multi-tree calls don't accumulate stale entries
+    BACKBONE_GROUPS = set()
+    MAIN_HAPLO_GROUPS = set()
     hg_folder = yleaf_constants.HG_PREDICTION_FOLDER
 
     IS_FTDNA_TREE = tree_file is not None and str(tree_file).endswith(yleaf_constants.FTDNA_TREE_FILE)
