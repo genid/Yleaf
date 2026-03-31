@@ -757,15 +757,17 @@ def run_bam_cram_multi_tree(
         execute_mpileup(merged_bed, input_file, pileupfile, args.quality_thresh, reference)
         os.remove(merged_bed)
 
-    # Extract haplogroups per tree
+    # Extract haplogroups per tree, writing a per-tree .info file for each
     for tree in trees:
         position_file = get_position_file(args.reference_genome, args.use_old, args.ancient_DNA, tree)
         out_suffix = f".{tree}"
         fmf_output = output_dir / (output_dir.name + out_suffix + ".fmf")
         outputfile = output_dir / (output_dir.name + out_suffix + ".out")
+        tree_info_list = list(general_info_list)  # fresh copy per tree
         extract_haplogroups(position_file, args.reads_treshold, args.base_majority,
                             pileupfile, fmf_output, outputfile, is_bam, args.use_old,
-                            general_info_list, tree)
+                            tree_info_list, tree)
+        write_info_file(output_dir, tree_info_list, suffix=f".{tree}.info")
 
     if not reuse_pileup:
         os.remove(pileupfile)
@@ -847,6 +849,7 @@ def _predict_for_tree(
         threads=threads,
         tree_file=get_tree_path(tree),
         out_file_suffix=f".{tree}.out",
+        info_file_suffix=f".{tree}.info",
     )
     predict_haplogroup.main(namespace)
 
@@ -1363,10 +1366,11 @@ def find_digit(
 
 def write_info_file(
         folder: Path,
-        general_info_list: List[str]
+        general_info_list: List[str],
+        suffix: str = ".info"
 ):
     try:
-        with open(folder / (folder.name + ".info"), "a") as f:
+        with open(folder / (folder.name + suffix), "a") as f:
             for marker in general_info_list:
                 f.write(marker)
                 f.write("\n")
