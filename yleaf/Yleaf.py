@@ -409,7 +409,7 @@ def main():
 
     args = get_arguments()
     out_folder = Path(args.output)
-    safe_create_dir(out_folder, args.force)
+    safe_create_dir(out_folder, args.force, reuse_pileup=getattr(args, 'reuse_pileup', False))
     setup_logger(out_folder)
 
     LOG.info(f"Running Yleaf with command: {' '.join(sys.argv)}")
@@ -604,10 +604,14 @@ def setup_logger(
 
 def safe_create_dir(
         folder: Path,
-        force: bool
+        force: bool,
+        reuse_pileup: bool = False
 ):
-    """Create the given folder. If the folder is already present delete if the user agrees."""
+    """Create the given folder. If the folder is already present delete if the user agrees.
+    When reuse_pileup is True, an existing folder is kept as-is (pileup reuse requires it)."""
     if folder.is_dir():
+        if reuse_pileup:
+            return  # keep existing folder so the pileup file can be found
         while True and not force:
             LOG.warning("Folder " + str(folder) + " already exists, would you like to remove it?")
             choice = input("y/n: ")
@@ -729,7 +733,7 @@ def run_bam_cram_multi_tree(
     """Per-sample multi-tree: one pileup covering all trees, extract haplogroups per tree."""
     LOG.info(f"Starting multi-tree run for {input_file}")
     output_dir = base_out_folder / input_file.name.rsplit(".", 1)[0]
-    safe_create_dir(output_dir, args.force)
+    safe_create_dir(output_dir, args.force, reuse_pileup=getattr(args, 'reuse_pileup', False))
 
     if is_bam:
         if not any([Path(str(input_file) + ".bai").exists(),
@@ -882,7 +886,7 @@ def run_bam_cram(
 ):
     LOG.info(f"Starting with running for {input_file}")
     output_dir = base_out_folder / input_file.name.rsplit(".", 1)[0]
-    safe_create_dir(output_dir, args.force)
+    safe_create_dir(output_dir, args.force, reuse_pileup=getattr(args, 'reuse_pileup', False))
     general_info_list = samtools(output_dir, input_file, is_bam, args)
     write_info_file(output_dir, general_info_list)
     if args.private_mutations:
