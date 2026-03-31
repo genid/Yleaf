@@ -625,7 +625,7 @@ def safe_create_dir(
         os.mkdir(folder)
     else:
         try:
-            os.mkdir(folder)
+            os.makedirs(folder, exist_ok=True)
         except OSError:
             print("Failed to create directory. Exiting...")
             raise
