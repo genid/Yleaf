@@ -806,7 +806,7 @@ def write_combined_prediction_table(
 ):
     """Run predict_haplogroup per tree and write combined TSV with one row per sample."""
     # Collect per-tree predictions
-    tree_results = {}  # tree -> {sample_name -> (hg, valid_markers, qc)}
+    tree_results = {}  # tree -> {sample_name -> (hg, hg_marker, valid_markers, qc)}
     for tree in trees:
         tree_hg_out = base_out_folder / f"hg_prediction_{tree}.hg"
         _predict_for_tree(base_out_folder, tree, tree_hg_out, use_old, prediction_quality, threads)
@@ -820,12 +820,12 @@ def write_combined_prediction_table(
     with open(combined_out, 'w') as f:
         header_cols = ['Sample_name']
         for tree in trees:
-            header_cols += [f'{tree}_Hg', f'{tree}_Valid_markers', f'{tree}_QC']
+            header_cols += [f'{tree}_Hg', f'{tree}_Hg_marker', f'{tree}_Valid_markers', f'{tree}_QC']
         f.write('\t'.join(header_cols) + '\n')
         for sample in sorted(sample_names):
             row = [sample]
             for tree in trees:
-                result = tree_results[tree].get(sample, ('NA', 'NA', 'NA'))
+                result = tree_results[tree].get(sample, ('NA', 'NA', 'NA', 'NA'))
                 row += list(result)
             f.write('\t'.join(str(x) for x in row) + '\n')
 
@@ -855,7 +855,7 @@ def _predict_for_tree(
 
 
 def _read_hg_file(hg_file: Path) -> dict:
-    """Read a hg_prediction.hg file, return {sample_name: (Hg, Valid_markers, QC)}."""
+    """Read a hg_prediction.hg file, return {sample_name: (Hg, Hg_marker, Valid_markers, QC)}."""
     results = {}
     if not hg_file.exists():
         return results
@@ -864,7 +864,7 @@ def _read_hg_file(hg_file: Path) -> dict:
         for line in f:
             parts = line.strip().split('\t')
             if len(parts) >= 6:
-                results[parts[0]] = (parts[1], parts[4], parts[5])
+                results[parts[0]] = (parts[1], parts[2], parts[4], parts[5])
     return results
 
 
