@@ -316,7 +316,7 @@ def get_most_likely_haplotype(
             if qc2_score < treshold:
                 continue
         if qc3_score[1] == 0:
-            qc3_score = 1  # no ancestor markers observed — cannot penalise, treat as neutral
+            qc3_score = 0
         else:
             qc3_score = qc3_score[0] / qc3_score[1]
             if qc3_score < treshold:
