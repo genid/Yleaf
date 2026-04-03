@@ -718,17 +718,24 @@ def main_bam_cram_multi_tree(
     # Flush all pending NFS/OS writes from worker processes before reading output files
     os.sync()
 
-    # Verify all expected per-tree .out files are present; warn loudly for any missing
+    # Verify all expected per-tree .out files are present and readable.
+    # On CIFS mounts, reading content (not just stat) forces the page cache to be
+    # populated before prediction workers fork, preventing stale-read issues.
     missing = []
     for f in files:
         sample_name = f.name.rsplit(".", 1)[0]
         sample_dir = base_out_folder / sample_name
         for tree in trees:
             out_file = sample_dir / f"{sample_name}.{tree}.out"
-            if not out_file.exists() or out_file.stat().st_size == 0:
-                missing.append(str(out_file))
+            try:
+                with open(out_file) as fh:
+                    header = fh.readline()
+                if not header.startswith("chr"):
+                    missing.append(str(out_file) + " (bad header)")
+            except FileNotFoundError:
+                missing.append(str(out_file) + " (missing)")
     if missing:
-        LOG.error(f"{len(missing)} expected .out file(s) missing or empty after extraction — "
+        LOG.error(f"{len(missing)} expected .out file(s) missing or unreadable after extraction — "
                   f"prediction results may be incomplete:\n" + "\n".join(missing))
 
     # Write combined prediction table (and optionally draw per-tree haplogroup images)
