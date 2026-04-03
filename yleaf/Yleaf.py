@@ -715,6 +715,22 @@ def main_bam_cram_multi_tree(
     with multiprocessing.Pool(processes=args.threads) as p:
         p.map(partial(run_bam_cram_multi_tree, args, base_out_folder, is_bam, trees), files)
 
+    # Flush all pending NFS/OS writes from worker processes before reading output files
+    os.sync()
+
+    # Verify all expected per-tree .out files are present; warn loudly for any missing
+    missing = []
+    for f in files:
+        sample_name = f.name.rsplit(".", 1)[0]
+        sample_dir = base_out_folder / sample_name
+        for tree in trees:
+            out_file = sample_dir / f"{sample_name}.{tree}.out"
+            if not out_file.exists() or out_file.stat().st_size == 0:
+                missing.append(str(out_file))
+    if missing:
+        LOG.error(f"{len(missing)} expected .out file(s) missing or empty after extraction — "
+                  f"prediction results may be incomplete:\n" + "\n".join(missing))
+
     # Write combined prediction table (and optionally draw per-tree haplogroup images)
     combined_out = base_out_folder / "hg_prediction_combined.hg"
     write_combined_prediction_table(base_out_folder, trees, combined_out,
