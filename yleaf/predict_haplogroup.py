@@ -104,15 +104,19 @@ def main_predict_haplogroup(
     if folder.name == "filtered_vcf_files":
         return [None, None, None]
 
+    out_path = folder / (folder.name + out_file_suffix)
     try:
-        haplotype_dict = read_yleaf_out_file(folder / (folder.name + out_file_suffix))
+        haplotype_dict = read_yleaf_out_file(out_path)
     except FileNotFoundError:
         LOG.warning(f"WARNING: failed to find .out file from yleaf run for sample {folder.name}. This sample will"
                     " be skipped.")
         return [None, None, None]
+    LOG.info(f"[diag] {folder.name}: read {len(haplotype_dict)} haplogroups from {out_path.name}; "
+             f"ACTIVE_TREE={ACTIVE_TREE} BACKBONE={len(BACKBONE_GROUPS)} MAIN_HG={len(MAIN_HAPLO_GROUPS)}")
     tree_file = getattr(namespace, 'tree_file', None) or (yleaf_constants.HG_PREDICTION_FOLDER / yleaf_constants.TREE_FILE)
     tree = Tree(tree_file)
     best_haplotype_score = get_most_likely_haplotype(tree, haplotype_dict, namespace.minimum_score)
+    LOG.info(f"[diag] {folder.name}: best={best_haplotype_score[0]}")
     return [haplotype_dict, best_haplotype_score, folder]
 
 
@@ -362,15 +366,10 @@ def get_qc1_score(
         return QC1_SCORE_CACHE[most_specific_backbone]
 
     if ACTIVE_TREE == yleaf_constants.TREE_FTDNA:
-        # Require at least 3 markers for a backbone group to contribute to QC1.
-        # Single-marker states are too noisy given the FTDNA tree's shallow backbone.
-        intermediate_states = {k: v for k, v in intermediate_states.items() if v.nr_total >= 3}
         tables_subdir = "ftdna_major_tables"
     elif ACTIVE_TREE == yleaf_constants.TREE_OPENYTREE:
-        intermediate_states = {k: v for k, v in intermediate_states.items() if v.nr_total >= 3}
         tables_subdir = "openY_major_tables"
     elif ACTIVE_TREE == yleaf_constants.TREE_ISOGG:
-        intermediate_states = {k: v for k, v in intermediate_states.items() if v.nr_total >= 3}
         tables_subdir = "isogg_major_tables"
     else:
         tables_subdir = "major_tables"
@@ -392,7 +391,7 @@ def get_qc1_score(
         if state != HgMarkersLinker.UNDEFINED:
             score[1] += 1
     if score[1] == 0:
-        return 0
+        return 1.0  # no backbone observed — neutral, let QC2/QC3 decide
 
     # cache the score
     qc1_score = score[0] / score[1]
