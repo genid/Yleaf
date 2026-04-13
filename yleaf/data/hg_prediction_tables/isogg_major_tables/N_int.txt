@@ -3,12 +3,12 @@ B	A
 C	A
 D	A
 E	A
-F	A
+F	D
 G	A
 H	A
 I	A
 J	A
-K	A
+K	D
 L	A
 M	A
 N	D

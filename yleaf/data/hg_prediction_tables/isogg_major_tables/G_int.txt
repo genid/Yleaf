@@ -3,7 +3,7 @@ B	A
 C	A
 D	A
 E	A
-F	A
+F	D
 G	D
 H	A
 I	A
