@@ -320,7 +320,9 @@ def get_most_likely_haplotype(
             if qc2_score < treshold:
                 continue
         if qc3_score[1] == 0:
-            qc3_score = 0
+            # No intermediate ancestor data — neutral (no contradicting evidence).
+            # FTDNA keeps 0 to block false positives at low coverage (see CLAUDE.md).
+            qc3_score = 0 if ACTIVE_TREE == yleaf_constants.TREE_FTDNA else 1.0
         else:
             qc3_score = qc3_score[0] / qc3_score[1]
             if qc3_score < treshold:
@@ -329,7 +331,7 @@ def get_most_likely_haplotype(
         total_score = product([qc1_score, qc2_score, qc3_score])
 
         # if above filter we found the hit
-        if total_score > treshold:
+        if total_score >= treshold:
             ancestral_children = get_ancestral_children(node, haplotype_dict, tree)
             best_score = (node.name, ancestral_children, qc1_score, qc2_score, qc3_score, total_score, node.depth)
             break
