@@ -292,6 +292,261 @@ def run_vcf(
     LOG.info(f"Finished extracting genotypes for {sample_vcf_file.name}")
 
 
+# ── PLINK / SNP array support ─────────────────────────────────────────────────
+
+_PLINK_Y_CHROM_CODES: Set[str] = {'24', 'Y', 'chrY', 'y', 'chry', 'ChrY'}
+
+
+def _plink_detect_base(plink_input: Path) -> Path:
+    """Return the base path (without extension) for a PLINK file set."""
+    if plink_input.suffix.lower() in ('.ped', '.bed', '.bim', '.fam', '.map'):
+        return plink_input.with_suffix('')
+    return plink_input  # already a base name
+
+
+def _parse_plink_bim(bim_path: Path):
+    """Parse .bim file. Returns (y_snps, total_snp_count).
+    y_snps: list of (snp_index, bp_pos, allele1, allele2) for Y-chr entries."""
+    y_snps = []
+    snp_idx = 0
+    with open(bim_path) as f:
+        for line in f:
+            parts = line.strip().split()
+            if len(parts) >= 6 and parts[0] in _PLINK_Y_CHROM_CODES:
+                try:
+                    y_snps.append((snp_idx, int(parts[3]), parts[4], parts[5]))
+                except ValueError:
+                    pass
+            snp_idx += 1
+    return y_snps, snp_idx
+
+
+def _parse_plink_fam(fam_path: Path) -> List[str]:
+    """Parse .fam file. Returns list of sample IIDs."""
+    samples = []
+    with open(fam_path) as f:
+        for line in f:
+            parts = line.strip().split()
+            if len(parts) >= 2:
+                samples.append(parts[1])
+    return samples
+
+
+def _parse_plink_binary(base: Path) -> Dict[str, Dict[int, Union[str, None]]]:
+    """Parse .bed/.bim/.fam. Returns {sample_id: {pos: called_base}} for Y-chr SNPs.
+    Heterozygous or missing calls are omitted (None not stored)."""
+    y_snps, total_snps = _parse_plink_bim(base.with_suffix('.bim'))
+    samples = _parse_plink_fam(base.with_suffix('.fam'))
+    result: Dict[str, Dict[int, Union[str, None]]] = {s: {} for s in samples}
+    if not y_snps or not samples:
+        return result
+
+    n_samples = len(samples)
+    bytes_per_snp = (n_samples + 3) // 4
+
+    with open(base.with_suffix('.bed'), 'rb') as f:
+        magic = f.read(3)
+        if len(magic) < 3 or magic[:2] != b'\x6c\x1b':
+            raise ValueError(f"Not a valid PLINK .bed file: {base}.bed")
+        if magic[2] != 0x01:
+            raise ValueError("Only SNP-major PLINK .bed format is supported (byte 3 must be 0x01)")
+        bed_data = f.read()
+
+    for snp_idx, pos, a1, a2 in y_snps:
+        byte_start = snp_idx * bytes_per_snp
+        snp_bytes = bed_data[byte_start:byte_start + bytes_per_snp]
+        for sample_idx, sample_id in enumerate(samples):
+            byte_val = snp_bytes[sample_idx // 4]
+            geno_bits = (byte_val >> ((sample_idx % 4) * 2)) & 0b11
+            # 00 = hom A1 / 01 = missing / 10 = het / 11 = hom A2
+            if geno_bits == 0b00 and a1 not in ('0', '.'):
+                result[sample_id][pos] = a1
+            elif geno_bits == 0b11 and a2 not in ('0', '.'):
+                result[sample_id][pos] = a2
+            # missing (01) and het (10) → not stored
+
+    return result
+
+
+def _parse_plink_text(base: Path) -> Dict[str, Dict[int, Union[str, None]]]:
+    """Parse .ped/.map. Returns {sample_id: {pos: called_base}} for Y-chr SNPs.
+    Heterozygous or missing calls are omitted."""
+    y_snp_indices: List[Tuple[int, int]] = []  # (col_index, bp_pos)
+    snp_idx = 0
+    with open(base.with_suffix('.map')) as f:
+        for line in f:
+            parts = line.strip().split()
+            if len(parts) >= 4 and parts[0] in _PLINK_Y_CHROM_CODES:
+                try:
+                    y_snp_indices.append((snp_idx, int(parts[3])))
+                except ValueError:
+                    pass
+            snp_idx += 1
+
+    result: Dict[str, Dict[int, Union[str, None]]] = {}
+    if not y_snp_indices:
+        return result
+
+    with open(base.with_suffix('.ped')) as f:
+        for line in f:
+            parts = line.strip().split()
+            if len(parts) < 6:
+                continue
+            sample_id = parts[1]
+            genos = parts[6:]
+            result[sample_id] = {}
+            for snp_idx, pos in y_snp_indices:
+                col = snp_idx * 2
+                if col + 1 >= len(genos):
+                    continue
+                a1, a2 = genos[col], genos[col + 1]
+                if a1 == '0' or a2 == '0':
+                    continue  # missing
+                if a1 == a2:
+                    result[sample_id][pos] = a1  # haploid Y call
+                # heterozygous on Y → ambiguous, skip
+
+    return result
+
+
+def _write_plink_sample_out(
+        sample_id: str,
+        y_genos: Dict[int, str],
+        markerfile: pd.DataFrame,
+        sample_folder: Path,
+        args: argparse.Namespace,
+        tree_name: str,
+        out_suffix: str = '',
+):
+    """Write .out and .info files for one sample from PLINK genotypes."""
+    tree = Tree(get_tree_path(tree_name))
+
+    rows_by_hg: Dict[str, list] = {}
+    n_called = n_missing = n_discordant = 0
+
+    for row in markerfile.itertuples(index=False):
+        called = y_genos.get(row.pos)
+        if called is None:
+            n_missing += 1
+            continue
+        if called == row.anc:
+            state = 'A'
+        elif called == row.der:
+            state = 'D'
+        else:
+            n_discordant += 1
+            continue
+        hg = row.haplogroup
+        if hg not in rows_by_hg:
+            rows_by_hg[hg] = []
+        rows_by_hg[hg].append([row.chr, row.pos, row.marker_name, hg,
+                                row.mutation, row.anc, row.der,
+                                1, 100.0, called, state])
+        n_called += 1
+
+    out_path = sample_folder / f"{sample_id}{out_suffix}.out"
+    header_cols = ["chr", "pos", "marker_name", "haplogroup", "mutation",
+                   "anc", "der", "reads", "called_perc", "called_base", "state"]
+
+    if args.use_old:
+        with open(out_path, 'w') as f:
+            f.write('\t'.join(header_cols) + '\n')
+            for hg in sorted(rows_by_hg):
+                for r in rows_by_hg[hg]:
+                    f.write('\t'.join(map(str, r)) + '\n')
+    else:
+        with open(out_path, 'w') as f:
+            f.write('\t'.join(header_cols + ["depth"]) + '\n')
+            for node_key in tree.node_mapping:
+                if node_key not in rows_by_hg:
+                    continue
+                depth = tree.get(node_key).depth
+                for r in rows_by_hg[node_key]:
+                    f.write('\t'.join(map(str, r)) + f'\t{depth}\n')
+
+    info_suffix = f"{out_suffix}.info" if out_suffix else ".info"
+    write_info_file(sample_folder, [
+        "Total of mapped reads: PLINK array",
+        "Total of unmapped reads: PLINK array",
+        f"Valid markers: {len(markerfile)}",
+        f"Markers not on array: {n_missing}",
+        f"Markers with discordant genotype: {n_discordant}",
+        f"Markers without haplogroup information: {n_missing + n_discordant}",
+        f"Markers with haplogroup information: {n_called}",
+    ], suffix=info_suffix)
+
+    LOG.info(f"  {sample_id}: {n_called} markers called, "
+             f"{n_missing} not on array, {n_discordant} discordant")
+
+
+def _load_plink_genotypes(args: argparse.Namespace) -> Dict[str, Dict[int, str]]:
+    """Parse PLINK file and return Y genotypes. Shared by single- and multi-tree paths."""
+    base = _plink_detect_base(Path(args.plinkfile))
+    is_binary = base.with_suffix('.bed').exists()
+    fmt = 'binary (.bed/.bim/.fam)' if is_binary else 'text (.ped/.map)'
+    LOG.info(f"Parsing PLINK {fmt}: {base}")
+    y_genos = _parse_plink_binary(base) if is_binary else _parse_plink_text(base)
+    if not y_genos:
+        LOG.warning("No Y-chromosome SNPs found. Check chromosome encoding "
+                    "(expected: 24, Y, or chrY in column 1 of .bim/.map).")
+    else:
+        LOG.info(f"Found {len(y_genos)} sample(s) in PLINK file")
+    return y_genos
+
+
+def main_plink(args: argparse.Namespace, base_out_folder: Path):
+    """Single-tree PLINK entry point."""
+    y_genos = _load_plink_genotypes(args)
+    if not y_genos:
+        return
+    markerfile = pd.read_csv(
+        get_position_file(args.reference_genome, args.use_old, args.ancient_DNA, args.tree),
+        header=None, sep="\t",
+        names=["chr", "marker_name", "haplogroup", "pos", "mutation", "anc", "der"],
+        dtype={"chr": str, "marker_name": str, "haplogroup": str,
+               "pos": int, "mutation": str, "anc": str, "der": str},
+    ).drop_duplicates(subset='pos', keep='first')
+
+    for sample_id, sample_y_genos in y_genos.items():
+        sample_folder = base_out_folder / sample_id
+        safe_create_dir(sample_folder, args.force)
+        _write_plink_sample_out(sample_id, sample_y_genos, markerfile,
+                                sample_folder, args, tree_name=args.tree)
+
+
+def main_plink_multi_tree(args: argparse.Namespace, base_out_folder: Path, trees: List[str]):
+    """Multi-tree PLINK entry point. Parses the PLINK file once, predicts per tree."""
+    y_genos = _load_plink_genotypes(args)
+    if not y_genos:
+        return
+
+    # Create all sample folders upfront (avoids force-deletion on second tree pass)
+    for sample_id in y_genos:
+        safe_create_dir(base_out_folder / sample_id, args.force)
+
+    for tree in trees:
+        LOG.info(f"Extracting markers for tree: {tree}")
+        markerfile = pd.read_csv(
+            get_position_file(args.reference_genome, args.use_old, args.ancient_DNA, tree),
+            header=None, sep="\t",
+            names=["chr", "marker_name", "haplogroup", "pos", "mutation", "anc", "der"],
+            dtype={"chr": str, "marker_name": str, "haplogroup": str,
+                   "pos": int, "mutation": str, "anc": str, "der": str},
+        ).drop_duplicates(subset='pos', keep='first')
+        for sample_id, sample_y_genos in y_genos.items():
+            _write_plink_sample_out(sample_id, sample_y_genos, markerfile,
+                                    base_out_folder / sample_id, args,
+                                    tree_name=tree, out_suffix=f'.{tree}')
+
+    combined_out = base_out_folder / "hg_prediction_combined.hg"
+    write_combined_prediction_table(
+        base_out_folder, trees, combined_out,
+        args.use_old, args.prediction_quality, args.threads,
+        draw_hg=args.draw_haplogroups,
+        collapsed_draw_mode=args.collapsed_draw_mode,
+    )
+
+
 def main_vcf_split(
         position_bed_file: Path,
         base_out_folder: Path,
@@ -427,17 +682,18 @@ def main():
             if args.use_old:
                 LOG.error("--use_old is not compatible with --tree ftdna.")
                 raise ValueError("--use_old is not compatible with --tree ftdna.")
-            if args.ancient_DNA:
-                LOG.error("--ancient_DNA is not compatible with --tree ftdna.")
-                raise ValueError("--ancient_DNA is not compatible with --tree ftdna.")
 
     # make sure the reference genome is present before doing something else, if not present it is downloaded
     check_reference(args.reference_genome)
 
     if multi_tree:
         if args.fastq or args.vcffile:
-            LOG.error("Multi-tree mode is only supported for BAM/CRAM input.")
-            raise ValueError("Multi-tree mode is only supported for BAM/CRAM input.")
+            LOG.error("Multi-tree mode is not supported for FASTQ or VCF input.")
+            raise ValueError("Multi-tree mode is not supported for FASTQ or VCF input.")
+        if args.plinkfile:
+            main_plink_multi_tree(args, out_folder, trees)
+            LOG.info("Done!")
+            return
         is_bam = args.bamfile is not None
         main_bam_cram_multi_tree(args, out_folder, is_bam, trees)
         LOG.info("Done!")
@@ -451,9 +707,11 @@ def main():
         main_bam_cram(args, out_folder, False)
     elif args.vcffile:
         main_vcf(args, out_folder)
+    elif args.plinkfile:
+        main_plink(args, out_folder)
     else:
-        LOG.error("Please specify either a bam, a cram, a fastq, or a vcf file")
-        raise ValueError("Please specify either a bam, a cram, a fastq, or a vcf file")
+        LOG.error("Please specify either a bam, cram, fastq, vcf, or plink file")
+        raise ValueError("Please specify either a bam, cram, fastq, vcf, or plink file")
     hg_out = out_folder / PREDICTION_OUT_FILE_NAME
     predict_haplogroup(out_folder, hg_out, args.use_old, args.prediction_quality, args.threads, args.tree)
     if args.draw_haplogroups:
@@ -491,6 +749,12 @@ def get_arguments() -> argparse.Namespace:
                         metavar="PATH", type=check_file)
     parser.add_argument("-vcf", "--vcffile", required=False,
                         help="input VCF file (.vcf.gz)", metavar="PATH", type=check_file)
+    parser.add_argument("-plink", "--plinkfile", required=False,
+                        help="PLINK format SNP array input. Pass the .ped file (text format) or the "
+                             ".bed file (binary format); companion files (.map/.bim/.fam) must be in "
+                             "the same directory. Both single- and multi-sample files are supported. "
+                             "Chromosome Y must be encoded as 24, Y, or chrY.",
+                        metavar="PATH", type=check_file)
     parser.add_argument("-ra", "--reanalyze", required=False,
                         help="reanalyze (skip filtering and splitting) the vcf file", action="store_true")
     parser.add_argument("-rp", "--reuse_pileup", required=False,
@@ -885,6 +1149,74 @@ def _predict_for_tree(
         info_file_suffix=f".{tree}.info",
     )
     predict_haplogroup.main(namespace)
+    _write_path_file(base_out_folder, tree, hg_out, f".{tree}.out")
+
+
+def _write_path_file(
+        base_out_folder: Path,
+        tree_name: str,
+        hg_out_file: Path,
+        out_file_suffix: str,
+):
+    """Write haplogroup_path_{tree}.json: ordered path ROOT→leaf with marker states."""
+    import json as _json
+    if not hg_out_file.exists():
+        return
+    predicted_hg = None
+    with open(hg_out_file) as f:
+        next(f)
+        for line in f:
+            parts = line.strip().split('\t')
+            if len(parts) >= 2 and parts[1] not in ('NA', ''):
+                predicted_hg = parts[1]
+                break
+    if not predicted_hg:
+        return
+    # Strip subclade annotation e.g. "E-Z15929*(xE-Y25504)" → "E-Z15929"
+    predicted_hg_base = predicted_hg.split('*')[0].split('(')[0]
+    tree = Tree(get_tree_path(tree_name))
+    node = tree.get(predicted_hg_base)
+    if not node:
+        return
+    # Build haplogroup→{marker, state} lookup from per-sample .out files.
+    # Aggregate all markers per haplogroup; use majority D/A state and a
+    # representative marker that actually has that state.
+    hg_counts: dict = {}  # hg -> {'d': int, 'a': int, 'rep_d': str|None, 'rep_a': str|None}
+    for out_path in sorted(base_out_folder.glob(f'*/*{out_file_suffix}')):
+        with open(out_path) as f:
+            next(f)
+            for line in f:
+                parts = line.strip().split('\t')
+                if len(parts) >= 11:
+                    hg, marker, state = parts[3], parts[2], parts[10]
+                    if hg not in hg_counts:
+                        hg_counts[hg] = {'d': 0, 'a': 0, 'rep_d': None, 'rep_a': None}
+                    if state == 'D':
+                        hg_counts[hg]['d'] += 1
+                        if hg_counts[hg]['rep_d'] is None:
+                            hg_counts[hg]['rep_d'] = marker
+                    elif state == 'A':
+                        hg_counts[hg]['a'] += 1
+                        if hg_counts[hg]['rep_a'] is None:
+                            hg_counts[hg]['rep_a'] = marker
+    marker_state: dict = {}
+    for hg, v in hg_counts.items():
+        majority = 'D' if v['d'] >= v['a'] else 'A'
+        rep = v['rep_d'] if majority == 'D' else v['rep_a']
+        marker_state[hg] = {'marker': rep or v['rep_d'] or v['rep_a'], 'state': majority}
+    path = []
+    while node:
+        entry = marker_state.get(node.name)
+        path.append({
+            'haplogroup': node.name,
+            'marker': entry['marker'] if entry else None,
+            'state': entry['state'] if entry else 'NC',
+        })
+        node = node.parent
+    path.reverse()
+    out = base_out_folder / f'haplogroup_path_{tree_name}.json'
+    with open(out, 'w') as f:
+        _json.dump(path, f)
 
 
 def _read_hg_file(hg_file: Path) -> dict:
@@ -1095,7 +1427,10 @@ def get_position_file(
         tree: str = yleaf_constants.TREE_YFULL,
 ) -> Path:
     if tree == yleaf_constants.TREE_FTDNA:
-        fname = yleaf_constants.FTDNA_POSITION_FILE.format(ref=reference_name)
+        if ancient_DNA:
+            fname = yleaf_constants.FTDNA_POSITION_ANCIENT_FILE.format(ref=reference_name)
+        else:
+            fname = yleaf_constants.FTDNA_POSITION_FILE.format(ref=reference_name)
         return yleaf_constants.DATA_FOLDER / reference_name / fname
     if tree == yleaf_constants.TREE_OPENYTREE:
         ref_tag = {"hg38": "hg38", "hg19": "hg19", "t2t": "t2t"}.get(reference_name, reference_name)
@@ -1129,7 +1464,10 @@ def get_position_bed_file(
         tree: str = yleaf_constants.TREE_YFULL,
 ) -> Path:
     if tree == yleaf_constants.TREE_FTDNA:
-        fname = yleaf_constants.FTDNA_POSITION_BED_FILE.format(ref=reference_name)
+        if ancient_DNA:
+            fname = yleaf_constants.FTDNA_POSITION_ANCIENT_BED_FILE.format(ref=reference_name)
+        else:
+            fname = yleaf_constants.FTDNA_POSITION_BED_FILE.format(ref=reference_name)
         return yleaf_constants.DATA_FOLDER / reference_name / fname
     if tree == yleaf_constants.TREE_OPENYTREE:
         ref_tag = {"hg38": "hg38", "hg19": "hg19", "t2t": "t2t"}.get(reference_name, reference_name)
