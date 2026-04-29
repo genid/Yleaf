@@ -73,6 +73,8 @@ def run_vcf(
         base_out_folder: Path,
         args: argparse.Namespace,
         sample_vcf_file: Path,
+        out_suffix: str = '',
+        tree_name: str = None,
 ):
     LOG.debug("Starting with extracting haplogroups...")
     markerfile = pd.read_csv(path_markerfile, header=None, sep="\t",
@@ -88,7 +90,7 @@ def run_vcf(
                                     }).drop_duplicates(subset='pos', keep='first', inplace=False)
 
     sample_vcf_folder = base_out_folder / (sample_vcf_file.name.replace(".vcf.gz", ""))
-    safe_create_dir(sample_vcf_folder, args.force)
+    safe_create_dir(sample_vcf_folder, args.force if not out_suffix else False, reuse_pileup=bool(out_suffix))
 
     sample_vcf_file_txt = sample_vcf_folder / (sample_vcf_file.name.replace(".vcf.gz", ".txt"))
     cmd = f"bcftools query -f '%CHROM\t%POS\t%REF\t%ALT[\t%AD]\n' {sample_vcf_file} > {sample_vcf_file_txt}"
@@ -249,11 +251,11 @@ def run_vcf(
     general_info_list.append("Reference-inferred markers: " + str(ref_inferred_count))
     general_info_list.append("Markers with haplogroup information: " + str(len(df_out)))
 
-    write_info_file(sample_vcf_folder, general_info_list)
+    write_info_file(sample_vcf_folder, general_info_list, suffix=f"{out_suffix}.info" if out_suffix else ".info")
 
     use_old = args.use_old
-    outputfile = sample_vcf_folder / (sample_vcf_file.name.replace(".vcf.gz", ".out"))
-    fmf_output = sample_vcf_folder / (sample_vcf_file.name.replace(".vcf.gz", ".fmf"))
+    outputfile = sample_vcf_folder / (sample_vcf_file.name.replace(".vcf.gz", f"{out_suffix}.out"))
+    fmf_output = sample_vcf_folder / (sample_vcf_file.name.replace(".vcf.gz", f"{out_suffix}.fmf"))
 
     if use_old:
         df_out = df_out.sort_values(by=['haplogroup'], ascending=True)
@@ -278,7 +280,7 @@ def run_vcf(
             mappable_df[lst[3]] = []
         mappable_df[lst[3]].append(lst)
 
-    tree = Tree(get_tree_path(args.tree))
+    tree = Tree(get_tree_path(tree_name if tree_name else args.tree))
     with open(outputfile, "w") as f:
         f.write('\t'.join(["chr", "pos", "marker_name", "haplogroup", "mutation", "anc", "der", "reads",
                            "called_perc", "called_base", "state", "depth\n"]))
@@ -631,6 +633,56 @@ def main_vcf_split(
     return sample_vcf_files
 
 
+def _write_merged_vcf_bed(merged_bed: Path, trees: List[str], reference_genome: str,
+                          use_old: bool, ancient_dna: bool) -> None:
+    """Merge BED files from multiple trees into a union BED for VCF filtering."""
+    import pandas as pd
+    dfs = []
+    for tree in trees:
+        bed_file = get_position_bed_file(reference_genome, use_old, ancient_dna, tree)
+        df = pd.read_csv(bed_file, sep='\t', header=None, names=['chr', 'start', 'end', 'name'])
+        dfs.append(df)
+    merged = pd.concat(dfs).drop_duplicates(subset='start').sort_values('start').reset_index(drop=True)
+    merged['chr'] = 'chrY'  # main_vcf_split replaces this with the actual name from the VCF
+    merged.to_csv(str(merged_bed), sep='\t', index=False, header=False)
+
+
+def main_vcf_multi_tree(
+        args: argparse.Namespace,
+        base_out_folder: Path,
+        trees: List[str]
+):
+    """Multi-tree VCF: filter once with union positions, extract per-tree, write combined output."""
+    merged_bed = base_out_folder / "temp_vcf_union.bed"
+    _write_merged_vcf_bed(merged_bed, trees, args.reference_genome, args.use_old, args.ancient_DNA)
+
+    safe_create_dir(base_out_folder / "filtered_vcf_files", args.force)
+    files = get_files_with_extension(args.vcffile, '.vcf.gz')
+
+    if not args.reanalyze:
+        with multiprocessing.Pool(processes=args.threads) as p:
+            sample_vcf_files_nested = p.map(
+                partial(main_vcf_split, merged_bed, base_out_folder, args), files)
+        merged_bed.unlink(missing_ok=True)
+        sample_vcf_files = [x for sublist in sample_vcf_files_nested if sublist for x in sublist]
+    else:
+        merged_bed.unlink(missing_ok=True)
+        sample_vcf_files = files
+
+    for tree in trees:
+        path_markerfile = get_position_file(args.reference_genome, args.use_old, args.ancient_DNA, tree)
+        with multiprocessing.Pool(processes=args.threads) as p:
+            p.map(partial(run_vcf, path_markerfile, base_out_folder, args,
+                          out_suffix=f'.{tree}', tree_name=tree),
+                  sample_vcf_files)
+
+    combined_out = base_out_folder / "hg_prediction_combined.hg"
+    write_combined_prediction_table(base_out_folder, trees, combined_out,
+                                    args.use_old, args.prediction_quality, args.threads,
+                                    draw_hg=args.draw_haplogroups,
+                                    collapsed_draw_mode=args.collapsed_draw_mode)
+
+
 def main_vcf(
         args: argparse.Namespace,
         base_out_folder: Path
@@ -687,15 +739,15 @@ def main():
     check_reference(args.reference_genome)
 
     if multi_tree:
-        if args.fastq or args.vcffile:
-            LOG.error("Multi-tree mode is not supported for FASTQ or VCF input.")
-            raise ValueError("Multi-tree mode is not supported for FASTQ or VCF input.")
-        if args.plinkfile:
+        if args.fastq:
+            main_fastq(args, out_folder, trees=trees)
+        elif args.vcffile:
+            main_vcf_multi_tree(args, out_folder, trees)
+        elif args.plinkfile:
             main_plink_multi_tree(args, out_folder, trees)
-            LOG.info("Done!")
-            return
-        is_bam = args.bamfile is not None
-        main_bam_cram_multi_tree(args, out_folder, is_bam, trees)
+        else:
+            is_bam = args.bamfile is not None
+            main_bam_cram_multi_tree(args, out_folder, is_bam, trees)
         LOG.info("Done!")
         return
 
@@ -898,7 +950,8 @@ def safe_create_dir(
 
 def main_fastq(
         args: argparse.Namespace,
-        out_folder: Path
+        out_folder: Path,
+        trees: List[str] = None
 ):
     files = get_files_with_extension(args.fastq, '.fastq')
     files += get_files_with_extension(args.fastq, '.fastq.gz')
@@ -939,7 +992,10 @@ def main_fastq(
             call_command(cmd)
             os.remove(sam_file)
     args.bamfile = bam_folder
-    main_bam_cram(args, out_folder, True)
+    if trees is not None:
+        main_bam_cram_multi_tree(args, out_folder, True, trees)
+    else:
+        main_bam_cram(args, out_folder, True)
 
 
 _CRAM_CHRY_MD5 = {
