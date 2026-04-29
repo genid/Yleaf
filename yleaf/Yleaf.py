@@ -1005,15 +1005,30 @@ _CRAM_CHRY_MD5 = {
 }
 
 
+def _download_cram_reference(url: str, dest: Path) -> None:
+    """Download a CRAM reference FASTA from a ftp:// or http(s):// URL and index it."""
+    import urllib.request
+    LOG.info(f"Downloading CRAM reference from {url} (~3 GB), please wait...")
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    tmp = dest.with_suffix(".tmp")
+    try:
+        urllib.request.urlretrieve(url, tmp)
+        tmp.rename(dest)
+    except Exception as e:
+        tmp.unlink(missing_ok=True)
+        raise RuntimeError(f"Failed to download CRAM reference from {url}: {e}")
+    LOG.info("Indexing downloaded reference with samtools faidx...")
+    call_command(f"samtools faidx {dest}")
+
+
 def resolve_cram_reference(args: argparse.Namespace, cram_files: List[Path]) -> None:
     """Auto-detect reference genome from CRAM header and set args.cram_reference.
 
     Strategy:
-    1. Parse all @SQ lines; collect chrY/Y M5 (to identify the build) and the
-       UR: filename (the exact reference the CRAM was encoded with).
-    2. Try to find the exact reference file locally by searching the parent
-       directories of all known Yleaf reference paths.
-    3. Fall back to Yleaf's standard reference for the build, downloading if absent.
+    1. Parse @SQ lines: collect chrY/Y M5 (build identification) and UR: URL/filename.
+    2. Search parent directories of all known Yleaf reference paths for the exact file.
+    3. If not found locally, download directly from the UR: URL into the Yleaf cache.
+    4. Fall back to Yleaf's standard build reference (downloading if absent).
     """
     if args.cram_reference is not None:
         return
@@ -1026,15 +1041,15 @@ def resolve_cram_reference(args: argparse.Namespace, cram_files: List[Path]) -> 
     )
 
     detected_build = None
-    ur_filename = None  # basename of the UR: tag (exact reference filename)
+    ur_url = None
     for line in result.stdout.splitlines():
         if not line.startswith("@SQ"):
             continue
         fields = dict(f.split(":", 1) for f in line.split("\t")[1:] if ":" in f)
         if fields.get("SN") in ("chrY", "Y") and "M5" in fields:
             detected_build = _CRAM_CHRY_MD5.get(fields["M5"])
-        if "UR" in fields and ur_filename is None:
-            ur_filename = Path(fields["UR"].rstrip("/").split("/")[-1])
+        if "UR" in fields and ur_url is None:
+            ur_url = fields["UR"].strip()
 
     if detected_build is None:
         raise ValueError(
@@ -1044,8 +1059,18 @@ def resolve_cram_reference(args: argparse.Namespace, cram_files: List[Path]) -> 
 
     LOG.info(f"Auto-detected CRAM reference build from chrY M5: {detected_build}")
 
-    # Search for the exact UR-specified reference in the parent dirs of all known paths
-    if ur_filename:
+    def _set_ref(path: Path) -> None:
+        if args.reference_genome != detected_build:
+            LOG.warning(
+                f"Auto-detected reference build ({detected_build}) differs from -rg "
+                f"({args.reference_genome}); using detected build."
+            )
+            args.reference_genome = detected_build
+        args.cram_reference = path
+
+    # 1. Search locally for exact reference file by UR basename
+    if ur_url:
+        ur_filename = Path(ur_url.rstrip("/").split("/")[-1])
         candidate_dirs = {
             p.parent for p in [
                 yleaf_constants.HG38_FULL_GENOME,
@@ -1057,16 +1082,23 @@ def resolve_cram_reference(args: argparse.Namespace, cram_files: List[Path]) -> 
             candidate = d / ur_filename
             if candidate.exists():
                 LOG.info(f"Found exact CRAM reference at {candidate}")
-                args.cram_reference = candidate
-                if args.reference_genome != detected_build:
-                    LOG.warning(
-                        f"Auto-detected reference build ({detected_build}) differs from -rg "
-                        f"({args.reference_genome}); using detected build."
-                    )
-                    args.reference_genome = detected_build
+                _set_ref(candidate)
                 return
 
-    # Fall back to Yleaf's standard reference for the detected build
+        # 2. Download from UR: URL if it is a network URL, cache in Yleaf data dir
+        if ur_url.startswith(("ftp://", "http://", "https://")):
+            build_ref_dir = {
+                yleaf_constants.HG38: yleaf_constants.HG38_FULL_GENOME.parent,
+                yleaf_constants.HG19: yleaf_constants.HG19_FULL_GENOME.parent,
+                yleaf_constants.T2T:  yleaf_constants.T2T_FULL_GENOME.parent,
+            }[detected_build]
+            cached = build_ref_dir / ur_filename
+            if not cached.exists():
+                _download_cram_reference(ur_url, cached)
+            _set_ref(cached)
+            return
+
+    # 3. Fall back to Yleaf's standard reference for the detected build
     ref_path = {
         yleaf_constants.HG38: yleaf_constants.HG38_FULL_GENOME,
         yleaf_constants.HG19: yleaf_constants.HG19_FULL_GENOME,
@@ -1078,13 +1110,7 @@ def resolve_cram_reference(args: argparse.Namespace, cram_files: List[Path]) -> 
         from yleaf import download_reference
         download_reference.install_genome_files(detected_build)
 
-    if args.reference_genome != detected_build:
-        LOG.warning(
-            f"Auto-detected reference build ({detected_build}) differs from -rg "
-            f"({args.reference_genome}); using detected build."
-        )
-        args.reference_genome = detected_build
-    args.cram_reference = ref_path
+    _set_ref(ref_path)
 
 
 def main_bam_cram(
