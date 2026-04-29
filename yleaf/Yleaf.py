@@ -1006,7 +1006,15 @@ _CRAM_CHRY_MD5 = {
 
 
 def resolve_cram_reference(args: argparse.Namespace, cram_files: List[Path]) -> None:
-    """Auto-detect reference genome from CRAM header chrY M5 checksum and set args.cram_reference."""
+    """Auto-detect reference genome from CRAM header and set args.cram_reference.
+
+    Strategy:
+    1. Parse all @SQ lines; collect chrY/Y M5 (to identify the build) and the
+       UR: filename (the exact reference the CRAM was encoded with).
+    2. Try to find the exact reference file locally by searching the parent
+       directories of all known Yleaf reference paths.
+    3. Fall back to Yleaf's standard reference for the build, downloading if absent.
+    """
     if args.cram_reference is not None:
         return
     if not cram_files:
@@ -1016,15 +1024,17 @@ def resolve_cram_reference(args: argparse.Namespace, cram_files: List[Path]) -> 
         f"samtools view -H {cram_files[0]}",
         shell=True, capture_output=True, text=True
     )
+
     detected_build = None
+    ur_filename = None  # basename of the UR: tag (exact reference filename)
     for line in result.stdout.splitlines():
         if not line.startswith("@SQ"):
             continue
         fields = dict(f.split(":", 1) for f in line.split("\t")[1:] if ":" in f)
         if fields.get("SN") in ("chrY", "Y") and "M5" in fields:
             detected_build = _CRAM_CHRY_MD5.get(fields["M5"])
-            if detected_build:
-                break
+        if "UR" in fields and ur_filename is None:
+            ur_filename = Path(fields["UR"].rstrip("/").split("/")[-1])
 
     if detected_build is None:
         raise ValueError(
@@ -1032,8 +1042,31 @@ def resolve_cram_reference(args: argparse.Namespace, cram_files: List[Path]) -> 
             "Please specify the reference FASTA with -cr/--cram_reference."
         )
 
-    LOG.info(f"Auto-detected CRAM reference genome from chrY M5: {detected_build}")
+    LOG.info(f"Auto-detected CRAM reference build from chrY M5: {detected_build}")
 
+    # Search for the exact UR-specified reference in the parent dirs of all known paths
+    if ur_filename:
+        candidate_dirs = {
+            p.parent for p in [
+                yleaf_constants.HG38_FULL_GENOME,
+                yleaf_constants.HG19_FULL_GENOME,
+                yleaf_constants.T2T_FULL_GENOME,
+            ] if p.parent.exists()
+        }
+        for d in candidate_dirs:
+            candidate = d / ur_filename
+            if candidate.exists():
+                LOG.info(f"Found exact CRAM reference at {candidate}")
+                args.cram_reference = candidate
+                if args.reference_genome != detected_build:
+                    LOG.warning(
+                        f"Auto-detected reference build ({detected_build}) differs from -rg "
+                        f"({args.reference_genome}); using detected build."
+                    )
+                    args.reference_genome = detected_build
+                return
+
+    # Fall back to Yleaf's standard reference for the detected build
     ref_path = {
         yleaf_constants.HG38: yleaf_constants.HG38_FULL_GENOME,
         yleaf_constants.HG19: yleaf_constants.HG19_FULL_GENOME,
