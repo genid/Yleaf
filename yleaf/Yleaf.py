@@ -942,6 +942,62 @@ def main_fastq(
     main_bam_cram(args, out_folder, True)
 
 
+_CRAM_CHRY_MD5 = {
+    "ce3e31103314a704255f3cd90369ecce": yleaf_constants.HG38,
+    "17ceeafc3a372967496cd94f2572c341": yleaf_constants.HG19,
+    "360f2d39c52a70539bac6b12ff76c123": yleaf_constants.T2T,
+}
+
+
+def resolve_cram_reference(args: argparse.Namespace, cram_files: List[Path]) -> None:
+    """Auto-detect reference genome from CRAM header chrY M5 checksum and set args.cram_reference."""
+    if args.cram_reference is not None:
+        return
+    if not cram_files:
+        raise ValueError("No CRAM files found.")
+
+    result = subprocess.run(
+        f"samtools view -H {cram_files[0]}",
+        shell=True, capture_output=True, text=True
+    )
+    detected_build = None
+    for line in result.stdout.splitlines():
+        if not line.startswith("@SQ"):
+            continue
+        fields = dict(f.split(":", 1) for f in line.split("\t")[1:] if ":" in f)
+        if fields.get("SN") in ("chrY", "Y") and "M5" in fields:
+            detected_build = _CRAM_CHRY_MD5.get(fields["M5"])
+            if detected_build:
+                break
+
+    if detected_build is None:
+        raise ValueError(
+            "Cannot auto-detect reference genome from CRAM header (no recognised chrY M5 checksum). "
+            "Please specify the reference FASTA with -cr/--cram_reference."
+        )
+
+    LOG.info(f"Auto-detected CRAM reference genome from chrY M5: {detected_build}")
+
+    ref_path = {
+        yleaf_constants.HG38: yleaf_constants.HG38_FULL_GENOME,
+        yleaf_constants.HG19: yleaf_constants.HG19_FULL_GENOME,
+        yleaf_constants.T2T:  yleaf_constants.T2T_FULL_GENOME,
+    }[detected_build]
+
+    if not ref_path.exists():
+        LOG.info(f"Reference genome not found at {ref_path}. Downloading (~3 GB), please wait...")
+        from yleaf import download_reference
+        download_reference.install_genome_files(detected_build)
+
+    if args.reference_genome != detected_build:
+        LOG.warning(
+            f"Auto-detected reference build ({detected_build}) differs from -rg "
+            f"({args.reference_genome}); using detected build."
+        )
+        args.reference_genome = detected_build
+    args.cram_reference = ref_path
+
+
 def main_bam_cram(
         args: argparse.Namespace,
         base_out_folder: Path,
@@ -950,9 +1006,8 @@ def main_bam_cram(
     if args.bamfile is not None:
         files = get_files_with_extension(args.bamfile, '.bam')
     elif args.cramfile is not None:
-        if args.cram_reference is None:
-            raise ValueError("Please specify a reference genome for the CRAM file.")
         files = get_files_with_extension(args.cramfile, '.cram')
+        resolve_cram_reference(args, files)
     else:
         print("Please specify either (a) bam or a cram file(s)")
         return
@@ -971,9 +1026,8 @@ def main_bam_cram_multi_tree(
     if args.bamfile is not None:
         files = get_files_with_extension(args.bamfile, '.bam')
     elif args.cramfile is not None:
-        if args.cram_reference is None:
-            raise ValueError("Please specify a reference genome for the CRAM file.")
         files = get_files_with_extension(args.cramfile, '.cram')
+        resolve_cram_reference(args, files)
     else:
         return
 
