@@ -714,6 +714,7 @@ def main():
         raise ValueError("Please specify either a bam, cram, fastq, vcf, or plink file")
     hg_out = out_folder / PREDICTION_OUT_FILE_NAME
     predict_haplogroup(out_folder, hg_out, args.use_old, args.prediction_quality, args.threads, args.tree)
+    _write_path_file(out_folder, args.tree, hg_out, ".out")
     if args.draw_haplogroups:
         draw_haplogroups(hg_out, args.collapsed_draw_mode)
 
@@ -1018,6 +1019,19 @@ def run_bam_cram_multi_tree(
         input_file: Path
 ):
     """Per-sample multi-tree: one pileup covering all trees, extract haplogroups per tree."""
+    try:
+        _run_bam_cram_multi_tree_inner(args, base_out_folder, is_bam, trees, input_file)
+    except BaseException as e:
+        LOG.warning(f"Skipping {input_file.name}: {e}")
+
+
+def _run_bam_cram_multi_tree_inner(
+        args: argparse.Namespace,
+        base_out_folder: Path,
+        is_bam: bool,
+        trees: List[str],
+        input_file: Path
+):
     LOG.info(f"Starting multi-tree run for {input_file}")
     output_dir = base_out_folder / input_file.name.rsplit(".", 1)[0]
     safe_create_dir(output_dir, args.force, reuse_pileup=getattr(args, 'reuse_pileup', False))
@@ -1025,11 +1039,11 @@ def run_bam_cram_multi_tree(
     if is_bam:
         if not any([Path(str(input_file) + ".bai").exists(),
                     Path(str(input_file).rstrip(".bam") + '.bai').exists()]):
-            call_command(f"samtools index -{args.threads} {input_file}")
+            call_command(f"samtools index -@ {args.threads} {input_file}")
     else:
         if not any([Path(str(input_file) + ".crai").exists(),
                     Path(str(input_file).rstrip(".cram") + '.crai').exists()]):
-            call_command(f"samtools index -{args.threads} {input_file}")
+            call_command(f"samtools index -@ {args.threads} {input_file}")
 
     header, mapped, unmapped = chromosome_table(input_file, output_dir, output_dir.name)
     general_info_list = [f"Total of mapped reads: {mapped}", f"Total of unmapped reads: {unmapped}"]
@@ -1158,65 +1172,75 @@ def _write_path_file(
         hg_out_file: Path,
         out_file_suffix: str,
 ):
-    """Write haplogroup_path_{tree}.json: ordered path ROOT→leaf with marker states."""
+    """Write per-sample haplogroup_path_{tree}.json inside each sample's subfolder."""
     import json as _json
     if not hg_out_file.exists():
         return
-    predicted_hg = None
+
+    # Read predicted haplogroup for every sample from the .hg file
+    sample_hg: dict = {}
     with open(hg_out_file) as f:
         next(f)
         for line in f:
             parts = line.strip().split('\t')
             if len(parts) >= 2 and parts[1] not in ('NA', ''):
-                predicted_hg = parts[1]
-                break
-    if not predicted_hg:
+                sample_hg[parts[0]] = parts[1]
+
+    if not sample_hg:
         return
-    # Strip subclade annotation e.g. "E-Z15929*(xE-Y25504)" → "E-Z15929"
-    predicted_hg_base = predicted_hg.split('*')[0].split('(')[0]
+
     tree = Tree(get_tree_path(tree_name))
-    node = tree.get(predicted_hg_base)
-    if not node:
-        return
-    # Build haplogroup→{marker, state} lookup from per-sample .out files.
-    # Aggregate all markers per haplogroup; use majority D/A state and a
-    # representative marker that actually has that state.
-    hg_counts: dict = {}  # hg -> {'d': int, 'a': int, 'rep_d': str|None, 'rep_a': str|None}
-    for out_path in sorted(base_out_folder.glob(f'*/*{out_file_suffix}')):
-        with open(out_path) as f:
-            next(f)
-            for line in f:
-                parts = line.strip().split('\t')
-                if len(parts) >= 11:
-                    hg, marker, state = parts[3], parts[2], parts[10]
-                    if hg not in hg_counts:
-                        hg_counts[hg] = {'d': 0, 'a': 0, 'rep_d': None, 'rep_a': None}
-                    if state == 'D':
-                        hg_counts[hg]['d'] += 1
-                        if hg_counts[hg]['rep_d'] is None:
-                            hg_counts[hg]['rep_d'] = marker
-                    elif state == 'A':
-                        hg_counts[hg]['a'] += 1
-                        if hg_counts[hg]['rep_a'] is None:
-                            hg_counts[hg]['rep_a'] = marker
-    marker_state: dict = {}
-    for hg, v in hg_counts.items():
-        majority = 'D' if v['d'] >= v['a'] else 'A'
-        rep = v['rep_d'] if majority == 'D' else v['rep_a']
-        marker_state[hg] = {'marker': rep or v['rep_d'] or v['rep_a'], 'state': majority}
-    path = []
-    while node:
-        entry = marker_state.get(node.name)
-        path.append({
-            'haplogroup': node.name,
-            'marker': entry['marker'] if entry else None,
-            'state': entry['state'] if entry else 'NC',
-        })
-        node = node.parent
-    path.reverse()
-    out = base_out_folder / f'haplogroup_path_{tree_name}.json'
-    with open(out, 'w') as f:
-        _json.dump(path, f)
+
+    for sample_name, predicted_hg in sample_hg.items():
+        # Strip subclade annotation e.g. "E-Z15929*(xE-Y25504)" → "E-Z15929"
+        predicted_hg_base = predicted_hg.split('*')[0].split('(')[0]
+        node = tree.get(predicted_hg_base)
+        if not node:
+            continue
+
+        # Read marker states from this sample's own .out file
+        sample_folder = base_out_folder / sample_name
+        out_path = sample_folder / f"{sample_name}{out_file_suffix}"
+        hg_counts: dict = {}
+        if out_path.exists():
+            with open(out_path) as f:
+                next(f)
+                for line in f:
+                    parts = line.strip().split('\t')
+                    if len(parts) >= 11:
+                        hg, marker, state = parts[3], parts[2], parts[10]
+                        if hg not in hg_counts:
+                            hg_counts[hg] = {'d': 0, 'a': 0, 'rep_d': None, 'rep_a': None}
+                        if state == 'D':
+                            hg_counts[hg]['d'] += 1
+                            if hg_counts[hg]['rep_d'] is None:
+                                hg_counts[hg]['rep_d'] = marker
+                        elif state == 'A':
+                            hg_counts[hg]['a'] += 1
+                            if hg_counts[hg]['rep_a'] is None:
+                                hg_counts[hg]['rep_a'] = marker
+
+        marker_state: dict = {}
+        for hg, v in hg_counts.items():
+            majority = 'D' if v['d'] >= v['a'] else 'A'
+            rep = v['rep_d'] if majority == 'D' else v['rep_a']
+            marker_state[hg] = {'marker': rep or v['rep_d'] or v['rep_a'], 'state': majority}
+
+        path = []
+        n = node
+        while n:
+            entry = marker_state.get(n.name)
+            path.append({
+                'haplogroup': n.name,
+                'marker': entry['marker'] if entry else None,
+                'state': entry['state'] if entry else 'NC',
+            })
+            n = n.parent
+        path.reverse()
+
+        out = sample_folder / f'haplogroup_path_{tree_name}.json'
+        with open(out, 'w') as f:
+            _json.dump(path, f)
 
 
 def _read_hg_file(hg_file: Path) -> dict:
@@ -1239,15 +1263,18 @@ def run_bam_cram(
         is_bam: bool,
         input_file: Path
 ):
-    LOG.info(f"Starting with running for {input_file}")
-    output_dir = base_out_folder / input_file.name.rsplit(".", 1)[0]
-    safe_create_dir(output_dir, args.force, reuse_pileup=getattr(args, 'reuse_pileup', False))
-    general_info_list = samtools(output_dir, input_file, is_bam, args)
-    write_info_file(output_dir, general_info_list)
-    if args.private_mutations:
-        find_private_mutations(output_dir, input_file, args, is_bam)
-    LOG.debug(f"Finished running for {input_file.name}")
-    print()
+    try:
+        LOG.info(f"Starting with running for {input_file}")
+        output_dir = base_out_folder / input_file.name.rsplit(".", 1)[0]
+        safe_create_dir(output_dir, args.force, reuse_pileup=getattr(args, 'reuse_pileup', False))
+        general_info_list = samtools(output_dir, input_file, is_bam, args)
+        write_info_file(output_dir, general_info_list)
+        if args.private_mutations:
+            find_private_mutations(output_dir, input_file, args, is_bam)
+        LOG.debug(f"Finished running for {input_file.name}")
+        print()
+    except BaseException as e:
+        LOG.warning(f"Skipping {input_file.name}: {e}")
 
 
 def call_command(
