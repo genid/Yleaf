@@ -176,16 +176,12 @@ def read_backbone_groups(tree_file: Path = None):
     hg_folder = yleaf_constants.HG_PREDICTION_FOLDER
 
     IS_FTDNA_TREE = tree_file is not None and str(tree_file).endswith(yleaf_constants.FTDNA_TREE_FILE)
-    is_openY = tree_file is not None and str(tree_file).endswith(yleaf_constants.OPENYTREE_TREE_FILE)
     is_isogg = tree_file is not None and str(tree_file).endswith(yleaf_constants.ISOGG_TREE_FILE)
     is_yfull_v10 = tree_file is not None and str(tree_file).endswith(yleaf_constants.YFULL_V10_TREE_FILE)
 
     if IS_FTDNA_TREE:
         ACTIVE_TREE = yleaf_constants.TREE_FTDNA
         major_tables_dir = hg_folder / "ftdna_major_tables"
-    elif is_openY:
-        ACTIVE_TREE = yleaf_constants.TREE_OPENYTREE
-        major_tables_dir = hg_folder / "openY_major_tables"
     elif is_isogg:
         ACTIVE_TREE = yleaf_constants.TREE_ISOGG
         major_tables_dir = hg_folder / "isogg_major_tables"
@@ -369,8 +365,6 @@ def get_qc1_score(
 
     if ACTIVE_TREE == yleaf_constants.TREE_FTDNA:
         tables_subdir = "ftdna_major_tables"
-    elif ACTIVE_TREE == yleaf_constants.TREE_OPENYTREE:
-        tables_subdir = "openY_major_tables"
     elif ACTIVE_TREE == yleaf_constants.TREE_ISOGG:
         tables_subdir = "isogg_major_tables"
     else:
@@ -385,13 +379,25 @@ def get_qc1_score(
                 expected_states[name] = {*state.split("/")}
 
     score = [0, 0]  # matching, total
-    for name, marker_linker in intermediate_states.items():
-        expected_possible_states = expected_states[name]
-        state = marker_linker.get_state()
-        if state in expected_possible_states:
-            score[0] += 1
-        if state != HgMarkersLinker.UNDEFINED:
+    if ACTIVE_TREE == yleaf_constants.TREE_FTDNA:
+        # All 20 backbone groups are always in the denominator.
+        # Absent or UNDEFINED groups are neutral (no penalty); only clear mismatches reduce the score.
+        for name, expected_possible_states in expected_states.items():
             score[1] += 1
+            if name not in intermediate_states:
+                score[0] += 1  # no data — neutral
+            else:
+                state = intermediate_states[name].get_state()
+                if state == HgMarkersLinker.UNDEFINED or state in expected_possible_states:
+                    score[0] += 1  # matches or undetermined — no penalty
+    else:
+        for name, marker_linker in intermediate_states.items():
+            expected_possible_states = expected_states[name]
+            state = marker_linker.get_state()
+            if state in expected_possible_states:
+                score[0] += 1
+            if state != HgMarkersLinker.UNDEFINED:
+                score[1] += 1
     if score[1] == 0:
         return 1.0  # no backbone observed — neutral, let QC2/QC3 decide
 

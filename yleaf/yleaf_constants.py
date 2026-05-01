@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 
@@ -18,27 +19,21 @@ FULL_REF_FILE: str = "full_reference.fa"
 Y_REF_FILE: str = "chrY.fa"
 SNP_DATA_FILE: str = "snp_data.csv"
 NEW_POSITION_FILE: str = "new_positions.txt"
-OLD_POSITION_FILE: str = "old_positions.txt"
 NEW_POSITION_BED_FILE: str = "new_positions.bed"
-OLD_POSITION_BED_FILE: str = "old_positions.bed"
 NEW_POSITION_ANCIENT_FILE: str = "new_positions_ancient.txt"
-OLD_POSITION_ANCIENT_FILE: str = "old_positions_ancient.txt"
 NEW_POSITION_ANCIENT_BED_FILE: str = "new_positions_ancient.bed"
-OLD_POSITION_ANCIENT_BED_FILE: str = "old_positions_ancient.bed"
 
 TREE_YFULL: str = "yfull"
 TREE_YFULL_V10: str = "yfull_v10"
 TREE_FTDNA: str = "ftdna"
-TREE_OPENYTREE: str = "openY"
 TREE_ISOGG: str = "isogg"
 
 TREE_FILE: str = "tree.json"
 FTDNA_TREE_FILE: str = "ftdna_tree.json"
 FTDNA_POSITION_FILE: str = "ftdna_positions_{ref}.txt"
 FTDNA_POSITION_BED_FILE: str = "ftdna_positions_{ref}.bed"
-OPENYTREE_TREE_FILE: str = "openY_tree.json"
-OPENYTREE_POSITION_FILE: str = "openY_positions_{ref}.txt"
-OPENYTREE_POSITION_BED_FILE: str = "openY_positions_{ref}.bed"
+FTDNA_POSITION_ANCIENT_FILE: str = "ftdna_positions_ancient_{ref}.txt"
+FTDNA_POSITION_ANCIENT_BED_FILE: str = "ftdna_positions_ancient_{ref}.bed"
 ISOGG_TREE_FILE: str = "isogg_tree.json"
 ISOGG_POSITION_FILE: str = "isogg_positions_{ref}.txt"
 ISOGG_POSITION_BED_FILE: str = "isogg_positions_{ref}.bed"
@@ -52,6 +47,17 @@ HG38_FULL_GENOME: Path = __HG38_FOLDER / FULL_REF_FILE
 HG38_Y_CHROMOSOME: Path = __HG38_FOLDER / Y_REF_FILE
 T2T_FULL_GENOME: Path = __T2T_FOLDER / FULL_REF_FILE
 T2T_Y_CHROMOSOME: Path = __T2T_FOLDER / Y_REF_FILE
+
+# When running as the Yleaf 4.0 Tauri sidecar, YLEAF_DATA_DIR is set to the
+# app's persistent data directory so downloaded full references survive restarts.
+_env_data_dir = os.environ.get("YLEAF_DATA_DIR")
+if _env_data_dir:
+    _persistent = Path(_env_data_dir)
+    for _build in [HG19, HG38, T2T]:
+        (_persistent / _build).mkdir(parents=True, exist_ok=True)
+    HG19_FULL_GENOME = _persistent / HG19 / FULL_REF_FILE
+    HG38_FULL_GENOME = _persistent / HG38 / FULL_REF_FILE
+    T2T_FULL_GENOME = _persistent / T2T / FULL_REF_FILE
 
 
 def get_path(

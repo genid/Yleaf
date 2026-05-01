@@ -113,14 +113,16 @@ def run_vcf(
     pileupfile['alt_reads'] = pileupfile['reads'].apply(lambda x: x[1:])
 
     pileupfile['alt_reads_dict'] = pileupfile.apply(lambda row: dict(zip(row['altbase'], row['alt_reads'])), axis=1)
-    pileupfile['alt_reads_dict'] = pileupfile['alt_reads_dict'].apply(lambda x: {k: int(v) for k, v in x.items()})
+    pileupfile['alt_reads_dict'] = pileupfile['alt_reads_dict'].apply(
+        lambda x: {k: int(v) if v != '.' else 0 for k, v in x.items()})
     pileupfile['highest_alt_reads'] = pileupfile['alt_reads_dict'].apply(lambda x: max(x.values()) if len(x) > 0 else 0)
     pileupfile['highest_alt_reads_base'] = pileupfile['alt_reads_dict'].apply(
         lambda x: max(x, key=x.get) if len(x) > 0 else 'NA')
-    pileupfile['total_reads'] = pileupfile.apply(lambda row: int(row['ref_reads']) + row['highest_alt_reads'], axis=1)
+    pileupfile['total_reads'] = pileupfile.apply(
+        lambda row: (int(row['ref_reads']) if row['ref_reads'] != '.' else 0) + row['highest_alt_reads'], axis=1)
     pileupfile['called_ref_perc'] = pileupfile.apply(
-        lambda row: round((int(row['ref_reads']) / row['total_reads']) * 100, 1) if row['total_reads'] > 0 else 0,
-        axis=1)
+        lambda row: round(((int(row['ref_reads']) if row['ref_reads'] != '.' else 0) / row['total_reads']) * 100, 1)
+        if row['total_reads'] > 0 else 0, axis=1)
     pileupfile['called_alt_perc'] = pileupfile.apply(
         lambda row: round((row['highest_alt_reads'] / row['total_reads']) * 100, 1) if row['total_reads'] > 0 else 0,
         axis=1)
@@ -132,8 +134,9 @@ def run_vcf(
         lambda row: row['called_ref_perc'] if row['called_ref_perc'] >= row['called_alt_perc'] else row[
             'called_alt_perc'], axis=1).astype(float)
     pileupfile['called_reads'] = pileupfile.apply(
-        lambda row: row['ref_reads'] if row['called_ref_perc'] >= row['called_alt_perc'] else row['highest_alt_reads'],
-        axis=1).astype(int)
+        lambda row: (int(row['ref_reads']) if row['ref_reads'] != '.' else 0)
+        if row['called_ref_perc'] >= row['called_alt_perc'] else row['highest_alt_reads'],
+        axis=1)
 
     # Save full marker list before intersection — needed to infer states for positions
     # absent from the VCF (where the sample matches the reference genome).
@@ -237,9 +240,35 @@ def run_vcf(
         except Exception as e:
             LOG.warning(f"Could not infer states from reference genome for VCF input: {e}")
     else:
-        LOG.warning(
-            "chrY reference FASTA not available — VCF prediction will use only variant positions. "
-            "Run Yleaf once with -bam to download the reference, or use -bam/-cram input.")
+        try:
+            from yleaf.download_reference import download_chry_fasta
+            chry_ref_path = download_chry_fasta(args.reference_genome)
+            with open(chry_ref_path) as _ref_f:
+                chry_seq = ''.join(line.strip().upper() for line in _ref_f if not line.startswith('>'))
+            covered_pos_set = set(intersect_pos)
+            missing_markers = full_markerfile[~full_markerfile['pos'].isin(covered_pos_set)].copy()
+            if len(missing_markers) > 0:
+                missing_markers['ref_allele'] = missing_markers['pos'].apply(
+                    lambda p: chry_seq[p - 1] if 0 < p <= len(chry_seq) else 'N')
+                missing_markers = missing_markers[missing_markers.apply(
+                    lambda row: row['ref_allele'] in ACCEPTED_REF_BASES
+                                and row['ref_allele'] in (row['anc'], row['der']), axis=1)].copy()
+                missing_markers['reads'] = 0
+                missing_markers['called_perc'] = 100.0
+                missing_markers['state'] = missing_markers.apply(
+                    lambda row: 'D' if row['ref_allele'] == row['der'] else 'A', axis=1)
+                missing_markers['called_base'] = missing_markers['ref_allele']
+                ref_inferred_df = missing_markers[[
+                    'chr', 'pos', 'marker_name', 'haplogroup', 'mutation', 'anc', 'der',
+                    'reads', 'called_perc', 'called_base', 'state']]
+                df_out = pd.concat([df_out, ref_inferred_df], axis=0, sort=False)
+                ref_inferred_count = len(ref_inferred_df)
+                LOG.debug(
+                    f"Reference inference: added {ref_inferred_count} markers "
+                    f"({(missing_markers['state'] == 'A').sum()} A, "
+                    f"{(missing_markers['state'] == 'D').sum()} D)")
+        except Exception as e:
+            LOG.warning(f"Could not download or use chrY reference FASTA: {e}")
 
     general_info_list.append("Markers with zero reads: " + str(len(df_belowzero)))
     general_info_list.append(
@@ -253,19 +282,8 @@ def run_vcf(
 
     write_info_file(sample_vcf_folder, general_info_list, suffix=f"{out_suffix}.info" if out_suffix else ".info")
 
-    use_old = args.use_old
     outputfile = sample_vcf_folder / (sample_vcf_file.name.replace(".vcf.gz", f"{out_suffix}.out"))
     fmf_output = sample_vcf_folder / (sample_vcf_file.name.replace(".vcf.gz", f"{out_suffix}.fmf"))
-
-    if use_old:
-        df_out = df_out.sort_values(by=['haplogroup'], ascending=True)
-        df_out = df_out[
-            ["chr", "pos", "marker_name", "haplogroup", "mutation", "anc", "der", "reads", "called_perc",
-             "called_base",
-             "state"]]
-        df_fmf.to_csv(fmf_output, sep="\t", index=False)
-        df_out.to_csv(outputfile, sep="\t", index=False)
-        return
 
     df_out = df_out[
         ["chr", "pos", "marker_name", "haplogroup", "mutation", "anc", "der", "reads", "called_perc", "called_base",
@@ -450,14 +468,7 @@ def _write_plink_sample_out(
     header_cols = ["chr", "pos", "marker_name", "haplogroup", "mutation",
                    "anc", "der", "reads", "called_perc", "called_base", "state"]
 
-    if args.use_old:
-        with open(out_path, 'w') as f:
-            f.write('\t'.join(header_cols) + '\n')
-            for hg in sorted(rows_by_hg):
-                for r in rows_by_hg[hg]:
-                    f.write('\t'.join(map(str, r)) + '\n')
-    else:
-        with open(out_path, 'w') as f:
+    with open(out_path, 'w') as f:
             f.write('\t'.join(header_cols + ["depth"]) + '\n')
             for node_key in tree.node_mapping:
                 if node_key not in rows_by_hg:
@@ -502,7 +513,7 @@ def main_plink(args: argparse.Namespace, base_out_folder: Path):
     if not y_genos:
         return
     markerfile = pd.read_csv(
-        get_position_file(args.reference_genome, args.use_old, args.ancient_DNA, args.tree),
+        get_position_file(args.reference_genome, args.ancient_DNA, args.tree),
         header=None, sep="\t",
         names=["chr", "marker_name", "haplogroup", "pos", "mutation", "anc", "der"],
         dtype={"chr": str, "marker_name": str, "haplogroup": str,
@@ -529,7 +540,7 @@ def main_plink_multi_tree(args: argparse.Namespace, base_out_folder: Path, trees
     for tree in trees:
         LOG.info(f"Extracting markers for tree: {tree}")
         markerfile = pd.read_csv(
-            get_position_file(args.reference_genome, args.use_old, args.ancient_DNA, tree),
+            get_position_file(args.reference_genome, args.ancient_DNA, tree),
             header=None, sep="\t",
             names=["chr", "marker_name", "haplogroup", "pos", "mutation", "anc", "der"],
             dtype={"chr": str, "marker_name": str, "haplogroup": str,
@@ -543,7 +554,7 @@ def main_plink_multi_tree(args: argparse.Namespace, base_out_folder: Path, trees
     combined_out = base_out_folder / "hg_prediction_combined.hg"
     write_combined_prediction_table(
         base_out_folder, trees, combined_out,
-        args.use_old, args.prediction_quality, args.threads,
+        args.prediction_quality, args.threads,
         draw_hg=args.draw_haplogroups,
         collapsed_draw_mode=args.collapsed_draw_mode,
     )
@@ -564,12 +575,17 @@ def main_vcf_split(
         LOG.error(f"Failed to sort the vcf file {vcf_file.name}. Skipping...")
         return None
 
-    # next index the vcf file
-    cmd = f"bcftools index -f {sorted_vcf_file}"
-    call_command(cmd)
+    # bcftools sort exits 0 without creating output when the VCF is already sorted
+    already_sorted = not sorted_vcf_file.exists()
+    if already_sorted:
+        active_vcf = vcf_file
+    else:
+        active_vcf = sorted_vcf_file
+        cmd = f"bcftools index -f {sorted_vcf_file}"
+        call_command(cmd)
 
-    # get chromosome annotation using bcftools query -f '%CHROM\n' sorted.vcf.gz | uniq
-    cmd = f"bcftools query -f '%CHROM\n' {sorted_vcf_file} | uniq"
+    # get chromosome annotation from whichever file we are using
+    cmd = f"bcftools query -f '%CHROM\n' {active_vcf} | uniq"
     process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
     stdout, stderr = process.communicate()
     if process.returncode != 0:
@@ -593,20 +609,21 @@ def main_vcf_split(
                     f2.write(line)
 
     # filter the vcf file using the reference bed file
-    filtered_vcf_file = base_out_folder / "filtered_vcf_files" / (
-        sorted_vcf_file.name.replace(".sorted.vcf.gz", ".filtered.vcf.gz"))
-    cmd = f"bcftools view -O z -R {new_position_bed_file} {sorted_vcf_file} > {filtered_vcf_file}"
+    stem = vcf_file.name.replace(".vcf.gz", "")
+    filtered_vcf_file = base_out_folder / "filtered_vcf_files" / f"{stem}.filtered.vcf.gz"
+    cmd = f"bcftools view -O z -R {new_position_bed_file} {active_vcf} > {filtered_vcf_file}"
     call_command(cmd)
 
     # remover temp_position_bed.bed
     cmd = f"rm {new_position_bed_file}"
     call_command(cmd)
 
-    # remove sorted.vcf.gz and sorted.vcf.gz.csi
-    cmd = f"rm {sorted_vcf_file}"
-    call_command(cmd)
-    cmd = f"rm {sorted_vcf_file}.csi"
-    call_command(cmd)
+    # remove sorted.vcf.gz and sorted.vcf.gz.csi (only if we created them)
+    if not already_sorted:
+        cmd = f"rm {sorted_vcf_file}"
+        call_command(cmd)
+        cmd = f"rm {sorted_vcf_file}.csi"
+        call_command(cmd)
 
     # check number of samples in the vcf file
     cmd = f"bcftools query -l {filtered_vcf_file} | wc -l"
@@ -634,12 +651,12 @@ def main_vcf_split(
 
 
 def _write_merged_vcf_bed(merged_bed: Path, trees: List[str], reference_genome: str,
-                          use_old: bool, ancient_dna: bool) -> None:
+                          ancient_dna: bool) -> None:
     """Merge BED files from multiple trees into a union BED for VCF filtering."""
     import pandas as pd
     dfs = []
     for tree in trees:
-        bed_file = get_position_bed_file(reference_genome, use_old, ancient_dna, tree)
+        bed_file = get_position_bed_file(reference_genome, ancient_dna, tree)
         df = pd.read_csv(bed_file, sep='\t', header=None, names=['chr', 'start', 'end', 'name'])
         dfs.append(df)
     merged = pd.concat(dfs).drop_duplicates(subset='start').sort_values('start').reset_index(drop=True)
@@ -654,7 +671,7 @@ def main_vcf_multi_tree(
 ):
     """Multi-tree VCF: filter once with union positions, extract per-tree, write combined output."""
     merged_bed = base_out_folder / "temp_vcf_union.bed"
-    _write_merged_vcf_bed(merged_bed, trees, args.reference_genome, args.use_old, args.ancient_DNA)
+    _write_merged_vcf_bed(merged_bed, trees, args.reference_genome, args.ancient_DNA)
 
     safe_create_dir(base_out_folder / "filtered_vcf_files", args.force)
     files = get_files_with_extension(args.vcffile, '.vcf.gz')
@@ -663,14 +680,14 @@ def main_vcf_multi_tree(
         with multiprocessing.Pool(processes=args.threads) as p:
             sample_vcf_files_nested = p.map(
                 partial(main_vcf_split, merged_bed, base_out_folder, args), files)
-        merged_bed.unlink(missing_ok=True)
+        merged_bed.unlink()
         sample_vcf_files = [x for sublist in sample_vcf_files_nested if sublist for x in sublist]
     else:
-        merged_bed.unlink(missing_ok=True)
+        merged_bed.unlink()
         sample_vcf_files = files
 
     for tree in trees:
-        path_markerfile = get_position_file(args.reference_genome, args.use_old, args.ancient_DNA, tree)
+        path_markerfile = get_position_file(args.reference_genome, args.ancient_DNA, tree)
         with multiprocessing.Pool(processes=args.threads) as p:
             p.map(partial(run_vcf, path_markerfile, base_out_folder, args,
                           out_suffix=f'.{tree}', tree_name=tree),
@@ -678,7 +695,7 @@ def main_vcf_multi_tree(
 
     combined_out = base_out_folder / "hg_prediction_combined.hg"
     write_combined_prediction_table(base_out_folder, trees, combined_out,
-                                    args.use_old, args.prediction_quality, args.threads,
+                                    args.prediction_quality, args.threads,
                                     draw_hg=args.draw_haplogroups,
                                     collapsed_draw_mode=args.collapsed_draw_mode)
 
@@ -687,8 +704,8 @@ def main_vcf(
         args: argparse.Namespace,
         base_out_folder: Path
 ):
-    position_bed_file = get_position_bed_file(args.reference_genome, args.use_old, args.ancient_DNA, args.tree)
-    path_markerfile = get_position_file(args.reference_genome, args.use_old, args.ancient_DNA, args.tree)
+    position_bed_file = get_position_bed_file(args.reference_genome, args.ancient_DNA, args.tree)
+    path_markerfile = get_position_file(args.reference_genome, args.ancient_DNA, args.tree)
 
     safe_create_dir(base_out_folder / "filtered_vcf_files", args.force)
 
@@ -728,13 +745,6 @@ def main():
     multi_tree = isinstance(args.tree, list)  # True when multiple trees were specified
     trees = args.tree if multi_tree else [args.tree]
 
-    # validate tree/reference combinations
-    for tree in trees:
-        if tree == yleaf_constants.TREE_FTDNA:
-            if args.use_old:
-                LOG.error("--use_old is not compatible with --tree ftdna.")
-                raise ValueError("--use_old is not compatible with --tree ftdna.")
-
     # make sure the reference genome is present before doing something else, if not present it is downloaded
     check_reference(args.reference_genome)
 
@@ -765,7 +775,7 @@ def main():
         LOG.error("Please specify either a bam, cram, fastq, vcf, or plink file")
         raise ValueError("Please specify either a bam, cram, fastq, vcf, or plink file")
     hg_out = out_folder / PREDICTION_OUT_FILE_NAME
-    predict_haplogroup(out_folder, hg_out, args.use_old, args.prediction_quality, args.threads, args.tree)
+    predict_haplogroup(out_folder, hg_out, args.prediction_quality, args.threads, args.tree)
     _write_path_file(out_folder, args.tree, hg_out, ".out")
     if args.draw_haplogroups:
         draw_haplogroups(hg_out, args.collapsed_draw_mode)
@@ -842,12 +852,11 @@ def get_arguments() -> argparse.Namespace:
                         help="The minimum quality of the prediction (QC-scores) for it to be accepted. [0-1] (default=0.95)")
 
     _tree_choices = [yleaf_constants.TREE_YFULL, yleaf_constants.TREE_YFULL_V10,
-                     yleaf_constants.TREE_FTDNA, yleaf_constants.TREE_OPENYTREE,
-                     yleaf_constants.TREE_ISOGG]
+                     yleaf_constants.TREE_FTDNA, yleaf_constants.TREE_ISOGG]
     parser.add_argument("-tree", "--tree",
                         help="One or more haplogroup trees to use for prediction. Accepted values: "
                              "yfull (YFull v14.01), yfull_v10 (YFull v10.01 legacy), "
-                             "ftdna (FamilyTreeDNA, all references), openY (Open Y combined tree), "
+                             "ftdna (FamilyTreeDNA, all references), "
                              "isogg (ISOGG legacy). When multiple trees are given a single combined "
                              "pileup is built and prediction is run per tree. (default=yfull)",
                         nargs='+',
@@ -855,11 +864,6 @@ def get_arguments() -> argparse.Namespace:
                         default=[yleaf_constants.TREE_YFULL])
 
     # arguments for prediction
-    parser.add_argument("-old", "--use_old", dest="use_old",
-                        help="Add this value if you want to use the old prediction method of Yleaf (version 2.3). This"
-                             " version only uses the ISOGG tree and slightly different prediction criteria.",
-                        action="store_true")
-
     # arguments for drawing haplo group trees
     parser.add_argument("-dh", "--draw_haplogroups", help="Draw the predicted haplogroups in the haplogroup tree.",
                         action="store_true")
@@ -938,7 +942,7 @@ def safe_create_dir(
                 sys.exit(0)
             else:
                 print("Please type y/Y or n/N")
-        shutil.rmtree(folder)
+        subprocess.run(['rm', '-rf', str(folder)], check=True)
         os.mkdir(folder)
     else:
         try:
@@ -1015,7 +1019,8 @@ def _download_cram_reference(url: str, dest: Path) -> None:
         urllib.request.urlretrieve(url, tmp)
         tmp.rename(dest)
     except Exception as e:
-        tmp.unlink(missing_ok=True)
+        if tmp.exists():
+            tmp.unlink()
         raise RuntimeError(f"Failed to download CRAM reference from {url}: {e}")
     LOG.info("Indexing downloaded reference with samtools faidx...")
     call_command(f"samtools faidx {dest}")
@@ -1175,7 +1180,7 @@ def main_bam_cram_multi_tree(
     # Write combined prediction table (and optionally draw per-tree haplogroup images)
     combined_out = base_out_folder / "hg_prediction_combined.hg"
     write_combined_prediction_table(base_out_folder, trees, combined_out,
-                                    args.use_old, args.prediction_quality, args.threads,
+                                    args.prediction_quality, args.threads,
                                     draw_hg=args.draw_haplogroups,
                                     collapsed_draw_mode=args.collapsed_draw_mode)
 
@@ -1225,20 +1230,34 @@ def _run_bam_cram_multi_tree_inner(
         LOG.info(f"Reusing existing pileup file: {pileupfile}")
     else:
         merged_bed = output_dir / "temp_position_bed_combined.bed"
-        _write_merged_bed(merged_bed, trees, args.reference_genome, args.use_old, args.ancient_DNA, header)
+        _write_merged_bed(merged_bed, trees, args.reference_genome, args.ancient_DNA, header)
         reference = args.cram_reference if not is_bam else None
-        execute_mpileup(merged_bed, input_file, pileupfile, args.quality_thresh, reference)
+        tmp_chry_bam = None
+        if not is_bam:
+            tmp_chry_bam = Path(f"/tmp/yleaf_chry_{output_dir.name}.bam")
+            LOG.info(f"Extracting chrY from CRAM to local BAM for faster pileup...")
+            call_command(f"samtools view -b -@ {args.threads} -T {reference} -o {tmp_chry_bam} {input_file} {header}")
+            call_command(f"samtools index -@ {args.threads} {tmp_chry_bam}")
+            mpileup_input, mpileup_ref = tmp_chry_bam, None
+        else:
+            mpileup_input, mpileup_ref = input_file, None
+        execute_mpileup(merged_bed, mpileup_input, pileupfile, args.quality_thresh, mpileup_ref)
         os.remove(merged_bed)
+        if tmp_chry_bam is not None and tmp_chry_bam.exists():
+            tmp_chry_bam.unlink()
+            tmp_idx = Path(str(tmp_chry_bam) + ".bai")
+            if tmp_idx.exists():
+                tmp_idx.unlink()
 
     # Extract haplogroups per tree, writing a per-tree .info file for each
     for tree in trees:
-        position_file = get_position_file(args.reference_genome, args.use_old, args.ancient_DNA, tree)
+        position_file = get_position_file(args.reference_genome, args.ancient_DNA, tree)
         out_suffix = f".{tree}"
         fmf_output = output_dir / (output_dir.name + out_suffix + ".fmf")
         outputfile = output_dir / (output_dir.name + out_suffix + ".out")
         tree_info_list = list(general_info_list)  # fresh copy per tree
         extract_haplogroups(position_file, args.reads_treshold, args.base_majority,
-                            pileupfile, fmf_output, outputfile, is_bam, args.use_old,
+                            pileupfile, fmf_output, outputfile, is_bam,
                             tree_info_list, tree)
         write_info_file(output_dir, tree_info_list, suffix=f".{tree}.info")
 
@@ -1251,7 +1270,6 @@ def _write_merged_bed(
         merged_bed: Path,
         trees: List[str],
         reference_genome: str,
-        use_old: bool,
         ancient_dna: bool,
         header: str
 ):
@@ -1259,7 +1277,7 @@ def _write_merged_bed(
     import pandas as pd
     dfs = []
     for tree in trees:
-        pos_file = get_position_file(reference_genome, use_old, ancient_dna, tree)
+        pos_file = get_position_file(reference_genome, ancient_dna, tree)
         df = pd.read_csv(pos_file, sep='\t', header=None, usecols=[0, 3])
         df.columns = ['chr', 'pos']
         df['chr'] = header
@@ -1272,7 +1290,6 @@ def write_combined_prediction_table(
         base_out_folder: Path,
         trees: List[str],
         combined_out: Path,
-        use_old: bool,
         prediction_quality: float,
         threads: int,
         draw_hg: bool = False,
@@ -1283,7 +1300,7 @@ def write_combined_prediction_table(
     tree_results = {}  # tree -> {sample_name -> (hg, hg_marker, valid_markers, qc)}
     for tree in trees:
         tree_hg_out = base_out_folder / f"hg_prediction_{tree}.hg"
-        _predict_for_tree(base_out_folder, tree, tree_hg_out, use_old, prediction_quality, threads)
+        _predict_for_tree(base_out_folder, tree, tree_hg_out, prediction_quality, threads)
         tree_results[tree] = _read_hg_file(tree_hg_out)
         if draw_hg:
             draw_haplogroups(
@@ -1316,7 +1333,6 @@ def _predict_for_tree(
         base_out_folder: Path,
         tree: str,
         hg_out: Path,
-        use_old: bool,
         prediction_quality: float,
         threads: int
 ):
@@ -1544,7 +1560,23 @@ def samtools(
             call_command(cmd)
     header, mapped, unmapped = chromosome_table(path_file, output_folder, output_folder.name)
 
-    position_file = get_position_file(args.reference_genome, args.use_old, args.ancient_DNA, args.tree)
+    position_file = get_position_file(args.reference_genome, args.ancient_DNA, args.tree)
+
+    # For CRAM input: extract chrY to a local temp BAM so mpileup doesn't decode
+    # the entire genome against the reference on every read.
+    tmp_chry_bam = None
+    if not is_bam_pathfile:
+        tmp_chry_bam = Path(f"/tmp/yleaf_chry_{output_folder.name}.bam")
+        LOG.info(f"Extracting chrY from CRAM to local BAM for faster pileup...")
+        cmd = f"samtools view -b -@ {args.threads} -T {reference} -o {tmp_chry_bam} {path_file} {header}"
+        call_command(cmd)
+        cmd = f"samtools index -@ {args.threads} {tmp_chry_bam}"
+        call_command(cmd)
+        mpileup_input = tmp_chry_bam
+        mpileup_ref = None
+    else:
+        mpileup_input = path_file
+        mpileup_ref = reference
 
     reuse_pileup = getattr(args, 'reuse_pileup', False)
     if reuse_pileup and pileupfile.exists():
@@ -1553,12 +1585,18 @@ def samtools(
     else:
         bed = output_folder / "temp_position_bed.bed"
         write_bed_file(bed, position_file, header)
-        execute_mpileup(bed, path_file, pileupfile, args.quality_thresh, reference)
+        execute_mpileup(bed, mpileup_input, pileupfile, args.quality_thresh, mpileup_ref)
+
+    if tmp_chry_bam is not None and tmp_chry_bam.exists():
+        tmp_chry_bam.unlink()
+        tmp_idx = Path(str(tmp_chry_bam) + ".bai")
+        if tmp_idx.exists():
+            tmp_idx.unlink()
 
     general_info_list = ["Total of mapped reads: " + str(mapped), "Total of unmapped reads: " + str(unmapped)]
 
     extract_haplogroups(position_file, args.reads_treshold, args.base_majority,
-                        pileupfile, fmf_output, outputfile, is_bam_pathfile, args.use_old, general_info_list,
+                        pileupfile, fmf_output, outputfile, is_bam_pathfile, general_info_list,
                         args.tree)
 
     # TODO (production): delete pileup when no longer needed: os.remove(pileupfile)
@@ -1607,8 +1645,6 @@ def chromosome_table(
 def get_tree_path(tree: str) -> Path:
     if tree == yleaf_constants.TREE_FTDNA:
         return yleaf_constants.HG_PREDICTION_FOLDER / yleaf_constants.FTDNA_TREE_FILE
-    if tree == yleaf_constants.TREE_OPENYTREE:
-        return yleaf_constants.HG_PREDICTION_FOLDER / yleaf_constants.OPENYTREE_TREE_FILE
     if tree == yleaf_constants.TREE_ISOGG:
         return yleaf_constants.HG_PREDICTION_FOLDER / yleaf_constants.ISOGG_TREE_FILE
     if tree == yleaf_constants.TREE_YFULL_V10:
@@ -1618,76 +1654,42 @@ def get_tree_path(tree: str) -> Path:
 
 def get_position_file(
         reference_name: str,
-        use_old: bool,
         ancient_DNA: bool,
         tree: str = yleaf_constants.TREE_YFULL,
 ) -> Path:
     if tree == yleaf_constants.TREE_FTDNA:
-        if ancient_DNA:
-            fname = yleaf_constants.FTDNA_POSITION_ANCIENT_FILE.format(ref=reference_name)
-        else:
-            fname = yleaf_constants.FTDNA_POSITION_FILE.format(ref=reference_name)
-        return yleaf_constants.DATA_FOLDER / reference_name / fname
-    if tree == yleaf_constants.TREE_OPENYTREE:
-        ref_tag = {"hg38": "hg38", "hg19": "hg19", "t2t": "t2t"}.get(reference_name, reference_name)
-        fname = yleaf_constants.OPENYTREE_POSITION_FILE.format(ref=ref_tag)
+        fname = yleaf_constants.FTDNA_POSITION_ANCIENT_FILE.format(ref=reference_name) if ancient_DNA \
+            else yleaf_constants.FTDNA_POSITION_FILE.format(ref=reference_name)
         return yleaf_constants.DATA_FOLDER / reference_name / fname
     if tree == yleaf_constants.TREE_ISOGG:
-        ref_tag = {"hg38": "hg38", "hg19": "hg19", "t2t": "t2t"}.get(reference_name, reference_name)
-        fname = yleaf_constants.ISOGG_POSITION_FILE.format(ref=ref_tag)
+        fname = yleaf_constants.ISOGG_POSITION_FILE.format(ref=reference_name)
         return yleaf_constants.DATA_FOLDER / reference_name / fname
     if tree == yleaf_constants.TREE_YFULL_V10:
-        ref_tag = {"hg38": "hg38", "hg19": "hg19", "t2t": "t2t"}.get(reference_name, reference_name)
-        fname = yleaf_constants.YFULL_V10_POSITION_FILE.format(ref=ref_tag)
+        fname = yleaf_constants.YFULL_V10_POSITION_FILE.format(ref=reference_name)
         return yleaf_constants.DATA_FOLDER / reference_name / fname
-    if use_old:
-        if ancient_DNA:
-            position_file = yleaf_constants.DATA_FOLDER / reference_name / yleaf_constants.OLD_POSITION_ANCIENT_FILE
-        else:
-            position_file = yleaf_constants.DATA_FOLDER / reference_name / yleaf_constants.OLD_POSITION_FILE
-    else:
-        if ancient_DNA:
-            position_file = yleaf_constants.DATA_FOLDER / reference_name / yleaf_constants.NEW_POSITION_ANCIENT_FILE
-        else:
-            position_file = yleaf_constants.DATA_FOLDER / reference_name / yleaf_constants.NEW_POSITION_FILE
-    return position_file
+    # yfull (default)
+    fname = yleaf_constants.NEW_POSITION_ANCIENT_FILE if ancient_DNA else yleaf_constants.NEW_POSITION_FILE
+    return yleaf_constants.DATA_FOLDER / reference_name / fname
 
 
 def get_position_bed_file(
         reference_name: str,
-        use_old: bool,
         ancient_DNA: bool,
         tree: str = yleaf_constants.TREE_YFULL,
 ) -> Path:
     if tree == yleaf_constants.TREE_FTDNA:
-        if ancient_DNA:
-            fname = yleaf_constants.FTDNA_POSITION_ANCIENT_BED_FILE.format(ref=reference_name)
-        else:
-            fname = yleaf_constants.FTDNA_POSITION_BED_FILE.format(ref=reference_name)
-        return yleaf_constants.DATA_FOLDER / reference_name / fname
-    if tree == yleaf_constants.TREE_OPENYTREE:
-        ref_tag = {"hg38": "hg38", "hg19": "hg19", "t2t": "t2t"}.get(reference_name, reference_name)
-        fname = yleaf_constants.OPENYTREE_POSITION_BED_FILE.format(ref=ref_tag)
+        fname = yleaf_constants.FTDNA_POSITION_ANCIENT_BED_FILE.format(ref=reference_name) if ancient_DNA \
+            else yleaf_constants.FTDNA_POSITION_BED_FILE.format(ref=reference_name)
         return yleaf_constants.DATA_FOLDER / reference_name / fname
     if tree == yleaf_constants.TREE_ISOGG:
-        ref_tag = {"hg38": "hg38", "hg19": "hg19", "t2t": "t2t"}.get(reference_name, reference_name)
-        fname = yleaf_constants.ISOGG_POSITION_BED_FILE.format(ref=ref_tag)
+        fname = yleaf_constants.ISOGG_POSITION_BED_FILE.format(ref=reference_name)
         return yleaf_constants.DATA_FOLDER / reference_name / fname
     if tree == yleaf_constants.TREE_YFULL_V10:
-        ref_tag = {"hg38": "hg38", "hg19": "hg19", "t2t": "t2t"}.get(reference_name, reference_name)
-        fname = yleaf_constants.YFULL_V10_POSITION_BED_FILE.format(ref=ref_tag)
+        fname = yleaf_constants.YFULL_V10_POSITION_BED_FILE.format(ref=reference_name)
         return yleaf_constants.DATA_FOLDER / reference_name / fname
-    if use_old:
-        if ancient_DNA:
-            position_file = yleaf_constants.DATA_FOLDER / reference_name / yleaf_constants.OLD_POSITION_ANCIENT_BED_FILE
-        else:
-            position_file = yleaf_constants.DATA_FOLDER / reference_name / yleaf_constants.OLD_POSITION_BED_FILE
-    else:
-        if ancient_DNA:
-            position_file = yleaf_constants.DATA_FOLDER / reference_name / yleaf_constants.NEW_POSITION_ANCIENT_BED_FILE
-        else:
-            position_file = yleaf_constants.DATA_FOLDER / reference_name / yleaf_constants.NEW_POSITION_BED_FILE
-    return position_file
+    # yfull (default)
+    fname = yleaf_constants.NEW_POSITION_ANCIENT_BED_FILE if ancient_DNA else yleaf_constants.NEW_POSITION_BED_FILE
+    return yleaf_constants.DATA_FOLDER / reference_name / fname
 
 
 def write_bed_file(
@@ -1726,7 +1728,6 @@ def extract_haplogroups(
         fmf_output: Path,
         outputfile: Path,
         is_bam_file: bool,
-        use_old: bool,
         general_info_list: List[str],
         tree: str = yleaf_constants.TREE_YFULL,
 ):
@@ -1834,15 +1835,6 @@ def extract_haplogroups(
     general_info_list.append("Markers with discordant genotype: " + str(len(df_discordantgenotype)))
     general_info_list.append("Markers without haplogroup information: " + str(len(df_fmf)))
     general_info_list.append("Markers with haplogroup information: " + str(len(df_out)))
-
-    if use_old:
-        df_out = df_out.sort_values(by=['haplogroup'], ascending=True)
-        df_out = df_out[
-            ["chr", "pos", "marker_name", "haplogroup", "mutation", "anc", "der", "reads", "called_perc", "called_base",
-             "state"]]
-        df_fmf.to_csv(fmf_output, sep="\t", index=False)
-        df_out.to_csv(outputfile, sep="\t", index=False)
-        return
 
     df_out = df_out[
         ["chr", "pos", "marker_name", "haplogroup", "mutation", "anc", "der", "reads", "called_perc", "called_base",
@@ -1963,7 +1955,7 @@ def find_private_mutations(
 
     LOG.debug("Loading reference files")
 
-    position_file = get_position_file(args.reference_genome, args.use_old, args.ancient_DNA, args.tree)
+    position_file = get_position_file(args.reference_genome, args.ancient_DNA, args.tree)
     filter_positions = load_filter_data(position_file)
     known_snps = load_snp_database_file(snp_database_file, args.minor_allele_frequency)
     ychrom_reference = load_reference_file(snp_reference_file)
@@ -2087,21 +2079,15 @@ def load_reference_file(
 def predict_haplogroup(
         path_file: Path,
         output: Path,
-        use_old: bool,
         prediction_quality: float,
         threads: int,
         tree: str = yleaf_constants.TREE_YFULL,
 ):
-    if use_old:
-        script = yleaf_constants.SRC_FOLDER / "old_predict_haplogroup.py"
-        cmd = "python {} -i {} -o {}".format(script, path_file, output)
-        call_command(cmd)
-    else:
-        from yleaf import predict_haplogroup
-        namespace = argparse.Namespace(input=path_file, outfile=output,
-                                       minimum_score=prediction_quality, threads=threads,
-                                       tree_file=get_tree_path(tree))
-        predict_haplogroup.main(namespace)
+    from yleaf import predict_haplogroup
+    namespace = argparse.Namespace(input=path_file, outfile=output,
+                                   minimum_score=prediction_quality, threads=threads,
+                                   tree_file=get_tree_path(tree))
+    predict_haplogroup.main(namespace)
 
 
 def draw_haplogroups(
