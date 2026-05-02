@@ -994,8 +994,8 @@ def safe_create_dir(
                 sys.exit(0)
             else:
                 print("Please type y/Y or n/N")
-        subprocess.run(['rm', '-rf', str(folder)], check=True)
-        os.mkdir(folder)
+        shutil.rmtree(folder, ignore_errors=True)
+        os.makedirs(folder, exist_ok=True)
     else:
         try:
             os.makedirs(folder, exist_ok=True)
