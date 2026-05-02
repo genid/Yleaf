@@ -967,6 +967,7 @@ def setup_logger(
     handler.setLevel(logging.INFO)
     LOG.addHandler(handler)
 
+    out_folder.mkdir(parents=True, exist_ok=True)
     file_handler = logging.FileHandler(filename=out_folder / "run.log")
     file_handler.setFormatter(formatter)
     file_handler.setLevel(logging.DEBUG)
