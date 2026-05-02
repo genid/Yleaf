@@ -25,7 +25,8 @@ from functools import partial
 from argparse import ArgumentParser
 from pathlib import Path
 from typing import Union, List, TextIO, Tuple, Dict, Set
-from collections import defaultdict
+from collections import defaultdict, Counter
+import re
 import time
 import datetime
 
@@ -40,6 +41,11 @@ CACHED_SNP_DATABASE: Union[Dict[str, List[Dict[str, str]]], None] = None
 CACHED_REFERENCE_FILE: Union[List[str], None] = None
 NUM_SET: Set[str] = {"0", "1", "2", "3", "4", "5", "6", "7", "8", "9"}
 ACCEPTED_REF_BASES: Set[str] = {"A", "C", "G", "T"}
+_INDEL_CHARS: frozenset = frozenset('+-^$')  # chars that require slow-path pileup parsing
+
+# Worker-process globals for VCF pool (loaded once per worker via _init_vcf_worker)
+_WORKER_MARKERFILE = None
+_WORKER_CHRY_SEQ = None
 
 # path constants
 PREDICTION_OUT_FILE_NAME: str = "hg_prediction.hg"
@@ -68,6 +74,59 @@ class MyFormatter(logging.Formatter):
         return super(MyFormatter, self).format(record)
 
 
+def _init_vcf_worker(markerfile_path: Path, reference_genome: str) -> None:
+    """Pool initializer: load markerfile and chrY FASTA once per worker process."""
+    global _WORKER_MARKERFILE, _WORKER_CHRY_SEQ
+    _WORKER_MARKERFILE = pd.read_csv(
+        markerfile_path, header=None, sep="\t",
+        names=["chr", "marker_name", "haplogroup", "pos", "mutation", "anc", "der"],
+        dtype={"chr": str, "marker_name": str, "haplogroup": str,
+               "pos": int, "mutation": str, "anc": str, "der": str},
+    ).drop_duplicates(subset='pos', keep='first')
+    try:
+        chry_ref_path = get_reference_path(reference_genome, False)
+        if not (chry_ref_path and chry_ref_path.exists() and os.path.getsize(chry_ref_path) > 0):
+            from yleaf.download_reference import download_chry_fasta
+            chry_ref_path = download_chry_fasta(reference_genome)
+        with open(chry_ref_path) as _f:
+            _WORKER_CHRY_SEQ = ''.join(line.strip().upper() for line in _f if not line.startswith('>'))
+    except Exception as e:
+        LOG.warning(f"VCF worker: could not load chrY FASTA for reference inference: {e}")
+        _WORKER_CHRY_SEQ = None
+
+
+def _infer_from_reference(
+        df_out: pd.DataFrame,
+        full_markerfile: pd.DataFrame,
+        intersect_pos,
+        chry_seq,
+) -> Tuple[pd.DataFrame, int]:
+    """Add inferred A/D states for VCF marker positions absent from the VCF."""
+    if chry_seq is None:
+        return df_out, 0
+    covered = set(intersect_pos)
+    missing = full_markerfile[~full_markerfile['pos'].isin(covered)].copy()
+    if missing.empty:
+        return df_out, 0
+    seq_len = len(chry_seq)
+    missing['ref_allele'] = missing['pos'].apply(
+        lambda p: chry_seq[p - 1] if 0 < p <= seq_len else 'N')
+    missing = missing[missing.apply(
+        lambda r: r['ref_allele'] in ACCEPTED_REF_BASES and r['ref_allele'] in (r['anc'], r['der']),
+        axis=1)].copy()
+    if missing.empty:
+        return df_out, 0
+    missing['state'] = missing.apply(lambda r: 'A' if r['ref_allele'] == r['anc'] else 'D', axis=1)
+    missing['reads'] = 0
+    missing['called_perc'] = 100.0
+    missing['called_base'] = missing['ref_allele']
+    inferred = missing[['chr', 'pos', 'marker_name', 'haplogroup', 'mutation', 'anc', 'der',
+                         'reads', 'called_perc', 'called_base', 'state']]
+    LOG.debug(f"Reference inference: added {len(inferred)} markers "
+              f"({(missing['state'] == 'A').sum()} A, {(missing['state'] == 'D').sum()} D)")
+    return pd.concat([df_out, inferred], axis=0, sort=False), len(inferred)
+
+
 def run_vcf(
         path_markerfile: Path,
         base_out_folder: Path,
@@ -77,66 +136,97 @@ def run_vcf(
         tree_name: str = None,
 ):
     LOG.debug("Starting with extracting haplogroups...")
-    markerfile = pd.read_csv(path_markerfile, header=None, sep="\t",
-                             names=["chr", "marker_name", "haplogroup", "pos", "mutation", "anc",
-                                    "der"],
-                             dtype={"chr": str,
-                                    "marker_name": str,
-                                    "haplogroup": str,
-                                    "pos": int,
-                                    "mutation": str,
-                                    "anc": str,
-                                    "der": str,
-                                    }).drop_duplicates(subset='pos', keep='first', inplace=False)
+    # Use pre-loaded global when running inside a Pool worker; fall back to disk read otherwise.
+    markerfile = _WORKER_MARKERFILE if _WORKER_MARKERFILE is not None else pd.read_csv(
+        path_markerfile, header=None, sep="\t",
+        names=["chr", "marker_name", "haplogroup", "pos", "mutation", "anc", "der"],
+        dtype={"chr": str, "marker_name": str, "haplogroup": str,
+               "pos": int, "mutation": str, "anc": str, "der": str},
+    ).drop_duplicates(subset='pos', keep='first', inplace=False)
 
     sample_vcf_folder = base_out_folder / (sample_vcf_file.name.replace(".vcf.gz", ""))
     safe_create_dir(sample_vcf_folder, args.force if not out_suffix else False, reuse_pileup=bool(out_suffix))
 
+    # Detect whether the VCF carries FORMAT/AD (read-based callers: GATK, DeepVariant)
+    # or is GT-only (e.g. 1000G Phase 3 array/imputed genotypes).
+    _hdr = subprocess.run(
+        f"bcftools view -h {sample_vcf_file}",
+        shell=True, capture_output=True, text=True)
+    has_ad = 'ID=AD' in _hdr.stdout
+
     sample_vcf_file_txt = sample_vcf_folder / (sample_vcf_file.name.replace(".vcf.gz", ".txt"))
-    cmd = f"bcftools query -f '%CHROM\t%POS\t%REF\t%ALT[\t%AD]\n' {sample_vcf_file} > {sample_vcf_file_txt}"
-    call_command(cmd)
 
-    pileupfile = pd.read_csv(sample_vcf_file_txt,
-                             dtype=str, header=None, sep="\t")
+    if has_ad:
+        cmd = f"bcftools query -f '%CHROM\t%POS\t%REF\t%ALT[\t%AD]\n' {sample_vcf_file} > {sample_vcf_file_txt}"
+        call_command(cmd)
+        pileupfile = pd.read_csv(sample_vcf_file_txt, dtype=str, header=None, sep="\t")
+        cmd = f"rm {sample_vcf_file_txt}"
+        call_command(cmd)
 
-    # remove sample_vcf_file_txt
-    cmd = f"rm {sample_vcf_file_txt}"
-    call_command(cmd)
+        pileupfile.columns = ['chr', 'pos', 'refbase', 'altbase', 'reads']
+        pileupfile['pos'] = pileupfile['pos'].astype(int)
+        pileupfile['altbase'] = pileupfile['altbase'].str.split(',')
+        pileupfile['reads'] = pileupfile['reads'].str.split(',')
+        pileupfile['ref_reads'] = pileupfile['reads'].apply(lambda x: x[0])
+        pileupfile['alt_reads'] = pileupfile['reads'].apply(lambda x: x[1:])
+        pileupfile['alt_reads_dict'] = pileupfile.apply(
+            lambda row: dict(zip(row['altbase'], row['alt_reads'])), axis=1)
+        pileupfile['alt_reads_dict'] = pileupfile['alt_reads_dict'].apply(
+            lambda x: {k: int(v) if v != '.' else 0 for k, v in x.items()})
+        pileupfile['highest_alt_reads'] = pileupfile['alt_reads_dict'].apply(
+            lambda x: max(x.values()) if len(x) > 0 else 0)
+        pileupfile['highest_alt_reads_base'] = pileupfile['alt_reads_dict'].apply(
+            lambda x: max(x, key=x.get) if len(x) > 0 else 'NA')
+        pileupfile['total_reads'] = pileupfile.apply(
+            lambda row: (int(row['ref_reads']) if row['ref_reads'] != '.' else 0) + row['highest_alt_reads'], axis=1)
+        pileupfile['called_ref_perc'] = pileupfile.apply(
+            lambda row: round(((int(row['ref_reads']) if row['ref_reads'] != '.' else 0) / row['total_reads']) * 100, 1)
+            if row['total_reads'] > 0 else 0, axis=1)
+        pileupfile['called_alt_perc'] = pileupfile.apply(
+            lambda row: round((row['highest_alt_reads'] / row['total_reads']) * 100, 1)
+            if row['total_reads'] > 0 else 0, axis=1)
+        pileupfile['called_base'] = pileupfile.apply(
+            lambda row: row['refbase'] if row['called_ref_perc'] >= row['called_alt_perc']
+            else row['highest_alt_reads_base'], axis=1)
+        pileupfile['called_perc'] = pileupfile.apply(
+            lambda row: row['called_ref_perc'] if row['called_ref_perc'] >= row['called_alt_perc']
+            else row['called_alt_perc'], axis=1).astype(float)
+        pileupfile['called_reads'] = pileupfile.apply(
+            lambda row: (int(row['ref_reads']) if row['ref_reads'] != '.' else 0)
+            if row['called_ref_perc'] >= row['called_alt_perc'] else row['highest_alt_reads'], axis=1)
+        effective_reads_thresh = int(args.reads_treshold)
 
-    pileupfile.columns = ['chr', 'pos', 'refbase', 'altbase', 'reads']
-    pileupfile['pos'] = pileupfile['pos'].astype(int)
+    else:
+        # GT-only VCF: derive called_base from genotype allele index; no read depth available.
+        LOG.info(f"GT-only VCF (no FORMAT/AD): using genotype calls for {sample_vcf_file.name}")
+        cmd = f"bcftools query -f '%CHROM\t%POS\t%REF\t%ALT[\t%GT]\n' {sample_vcf_file} > {sample_vcf_file_txt}"
+        call_command(cmd)
+        pileupfile = pd.read_csv(sample_vcf_file_txt, dtype=str, header=None, sep="\t")
+        cmd = f"rm {sample_vcf_file_txt}"
+        call_command(cmd)
 
-    pileupfile['altbase'] = pileupfile['altbase'].str.split(',')
-    pileupfile['reads'] = pileupfile['reads'].str.split(',')
+        pileupfile.columns = ['chr', 'pos', 'refbase', 'altbase', 'gt']
+        pileupfile['pos'] = pileupfile['pos'].astype(int)
+        pileupfile['altbase'] = pileupfile['altbase'].str.split(',')
 
-    pileupfile['ref_reads'] = pileupfile['reads'].apply(lambda x: x[0])
-    pileupfile['alt_reads'] = pileupfile['reads'].apply(lambda x: x[1:])
+        def _gt_to_base(row):
+            allele = str(row['gt']).replace('|', '/').split('/')[0]
+            if allele in ('.', ''):
+                return None
+            try:
+                idx = int(allele)
+            except ValueError:
+                return None
+            if idx == 0:
+                return row['refbase']
+            alts = row['altbase']
+            return alts[idx - 1] if idx - 1 < len(alts) else None
 
-    pileupfile['alt_reads_dict'] = pileupfile.apply(lambda row: dict(zip(row['altbase'], row['alt_reads'])), axis=1)
-    pileupfile['alt_reads_dict'] = pileupfile['alt_reads_dict'].apply(
-        lambda x: {k: int(v) if v != '.' else 0 for k, v in x.items()})
-    pileupfile['highest_alt_reads'] = pileupfile['alt_reads_dict'].apply(lambda x: max(x.values()) if len(x) > 0 else 0)
-    pileupfile['highest_alt_reads_base'] = pileupfile['alt_reads_dict'].apply(
-        lambda x: max(x, key=x.get) if len(x) > 0 else 'NA')
-    pileupfile['total_reads'] = pileupfile.apply(
-        lambda row: (int(row['ref_reads']) if row['ref_reads'] != '.' else 0) + row['highest_alt_reads'], axis=1)
-    pileupfile['called_ref_perc'] = pileupfile.apply(
-        lambda row: round(((int(row['ref_reads']) if row['ref_reads'] != '.' else 0) / row['total_reads']) * 100, 1)
-        if row['total_reads'] > 0 else 0, axis=1)
-    pileupfile['called_alt_perc'] = pileupfile.apply(
-        lambda row: round((row['highest_alt_reads'] / row['total_reads']) * 100, 1) if row['total_reads'] > 0 else 0,
-        axis=1)
-
-    pileupfile['called_base'] = pileupfile.apply(
-        lambda row: row['refbase'] if row['called_ref_perc'] >= row['called_alt_perc'] else row[
-            'highest_alt_reads_base'], axis=1)
-    pileupfile['called_perc'] = pileupfile.apply(
-        lambda row: row['called_ref_perc'] if row['called_ref_perc'] >= row['called_alt_perc'] else row[
-            'called_alt_perc'], axis=1).astype(float)
-    pileupfile['called_reads'] = pileupfile.apply(
-        lambda row: (int(row['ref_reads']) if row['ref_reads'] != '.' else 0)
-        if row['called_ref_perc'] >= row['called_alt_perc'] else row['highest_alt_reads'],
-        axis=1)
+        pileupfile['called_base'] = pileupfile.apply(_gt_to_base, axis=1)
+        pileupfile = pileupfile[pileupfile['called_base'].notna()].copy()
+        pileupfile['called_reads'] = 1      # one confident genotype call, no read count
+        pileupfile['called_perc'] = 100.0
+        effective_reads_thresh = 1          # reads filter is meaningless for GT-only data
 
     # Save full marker list before intersection — needed to infer states for positions
     # absent from the VCF (where the sample matches the reference genome).
@@ -180,7 +270,7 @@ def run_vcf(
     df_discordantgenotype["Description"] = "Discordant genotype"
     df = df[~df.index.isin(bool_list_state)]
 
-    reads_thresh = int(args.reads_treshold)
+    reads_thresh = effective_reads_thresh
 
     # read threshold
     df_readsthreshold = df[df["called_reads"] < reads_thresh]
@@ -208,67 +298,19 @@ def run_vcf(
     # Standard VCFs only contain variant positions; ancestral positions where the sample
     # matches the reference are not emitted. By looking up the reference allele at those
     # positions from the downloaded chrY FASTA we can recover the vast majority of markers.
-    ref_inferred_count = 0
-    chry_ref_path = get_reference_path(args.reference_genome, False)
-    if chry_ref_path and chry_ref_path.exists() and os.path.getsize(chry_ref_path) > 0:
+    chry_seq = _WORKER_CHRY_SEQ
+    if chry_seq is None:
+        # Fallback: load from disk (happens when run_vcf is called outside a Pool)
         try:
+            chry_ref_path = get_reference_path(args.reference_genome, False)
+            if not (chry_ref_path and chry_ref_path.exists() and os.path.getsize(chry_ref_path) > 0):
+                from yleaf.download_reference import download_chry_fasta
+                chry_ref_path = download_chry_fasta(args.reference_genome)
             with open(chry_ref_path) as _ref_f:
                 chry_seq = ''.join(line.strip().upper() for line in _ref_f if not line.startswith('>'))
-            covered_pos_set = set(intersect_pos)
-            missing_markers = full_markerfile[~full_markerfile['pos'].isin(covered_pos_set)].copy()
-            if len(missing_markers) > 0:
-                missing_markers['ref_allele'] = missing_markers['pos'].apply(
-                    lambda p: chry_seq[p - 1] if 0 < p <= len(chry_seq) else 'N')
-                missing_markers = missing_markers[missing_markers.apply(
-                    lambda row: row['ref_allele'] in ACCEPTED_REF_BASES
-                                and row['ref_allele'] in (row['anc'], row['der']), axis=1)].copy()
-                if len(missing_markers) > 0:
-                    missing_markers['state'] = missing_markers.apply(
-                        lambda row: 'A' if row['ref_allele'] == row['anc'] else 'D', axis=1)
-                    missing_markers['reads'] = 0
-                    missing_markers['called_perc'] = 100.0
-                    missing_markers['called_base'] = missing_markers['ref_allele']
-                    ref_inferred_df = missing_markers[[
-                        'chr', 'pos', 'marker_name', 'haplogroup', 'mutation', 'anc', 'der',
-                        'reads', 'called_perc', 'called_base', 'state']]
-                    df_out = pd.concat([df_out, ref_inferred_df], axis=0, sort=False)
-                    ref_inferred_count = len(ref_inferred_df)
-                    LOG.debug(
-                        f"Reference inference: added {ref_inferred_count} markers "
-                        f"({(missing_markers['state'] == 'A').sum()} A, "
-                        f"{(missing_markers['state'] == 'D').sum()} D)")
         except Exception as e:
-            LOG.warning(f"Could not infer states from reference genome for VCF input: {e}")
-    else:
-        try:
-            from yleaf.download_reference import download_chry_fasta
-            chry_ref_path = download_chry_fasta(args.reference_genome)
-            with open(chry_ref_path) as _ref_f:
-                chry_seq = ''.join(line.strip().upper() for line in _ref_f if not line.startswith('>'))
-            covered_pos_set = set(intersect_pos)
-            missing_markers = full_markerfile[~full_markerfile['pos'].isin(covered_pos_set)].copy()
-            if len(missing_markers) > 0:
-                missing_markers['ref_allele'] = missing_markers['pos'].apply(
-                    lambda p: chry_seq[p - 1] if 0 < p <= len(chry_seq) else 'N')
-                missing_markers = missing_markers[missing_markers.apply(
-                    lambda row: row['ref_allele'] in ACCEPTED_REF_BASES
-                                and row['ref_allele'] in (row['anc'], row['der']), axis=1)].copy()
-                missing_markers['reads'] = 0
-                missing_markers['called_perc'] = 100.0
-                missing_markers['state'] = missing_markers.apply(
-                    lambda row: 'D' if row['ref_allele'] == row['der'] else 'A', axis=1)
-                missing_markers['called_base'] = missing_markers['ref_allele']
-                ref_inferred_df = missing_markers[[
-                    'chr', 'pos', 'marker_name', 'haplogroup', 'mutation', 'anc', 'der',
-                    'reads', 'called_perc', 'called_base', 'state']]
-                df_out = pd.concat([df_out, ref_inferred_df], axis=0, sort=False)
-                ref_inferred_count = len(ref_inferred_df)
-                LOG.debug(
-                    f"Reference inference: added {ref_inferred_count} markers "
-                    f"({(missing_markers['state'] == 'A').sum()} A, "
-                    f"{(missing_markers['state'] == 'D').sum()} D)")
-        except Exception as e:
-            LOG.warning(f"Could not download or use chrY reference FASTA: {e}")
+            LOG.warning(f"Could not load chrY FASTA for reference inference: {e}")
+    df_out, ref_inferred_count = _infer_from_reference(df_out, full_markerfile, intersect_pos, chry_seq)
 
     general_info_list.append("Markers with zero reads: " + str(len(df_belowzero)))
     general_info_list.append(
@@ -564,11 +606,12 @@ def main_vcf_split(
         position_bed_file: Path,
         base_out_folder: Path,
         args: argparse.Namespace,
+        n_threads: int,
         vcf_file: Path
 ):
     # first sort the vcf file
     sorted_vcf_file = base_out_folder / (vcf_file.name.replace(".vcf.gz", ".sorted.vcf.gz"))
-    cmd = f"bcftools sort -O z -o {sorted_vcf_file} {vcf_file}"
+    cmd = f"bcftools sort -O z --threads {n_threads} -o {sorted_vcf_file} {vcf_file}"
     try:
         call_command(cmd)
     except SystemExit:
@@ -581,7 +624,7 @@ def main_vcf_split(
         active_vcf = vcf_file
     else:
         active_vcf = sorted_vcf_file
-        cmd = f"bcftools index -f {sorted_vcf_file}"
+        cmd = f"bcftools index -f --threads {n_threads} {sorted_vcf_file}"
         call_command(cmd)
 
     # get chromosome annotation from whichever file we are using
@@ -611,7 +654,7 @@ def main_vcf_split(
     # filter the vcf file using the reference bed file
     stem = vcf_file.name.replace(".vcf.gz", "")
     filtered_vcf_file = base_out_folder / "filtered_vcf_files" / f"{stem}.filtered.vcf.gz"
-    cmd = f"bcftools view -O z -R {new_position_bed_file} {active_vcf} > {filtered_vcf_file}"
+    cmd = f"bcftools view -O z --threads {n_threads} -R {new_position_bed_file} {active_vcf} > {filtered_vcf_file}"
     call_command(cmd)
 
     # remover temp_position_bed.bed
@@ -638,7 +681,7 @@ def main_vcf_split(
         # split the vcf file into separate files for each sample
         split_vcf_folder = base_out_folder / (vcf_file.name.replace(".vcf.gz", "_split"))
         safe_create_dir(split_vcf_folder, args.force)
-        cmd = f"bcftools +split {filtered_vcf_file} -Oz -o {split_vcf_folder}"
+        cmd = f"bcftools +split {filtered_vcf_file} -Oz --threads {n_threads} -o {split_vcf_folder}"
         call_command(cmd)
         sample_vcf_files = get_files_with_extension(split_vcf_folder, '.vcf.gz')
     elif num_samples == 1:
@@ -675,11 +718,12 @@ def main_vcf_multi_tree(
 
     safe_create_dir(base_out_folder / "filtered_vcf_files", args.force)
     files = get_files_with_extension(args.vcffile, '.vcf.gz')
+    n_bcf_threads = max(1, args.threads // max(1, len(files)))
 
     if not args.reanalyze:
         with multiprocessing.Pool(processes=args.threads) as p:
             sample_vcf_files_nested = p.map(
-                partial(main_vcf_split, merged_bed, base_out_folder, args), files)
+                partial(main_vcf_split, merged_bed, base_out_folder, args, n_bcf_threads), files)
         merged_bed.unlink()
         sample_vcf_files = [x for sublist in sample_vcf_files_nested if sublist for x in sublist]
     else:
@@ -688,7 +732,9 @@ def main_vcf_multi_tree(
 
     for tree in trees:
         path_markerfile = get_position_file(args.reference_genome, args.ancient_DNA, tree)
-        with multiprocessing.Pool(processes=args.threads) as p:
+        with multiprocessing.Pool(processes=args.threads,
+                                  initializer=_init_vcf_worker,
+                                  initargs=(path_markerfile, args.reference_genome)) as p:
             p.map(partial(run_vcf, path_markerfile, base_out_folder, args,
                           out_suffix=f'.{tree}', tree_name=tree),
                   sample_vcf_files)
@@ -710,19 +756,25 @@ def main_vcf(
     safe_create_dir(base_out_folder / "filtered_vcf_files", args.force)
 
     files = get_files_with_extension(args.vcffile, '.vcf.gz')
+    n_bcf_threads = max(1, args.threads // max(1, len(files)))
 
     if not args.reanalyze:
         with multiprocessing.Pool(processes=args.threads) as p:
-            sample_vcf_files = p.map(partial(main_vcf_split, position_bed_file, base_out_folder, args), files)
+            sample_vcf_files = p.map(
+                partial(main_vcf_split, position_bed_file, base_out_folder, args, n_bcf_threads), files)
 
         sample_vcf_files = [x for x in sample_vcf_files if x is not None]
         sample_vcf_files = [item for sublist in sample_vcf_files for item in sublist]
 
-        with multiprocessing.Pool(processes=args.threads) as p:
+        with multiprocessing.Pool(processes=args.threads,
+                                  initializer=_init_vcf_worker,
+                                  initargs=(path_markerfile, args.reference_genome)) as p:
             p.map(partial(run_vcf, path_markerfile, base_out_folder, args), sample_vcf_files)
 
     else:
-        with multiprocessing.Pool(processes=args.threads) as p:
+        with multiprocessing.Pool(processes=args.threads,
+                                  initializer=_init_vcf_worker,
+                                  initargs=(path_markerfile, args.reference_genome)) as p:
             p.map(partial(run_vcf, path_markerfile, base_out_folder, args), files)
 
 
@@ -1151,8 +1203,11 @@ def main_bam_cram_multi_tree(
     else:
         return
 
+    # Pre-compute union of marker positions across all trees once; workers write BED cheaply per sample.
+    merged_positions = _precompute_merged_positions(trees, args.reference_genome, args.ancient_DNA)
+
     with multiprocessing.Pool(processes=args.threads) as p:
-        p.map(partial(run_bam_cram_multi_tree, args, base_out_folder, is_bam, trees), files)
+        p.map(partial(run_bam_cram_multi_tree, args, base_out_folder, is_bam, trees, merged_positions), files)
 
     # Flush all pending NFS/OS writes from worker processes before reading output files
     os.sync()
@@ -1190,11 +1245,12 @@ def run_bam_cram_multi_tree(
         base_out_folder: Path,
         is_bam: bool,
         trees: List[str],
+        merged_positions: List[int],
         input_file: Path
 ):
     """Per-sample multi-tree: one pileup covering all trees, extract haplogroups per tree."""
     try:
-        _run_bam_cram_multi_tree_inner(args, base_out_folder, is_bam, trees, input_file)
+        _run_bam_cram_multi_tree_inner(args, base_out_folder, is_bam, trees, merged_positions, input_file)
     except BaseException as e:
         LOG.warning(f"Skipping {input_file.name}: {e}")
 
@@ -1204,6 +1260,7 @@ def _run_bam_cram_multi_tree_inner(
         base_out_folder: Path,
         is_bam: bool,
         trees: List[str],
+        merged_positions: List[int],
         input_file: Path
 ):
     LOG.info(f"Starting multi-tree run for {input_file}")
@@ -1230,7 +1287,7 @@ def _run_bam_cram_multi_tree_inner(
         LOG.info(f"Reusing existing pileup file: {pileupfile}")
     else:
         merged_bed = output_dir / "temp_position_bed_combined.bed"
-        _write_merged_bed(merged_bed, trees, args.reference_genome, args.ancient_DNA, header)
+        _write_merged_bed_fast(merged_bed, merged_positions, header)
         reference = args.cram_reference if not is_bam else None
         tmp_chry_bam = None
         if not is_bam:
@@ -1266,24 +1323,35 @@ def _run_bam_cram_multi_tree_inner(
     LOG.debug(f"Finished multi-tree extraction for {input_file}")
 
 
-def _write_merged_bed(
-        merged_bed: Path,
-        trees: List[str],
-        reference_genome: str,
-        ancient_dna: bool,
-        header: str
-):
-    """Merge BED files from multiple trees, deduplicate positions, write sorted output."""
-    import pandas as pd
-    dfs = []
+def _precompute_merged_positions(trees: List[str], reference_genome: str, ancient_dna: bool) -> List[int]:
+    """Compute the union of marker positions across all trees once in the parent process."""
+    all_positions: set = set()
     for tree in trees:
         pos_file = get_position_file(reference_genome, ancient_dna, tree)
-        df = pd.read_csv(pos_file, sep='\t', header=None, usecols=[0, 3])
-        df.columns = ['chr', 'pos']
-        df['chr'] = header
-        dfs.append(df)
-    merged = pd.concat(dfs).drop_duplicates(subset='pos').sort_values('pos').reset_index(drop=True)
-    merged.to_csv(str(merged_bed), sep='\t', index=False, header=False)
+        df = pd.read_csv(pos_file, sep='\t', header=None, usecols=[3])
+        all_positions.update(df[3].tolist())
+    return sorted(all_positions)
+
+
+def _write_merged_bed_fast(merged_bed: Path, positions: List[int], header: str) -> None:
+    """Write a pre-computed sorted position list as a 2-column BED (chr, pos)."""
+    with open(merged_bed, 'w') as f:
+        for pos in positions:
+            f.write(f"{header}\t{pos}\n")
+
+
+def _predict_draw_read_tree(args_tuple):
+    """Pool worker: predict + optional draw + read results for one tree. Returns (tree, results_dict)."""
+    base_out_folder, tree, prediction_quality, threads_per_tree, draw_hg, collapsed_draw_mode = args_tuple
+    tree_hg_out = base_out_folder / f"hg_prediction_{tree}.hg"
+    _predict_for_tree(base_out_folder, tree, tree_hg_out, prediction_quality, threads_per_tree)
+    if draw_hg:
+        draw_haplogroups(
+            tree_hg_out, collapsed_draw_mode,
+            outfile=base_out_folder / f"hg_tree_image_{tree}",
+            tree_file=get_tree_path(tree)
+        )
+    return tree, _read_hg_file(tree_hg_out)
 
 
 def write_combined_prediction_table(
@@ -1295,19 +1363,16 @@ def write_combined_prediction_table(
         draw_hg: bool = False,
         collapsed_draw_mode: bool = False
 ):
-    """Run predict_haplogroup per tree and write combined TSV with one row per sample."""
-    # Collect per-tree predictions
-    tree_results = {}  # tree -> {sample_name -> (hg, hg_marker, valid_markers, qc)}
-    for tree in trees:
-        tree_hg_out = base_out_folder / f"hg_prediction_{tree}.hg"
-        _predict_for_tree(base_out_folder, tree, tree_hg_out, prediction_quality, threads)
-        tree_results[tree] = _read_hg_file(tree_hg_out)
-        if draw_hg:
-            draw_haplogroups(
-                tree_hg_out, collapsed_draw_mode,
-                outfile=base_out_folder / f"hg_tree_image_{tree}",
-                tree_file=get_tree_path(tree)
-            )
+    """Run predict_haplogroup per tree in parallel and write combined TSV with one row per sample."""
+    n_workers = min(len(trees), max(1, threads))
+    threads_per_tree = max(1, threads // n_workers)
+    task_args = [
+        (base_out_folder, tree, prediction_quality, threads_per_tree, draw_hg, collapsed_draw_mode)
+        for tree in trees
+    ]
+    with multiprocessing.Pool(processes=n_workers) as p:
+        results = p.map(_predict_draw_read_tree, task_args)
+    tree_results = dict(results)
 
     # Collect all sample names
     sample_names = set()
@@ -1881,19 +1946,26 @@ def get_frequency_table(
 def get_frequencies(
         sequence: str
 ) -> Dict[str, int]:
-    fastadict = {"A": 0, "T": 0, "G": 0, "C": 0, "-": 0, "+": 0, "*": 0}
     sequence = sequence.upper()
+    # Fast path: no indels, read-start/end markers — Counter is C-speed, far faster than
+    # a Python while-loop for the common case of clean SNP pileup columns.
+    if _INDEL_CHARS.isdisjoint(sequence):
+        c = Counter(sequence)
+        return {
+            'A': c.get('A', 0), 'T': c.get('T', 0),
+            'G': c.get('G', 0), 'C': c.get('C', 0),
+            '-': c.get('*', 0), '+': 0,
+        }
+    # Slow path: handle indel notation (+<n><bases> / -<n><bases>), ^<mapq>, and $.
+    fastadict = {"A": 0, "T": 0, "G": 0, "C": 0, "-": 0, "+": 0, "*": 0}
     index = 0
-    while index < len(sequence):
+    length = len(sequence)
+    while index < length:
         char = sequence[index]
-        if char in {"-", "+"}:
-            # Indel notation: +<n><bases> or -<n><bases>. Count the marker but
-            # skip the following bases so they are not counted as real reads.
-            # This check must come before the fastadict check because "-" and "+"
-            # are also keys in fastadict (issue #31).
+        if char in ("-", "+"):
             fastadict[char] += 1
             index += 1
-            digit, index = find_digit(sequence, index)
+            digit, index = _find_digit(sequence, index)
             index += digit
         elif char == "^":
             index += 2
@@ -1907,21 +1979,13 @@ def get_frequencies(
     return fastadict
 
 
-def find_digit(
-        sequence: str,
-        index: int
-) -> Tuple[int, int]:
-    # first is always a digit
+def _find_digit(sequence: str, index: int) -> Tuple[int, int]:
     nr = [sequence[index]]
     index += 1
-    while True:
-        char = sequence[index]
-        # this seems to be faster than isdigit()
-        if char in NUM_SET:
-            nr.append(char)
-            index += 1
-            continue
-        return int(''.join(nr)), index
+    while index < len(sequence) and sequence[index] in NUM_SET:
+        nr.append(sequence[index])
+        index += 1
+    return int(''.join(nr)), index
 
 
 def write_info_file(
