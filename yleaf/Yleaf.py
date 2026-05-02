@@ -351,6 +351,11 @@ def run_vcf(
             for lst in mappable_df[node_key]:
                 f.write('\t'.join(map(str, lst)) + f"\t{depth}\n")
 
+    if getattr(args, 'mixture', False) and has_ad:
+        mix_output = sample_vcf_folder / (sample_vcf_file.name.replace(".vcf.gz", f"{out_suffix}.mix"))
+        effective_tree = tree_name if tree_name else args.tree
+        _run_mixture_analysis(outputfile, fmf_output, effective_tree, args.reads_treshold, mix_output)
+
     LOG.info(f"Finished extracting genotypes for {sample_vcf_file.name}")
 
 
@@ -790,6 +795,10 @@ def main():
 
     LOG.info(f"Running Yleaf with command: {' '.join(sys.argv)}")
 
+    if args.mixture and args.base_majority < 99:
+        LOG.info("Mixture mode active: overriding base majority to 99%")
+        args.base_majority = 99
+
     # Normalize --tree: unwrap single-element list to string for backward compatibility
     if isinstance(args.tree, list) and len(args.tree) == 1:
         args.tree = args.tree[0]
@@ -939,6 +948,12 @@ def get_arguments() -> argparse.Namespace:
     parser.add_argument("-maf", "--minor_allele_frequency", help="Maximum rate of minor allele for it to be considered"
                                                                  " as a private mutation. (default=0.01)",
                         default=0.01, type=float, metavar="FLOAT")
+
+    parser.add_argument("-mix", "--mixture", action="store_true",
+                        help="Enable mixture mode: detect multiple Y-chromosome contributors, "
+                             "estimate mixture ratios, and assign a haplogroup per contributor. "
+                             "Requires per-allele read counts (BAM/CRAM or VCF with FORMAT/AD). "
+                             "Sets --base_majority to 99%% unless explicitly overridden.")
 
     args = parser.parse_args()
     return args
@@ -1318,6 +1333,9 @@ def _run_bam_cram_multi_tree_inner(
                             pileupfile, fmf_output, outputfile, is_bam,
                             tree_info_list, tree)
         write_info_file(output_dir, tree_info_list, suffix=f".{tree}.info")
+        if getattr(args, 'mixture', False):
+            mix_output = output_dir / (output_dir.name + out_suffix + ".mix")
+            _run_mixture_analysis(outputfile, fmf_output, tree, args.reads_treshold, mix_output)
 
     # TODO (production): delete pileup when no longer needed: os.remove(pileupfile)
 
@@ -1340,6 +1358,28 @@ def _write_merged_bed_fast(merged_bed: Path, positions: List[int], header: str) 
         for pos in positions:
             f.write(f"{header}\t{pos}\n")
 
+
+def _run_mixture_analysis(
+        out_file: Path,
+        fmf_file: Path,
+        tree_name: str,
+        reads_threshold: int,
+        mix_output: Path,
+) -> None:
+    """Run mixture analysis for one sample/tree and write the .mix file if a mixture is found."""
+    from yleaf.mixture_analysis import analyze_mixture, write_mix_file
+    result = analyze_mixture(
+        out_file=out_file,
+        fmf_file=fmf_file,
+        tree_name=tree_name,
+        tree_file=get_tree_path(tree_name),
+        reads_threshold=reads_threshold,
+    )
+    if result is not None:
+        write_mix_file(mix_output, result)
+        LOG.info(f"Mixture result written to {mix_output}")
+    else:
+        LOG.info("Mixture mode: no mixture detected.")
 
 
 def write_combined_prediction_table(
@@ -1651,6 +1691,10 @@ def samtools(
     extract_haplogroups(position_file, args.reads_treshold, args.base_majority,
                         pileupfile, fmf_output, outputfile, is_bam_pathfile, general_info_list,
                         args.tree)
+
+    if getattr(args, 'mixture', False):
+        mix_output = output_folder / (output_folder.name + ".mix")
+        _run_mixture_analysis(outputfile, fmf_output, args.tree, args.reads_treshold, mix_output)
 
     # TODO (production): delete pileup when no longer needed: os.remove(pileupfile)
     if bed is not None:
