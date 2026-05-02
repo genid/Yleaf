@@ -41,8 +41,9 @@ class Tree:
         with open(file) as f:
             tree_dict = json.load(f)
 
-        # base has no parent
-        base_node = Node(self.__ROOT_KEY, None, 0, ["A00", "A0-T"])
+        # base has no parent; children come from the JSON so every tree gets its own ROOT children
+        root_children = tree_dict.get(self.__ROOT_KEY, ["A00", "A0-T"])
+        base_node = Node(self.__ROOT_KEY, None, 0, root_children)
         self.node_mapping[self.__ROOT_KEY] = base_node
         self._recursive_read(tree_dict, base_node, 0)
 
