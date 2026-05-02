@@ -223,8 +223,28 @@ def analyze_mixture(
         LOG.debug("Mixture: no het positions with recognised tree nodes.")
         return None
 
+    # --- Remove isolated noise nodes ---
+    # A node is isolated if no other het node is its ancestor or descendant.
+    # Scattered single-position noise spreads across unrelated branches and
+    # pulls the LCA to ROOT, drowning real contributor signal.
+    het_node_set = set(het_df["haplogroup"].unique())
+    connected = set()
+    for n in het_node_set:
+        relatives = _get_ancestors(n, tree) | _get_subtree_nodes(n, tree)
+        if relatives & het_node_set:
+            connected.add(n)
+    if connected != het_node_set:
+        LOG.debug(
+            f"Mixture: dropped {len(het_node_set) - len(connected)} isolated noise node(s); "
+            f"{len(connected)} connected node(s) remain."
+        )
+    het_df = het_df[het_df["haplogroup"].isin(connected)]
+    if het_df.empty:
+        LOG.debug("Mixture: no connected het positions after noise filtering.")
+        return None
+
     het_nodes = list(het_df["haplogroup"].unique())
-    LOG.debug(f"Mixture: {len(het_df)} het positions across {len(het_nodes)} nodes.")
+    LOG.debug(f"Mixture: {len(het_df)} het positions across {len(het_nodes)} nodes after filtering.")
 
     # --- Find LCA of all het nodes ---
     try:
