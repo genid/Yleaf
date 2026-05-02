@@ -611,7 +611,7 @@ def main_vcf_split(
 ):
     # first sort the vcf file
     sorted_vcf_file = base_out_folder / (vcf_file.name.replace(".vcf.gz", ".sorted.vcf.gz"))
-    cmd = f"bcftools sort -O z --threads {n_threads} -o {sorted_vcf_file} {vcf_file}"
+    cmd = f"bcftools sort -O z -o {sorted_vcf_file} {vcf_file}"
     try:
         call_command(cmd)
     except SystemExit:
@@ -624,7 +624,7 @@ def main_vcf_split(
         active_vcf = vcf_file
     else:
         active_vcf = sorted_vcf_file
-        cmd = f"bcftools index -f --threads {n_threads} {sorted_vcf_file}"
+        cmd = f"bcftools index -f {sorted_vcf_file}"
         call_command(cmd)
 
     # get chromosome annotation from whichever file we are using
@@ -654,7 +654,7 @@ def main_vcf_split(
     # filter the vcf file using the reference bed file
     stem = vcf_file.name.replace(".vcf.gz", "")
     filtered_vcf_file = base_out_folder / "filtered_vcf_files" / f"{stem}.filtered.vcf.gz"
-    cmd = f"bcftools view -O z --threads {n_threads} -R {new_position_bed_file} {active_vcf} > {filtered_vcf_file}"
+    cmd = f"bcftools view -O z -R {new_position_bed_file} {active_vcf} > {filtered_vcf_file}"
     call_command(cmd)
 
     # remover temp_position_bed.bed
@@ -681,7 +681,7 @@ def main_vcf_split(
         # split the vcf file into separate files for each sample
         split_vcf_folder = base_out_folder / (vcf_file.name.replace(".vcf.gz", "_split"))
         safe_create_dir(split_vcf_folder, args.force)
-        cmd = f"bcftools +split {filtered_vcf_file} -Oz --threads {n_threads} -o {split_vcf_folder}"
+        cmd = f"bcftools +split {filtered_vcf_file} -Oz -o {split_vcf_folder}"
         call_command(cmd)
         sample_vcf_files = get_files_with_extension(split_vcf_folder, '.vcf.gz')
     elif num_samples == 1:
@@ -1341,19 +1341,6 @@ def _write_merged_bed_fast(merged_bed: Path, positions: List[int], header: str) 
             f.write(f"{header}\t{pos}\n")
 
 
-def _predict_draw_read_tree(args_tuple):
-    """Pool worker: predict + optional draw + read results for one tree. Returns (tree, results_dict)."""
-    base_out_folder, tree, prediction_quality, threads_per_tree, draw_hg, collapsed_draw_mode = args_tuple
-    tree_hg_out = base_out_folder / f"hg_prediction_{tree}.hg"
-    _predict_for_tree(base_out_folder, tree, tree_hg_out, prediction_quality, threads_per_tree)
-    if draw_hg:
-        draw_haplogroups(
-            tree_hg_out, collapsed_draw_mode,
-            outfile=base_out_folder / f"hg_tree_image_{tree}",
-            tree_file=get_tree_path(tree)
-        )
-    return tree, _read_hg_file(tree_hg_out)
-
 
 def write_combined_prediction_table(
         base_out_folder: Path,
@@ -1364,16 +1351,16 @@ def write_combined_prediction_table(
         draw_hg: bool = False,
         collapsed_draw_mode: bool = False
 ):
-    """Run predict_haplogroup per tree in parallel and write combined TSV with one row per sample."""
-    n_workers = min(len(trees), max(1, threads))
-    threads_per_tree = max(1, threads // n_workers)
-    task_args = [
-        (base_out_folder, tree, prediction_quality, threads_per_tree, draw_hg, collapsed_draw_mode)
-        for tree in trees
-    ]
-    with multiprocessing.Pool(processes=n_workers) as p:
-        results = p.map(_predict_draw_read_tree, task_args)
-    tree_results = dict(results)
+    """Run predict_haplogroup per tree (sequentially) and write combined TSV with one row per sample."""
+    tree_results = {}
+    for tree in trees:
+        tree_hg_out = base_out_folder / f"hg_prediction_{tree}.hg"
+        _predict_for_tree(base_out_folder, tree, tree_hg_out, prediction_quality, threads)
+        if draw_hg:
+            draw_haplogroups(tree_hg_out, collapsed_draw_mode,
+                             outfile=base_out_folder / f"haplogroup_tree_{tree}",
+                             tree_file=get_tree_path(tree))
+        tree_results[tree] = _read_hg_file(tree_hg_out)
 
     # Collect all sample names
     sample_names = set()
