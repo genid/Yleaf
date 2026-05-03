@@ -116,10 +116,13 @@ def _write_html(svg: str, output_path: Path, hg_colors: Dict[str, str]) -> None:
           background: #1a1a2e; color: #e0e0e0; overflow: hidden; }}
   #sidebar {{ width: 195px; flex-shrink: 0; display: flex; flex-direction: column;
               background: #16213e; border-right: 1px solid #0f3460; }}
-  #sidebar-header {{ padding: 12px 14px 8px;
+  #sidebar-header {{ padding: 10px 14px 8px;
                      border-bottom: 1px solid #0f3460; flex-shrink: 0; }}
   #sidebar-header h2 {{ font-size: 0.78rem; text-transform: uppercase;
-                        letter-spacing: 0.12em; color: #6a8ac0; }}
+                        letter-spacing: 0.12em; color: #6a8ac0; margin-bottom: 8px; }}
+  .select-all-row {{ display: flex; align-items: center; gap: 7px;
+                     font-size: 0.80rem; cursor: pointer; }}
+  .select-all-row input {{ cursor: pointer; accent-color: #4a9eff; flex-shrink: 0; }}
   #sidebar-scroll {{ flex: 1; overflow-y: auto; padding: 10px 14px; }}
   #sidebar-scroll h3 {{ font-size: 0.65rem; text-transform: uppercase;
                         letter-spacing: 0.1em; color: #506070; margin-bottom: 8px; }}
@@ -137,18 +140,31 @@ def _write_html(svg: str, output_path: Path, hg_colors: Dict[str, str]) -> None:
   #svg-wrap {{ flex: 1; overflow: hidden; }}
   #svg-wrap svg {{ width: 100%; height: 100%; }}
   .svgpanzoom-control-icons {{ filter: invert(0.8); }}
+  @media print {{
+    #sidebar {{ display: none; }}
+    body {{ display: block; height: auto; background: white; }}
+    #svg-wrap {{ width: 100vw; height: 100vh; }}
+    #svg-wrap svg {{ width: 100%; height: 100%; }}
+    .svgpanzoom-control-icons {{ display: none; }}
+  }}
 </style>
 </head>
 <body>
 <div id="sidebar">
-  <div id="sidebar-header"><h2>Yleaf Haplogroup Tree</h2></div>
+  <div id="sidebar-header">
+    <h2>Yleaf Haplogroup Tree</h2>
+    <label class="select-all-row">
+      <input type="checkbox" id="select-all-cb" checked onchange="toggleAll(this.checked)">
+      <span>Select all</span>
+    </label>
+  </div>
   <div id="sidebar-scroll">
     <h3>Filter by major haplogroup</h3>
     <div id="filters"></div>
   </div>
   <div class="btn-row">
-    <button class="btn" onclick="showAll()">All</button>
-    <button class="btn" onclick="hideAll()">None</button>
+    <button class="btn" onclick="fitVisible()">Fit view</button>
+    <button class="btn" onclick="savePdf()">Save PDF</button>
   </div>
 </div>
 <div id="svg-wrap">
@@ -157,13 +173,14 @@ def _write_html(svg: str, output_path: Path, hg_colors: Dict[str, str]) -> None:
 <script src="https://cdn.jsdelivr.net/npm/svg-pan-zoom@3.6.1/dist/svg-pan-zoom.min.js"></script>
 <script>
 const COLOR_MAP = {colors_js};
+let panZoom = null;
 
 window.addEventListener('load', function () {{
   const svgEl = document.querySelector('#svg-wrap svg');
   if (svgEl) {{
     svgEl.setAttribute('width', '100%');
     svgEl.setAttribute('height', '100%');
-    svgPanZoom(svgEl, {{
+    panZoom = svgPanZoom(svgEl, {{
       zoomEnabled: true,
       controlIconsEnabled: true,
       fit: true,
@@ -192,16 +209,67 @@ window.addEventListener('load', function () {{
 function toggleHg(hg, visible) {{
   document.querySelectorAll('g.node[data-hg="' + hg + '"], g.edge[data-hg="' + hg + '"]')
     .forEach(el => el.style.display = visible ? '' : 'none');
+  updateSelectAllState();
+  fitVisible();
 }}
-function showAll() {{
+
+function toggleAll(checked) {{
   document.querySelectorAll('g.node[data-hg], g.edge[data-hg]')
-    .forEach(el => el.style.display = '');
-  document.querySelectorAll('#filters input').forEach(cb => cb.checked = true);
+    .forEach(el => el.style.display = checked ? '' : 'none');
+  document.querySelectorAll('#filters input').forEach(cb => cb.checked = checked);
+  fitVisible();
 }}
-function hideAll() {{
-  document.querySelectorAll('g.node[data-hg], g.edge[data-hg]')
-    .forEach(el => el.style.display = 'none');
-  document.querySelectorAll('#filters input').forEach(cb => cb.checked = false);
+
+function updateSelectAllState() {{
+  const all = document.querySelectorAll('#filters input');
+  const checked = [...all].filter(cb => cb.checked).length;
+  const cb = document.getElementById('select-all-cb');
+  cb.indeterminate = checked > 0 && checked < all.length;
+  cb.checked = checked === all.length;
+}}
+
+function fitVisible() {{
+  if (!panZoom) return;
+  const svgEl = document.querySelector('#svg-wrap svg');
+  const visible = [...document.querySelectorAll('g.node[data-hg]')]
+    .filter(el => el.style.display !== 'none');
+  if (visible.length === 0) return;
+
+  // Compute union bounding box in SVG coordinates
+  const ctm = svgEl.getScreenCTM();
+  const inv = ctm.inverse();
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const el of visible) {{
+    const r = el.getBoundingClientRect();
+    // Convert screen corners to SVG coordinate space
+    const tl = new DOMPoint(r.left, r.top).matrixTransform(inv);
+    const br = new DOMPoint(r.right, r.bottom).matrixTransform(inv);
+    minX = Math.min(minX, tl.x, br.x);
+    minY = Math.min(minY, tl.y, br.y);
+    maxX = Math.max(maxX, tl.x, br.x);
+    maxY = Math.max(maxY, tl.y, br.y);
+  }}
+
+  const pad = 30;
+  const bw = maxX - minX + pad * 2;
+  const bh = maxY - minY + pad * 2;
+  const wrap = document.getElementById('svg-wrap');
+  const scaleX = wrap.clientWidth / bw;
+  const scaleY = wrap.clientHeight / bh;
+  const newZoom = Math.min(scaleX, scaleY, panZoom.getMaxZoom());
+
+  panZoom.zoom(newZoom);
+  // Center on the midpoint of the bounding box
+  const cx = (minX + maxX) / 2;
+  const cy = (minY + maxY) / 2;
+  panZoom.pan({{
+    x: wrap.clientWidth / 2 - cx * newZoom,
+    y: wrap.clientHeight / 2 - cy * newZoom,
+  }});
+}}
+
+function savePdf() {{
+  window.print();
 }}
 </script>
 </body>
