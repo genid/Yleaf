@@ -135,16 +135,15 @@ def _decompose_subtree(
         # Single branch: keep descending (this node is still on the shared path).
         return _decompose_subtree(branches[0][0], branches[0][2], tree, max_n, branch_root)
 
-    # Multiple branches: split found here.
-    # branch_root is only set at the FIRST (top-level) split; sub-splits within a branch
-    # preserve the original branch_root so the coherence check walks back to the real
-    # contributor divergence point, not just to the nearest noise sub-split.
+    # Multiple branches: split found here. Process largest branches first so that
+    # real contributors (many het positions) fill slots before single-position noise.
+    branches.sort(key=lambda x: len(x[2]), reverse=True)
     result: List[Tuple[str, pd.DataFrame, str]] = []
     for child_name, _, child_het in branches:
         if len(result) >= max_n:
             break
         sub = _decompose_subtree(child_name, child_het, tree, max_n - len(result),
-                                 branch_root=branch_root if branch_root is not None else child_name)
+                                 branch_root=child_name)
         result.extend(sub)
     return result
 
