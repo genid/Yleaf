@@ -1389,14 +1389,21 @@ def _run_bam_cram_multi_tree_inner(
         out_suffix = f".{tree}"
         fmf_output = output_dir / (output_dir.name + out_suffix + ".fmf")
         outputfile = output_dir / (output_dir.name + out_suffix + ".out")
-        tree_info_list = list(general_info_list)  # fresh copy per tree
-        extract_haplogroups(position_file, args.reads_treshold, args.base_majority,
-                            pileupfile, fmf_output, outputfile, is_bam,
-                            tree_info_list, tree)
-        write_info_file(output_dir, tree_info_list, suffix=f".{tree}.info")
-        if getattr(args, 'mixture', False):
-            mix_output = output_dir / (output_dir.name + out_suffix + ".mix")
-            _run_mixture_analysis(outputfile, fmf_output, tree, args.reads_treshold, mix_output)
+        try:
+            tree_info_list = list(general_info_list)  # fresh copy per tree
+            extract_haplogroups(position_file, args.reads_treshold, args.base_majority,
+                                pileupfile, fmf_output, outputfile, is_bam,
+                                tree_info_list, tree)
+            write_info_file(output_dir, tree_info_list, suffix=f".{tree}.info")
+            if getattr(args, 'mixture', False):
+                mix_output = output_dir / (output_dir.name + out_suffix + ".mix")
+                _run_mixture_analysis(outputfile, fmf_output, tree, args.reads_treshold, mix_output)
+        except Exception as e:
+            LOG.error(f"Extraction failed for tree '{tree}': {e}")
+            if fmf_output.exists() and not outputfile.exists():
+                fmf_output.unlink()
+                LOG.debug(f"Removed partial {fmf_output}")
+            continue
 
     if args.private_mutations:
         find_private_mutations(output_dir, input_file, args, is_bam)
