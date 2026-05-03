@@ -143,7 +143,7 @@ def _decompose_subtree(
         if len(result) >= max_n:
             break
         sub = _decompose_subtree(child_name, child_het, tree, max_n - len(result),
-                                 branch_root=child_name)
+                                 branch_root=branch_root if branch_root is not None else child_name)
         result.extend(sub)
     return result
 
@@ -298,6 +298,13 @@ def analyze_mixture(
 
     if not decomposed:
         return None
+
+    # --- Keep only deepest node per lineage (drop ancestors of other results) ---
+    hg_names = {hg for hg, _, _ in decomposed}
+    decomposed = [
+        (hg, het, br) for hg, het, br in decomposed
+        if not (_get_subtree_nodes(hg, tree) & hg_names)
+    ]
 
     # --- Filter incoherent branches (called intermediate between split and leaf) ---
     coherent = []
