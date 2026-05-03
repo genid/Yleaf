@@ -50,6 +50,9 @@ _WORKER_TREE = None                  # single-tree cache (loaded by _init_vcf_wo
 _WORKER_MARKERFILE_CACHE: dict = {}  # multi-tree lazy cache: str(path) → DataFrame
 _WORKER_TREE_CACHE: dict = {}        # multi-tree lazy cache: tree_name → Tree
 
+# Worker-process globals for write_path_file pool
+_PATH_WORKER_TREE = None
+
 # path constants
 PREDICTION_OUT_FILE_NAME: str = "hg_prediction.hg"
 HAPLOGROUP_IMAGE_FILE_NAME: str = "hg_tree_image"
@@ -898,7 +901,7 @@ def main():
         raise ValueError("Please specify either a bam, cram, fastq, vcf, or plink file")
     hg_out = out_folder / PREDICTION_OUT_FILE_NAME
     predict_haplogroup(out_folder, hg_out, args.prediction_quality, args.threads, args.tree)
-    _write_path_file(out_folder, args.tree, hg_out, ".out")
+    _write_path_file(out_folder, args.tree, hg_out, ".out", threads=args.threads)
     if args.draw_haplogroups:
         draw_haplogroups(hg_out, args.collapsed_draw_mode)
 
@@ -1512,7 +1515,68 @@ def _predict_for_tree(
         info_file_suffix=f".{tree}.info",
     )
     predict_haplogroup.main(namespace)
-    _write_path_file(base_out_folder, tree, hg_out, f".{tree}.out")
+    _write_path_file(base_out_folder, tree, hg_out, f".{tree}.out", threads=threads)
+
+
+def _init_path_worker(tree_file: Path) -> None:
+    """Pool initializer: load the tree once per worker process."""
+    global _PATH_WORKER_TREE
+    _PATH_WORKER_TREE = Tree(tree_file)
+
+
+def _write_path_for_sample(args) -> None:
+    """Write haplogroup_path_{tree}.json for one sample (runs inside a pool worker)."""
+    import json as _json
+    base_out_folder, sample_name, predicted_hg, out_file_suffix, tree_name = args
+    global _PATH_WORKER_TREE
+
+    predicted_hg_base = predicted_hg.split('*')[0].split('(')[0]
+    node = _PATH_WORKER_TREE.get(predicted_hg_base)
+    if not node:
+        return
+
+    sample_folder = base_out_folder / sample_name
+    out_path = sample_folder / f"{sample_name}{out_file_suffix}"
+    hg_counts: dict = {}
+    if out_path.exists():
+        with open(out_path) as f:
+            next(f)
+            for line in f:
+                parts = line.strip().split('\t')
+                if len(parts) >= 11:
+                    hg, marker, state = parts[3], parts[2], parts[10]
+                    if hg not in hg_counts:
+                        hg_counts[hg] = {'d': 0, 'a': 0, 'rep_d': None, 'rep_a': None}
+                    if state == 'D':
+                        hg_counts[hg]['d'] += 1
+                        if hg_counts[hg]['rep_d'] is None:
+                            hg_counts[hg]['rep_d'] = marker
+                    elif state == 'A':
+                        hg_counts[hg]['a'] += 1
+                        if hg_counts[hg]['rep_a'] is None:
+                            hg_counts[hg]['rep_a'] = marker
+
+    marker_state: dict = {}
+    for hg, v in hg_counts.items():
+        majority = 'D' if v['d'] >= v['a'] else 'A'
+        rep = v['rep_d'] if majority == 'D' else v['rep_a']
+        marker_state[hg] = {'marker': rep or v['rep_d'] or v['rep_a'], 'state': majority}
+
+    path = []
+    n = node
+    while n:
+        entry = marker_state.get(n.name)
+        path.append({
+            'haplogroup': n.name,
+            'marker': entry['marker'] if entry else None,
+            'state': entry['state'] if entry else 'NC',
+        })
+        n = n.parent
+    path.reverse()
+
+    out = sample_folder / f'haplogroup_path_{tree_name}.json'
+    with open(out, 'w') as f:
+        _json.dump(path, f)
 
 
 def _write_path_file(
@@ -1520,9 +1584,9 @@ def _write_path_file(
         tree_name: str,
         hg_out_file: Path,
         out_file_suffix: str,
+        threads: int = 1,
 ):
     """Write per-sample haplogroup_path_{tree}.json inside each sample's subfolder."""
-    import json as _json
     if not hg_out_file.exists():
         return
 
@@ -1538,58 +1602,17 @@ def _write_path_file(
     if not sample_hg:
         return
 
-    tree = Tree(get_tree_path(tree_name))
-
-    for sample_name, predicted_hg in sample_hg.items():
-        # Strip subclade annotation e.g. "E-Z15929*(xE-Y25504)" → "E-Z15929"
-        predicted_hg_base = predicted_hg.split('*')[0].split('(')[0]
-        node = tree.get(predicted_hg_base)
-        if not node:
-            continue
-
-        # Read marker states from this sample's own .out file
-        sample_folder = base_out_folder / sample_name
-        out_path = sample_folder / f"{sample_name}{out_file_suffix}"
-        hg_counts: dict = {}
-        if out_path.exists():
-            with open(out_path) as f:
-                next(f)
-                for line in f:
-                    parts = line.strip().split('\t')
-                    if len(parts) >= 11:
-                        hg, marker, state = parts[3], parts[2], parts[10]
-                        if hg not in hg_counts:
-                            hg_counts[hg] = {'d': 0, 'a': 0, 'rep_d': None, 'rep_a': None}
-                        if state == 'D':
-                            hg_counts[hg]['d'] += 1
-                            if hg_counts[hg]['rep_d'] is None:
-                                hg_counts[hg]['rep_d'] = marker
-                        elif state == 'A':
-                            hg_counts[hg]['a'] += 1
-                            if hg_counts[hg]['rep_a'] is None:
-                                hg_counts[hg]['rep_a'] = marker
-
-        marker_state: dict = {}
-        for hg, v in hg_counts.items():
-            majority = 'D' if v['d'] >= v['a'] else 'A'
-            rep = v['rep_d'] if majority == 'D' else v['rep_a']
-            marker_state[hg] = {'marker': rep or v['rep_d'] or v['rep_a'], 'state': majority}
-
-        path = []
-        n = node
-        while n:
-            entry = marker_state.get(n.name)
-            path.append({
-                'haplogroup': n.name,
-                'marker': entry['marker'] if entry else None,
-                'state': entry['state'] if entry else 'NC',
-            })
-            n = n.parent
-        path.reverse()
-
-        out = sample_folder / f'haplogroup_path_{tree_name}.json'
-        with open(out, 'w') as f:
-            _json.dump(path, f)
+    tree_file = get_tree_path(tree_name)
+    args_list = [
+        (base_out_folder, sample_name, predicted_hg, out_file_suffix, tree_name)
+        for sample_name, predicted_hg in sample_hg.items()
+    ]
+    with multiprocessing.Pool(
+            processes=threads,
+            initializer=_init_path_worker,
+            initargs=(tree_file,)
+    ) as pool:
+        pool.map(_write_path_for_sample, args_list)
 
 
 def _read_hg_file(hg_file: Path) -> dict:
