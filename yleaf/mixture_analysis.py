@@ -104,11 +104,14 @@ def _decompose_subtree(
     het_df: pd.DataFrame,
     tree: Tree,
     max_n: int,
-) -> List[Tuple[str, pd.DataFrame]]:
+    branch_root: Optional[str] = None,
+) -> List[Tuple[str, pd.DataFrame, str]]:
     """
     Recursively decompose the subtree rooted at node_name into leaf contributors.
 
-    Returns a list of (haplogroup, unique_het_positions) pairs — one per contributor.
+    Returns a list of (haplogroup, unique_het_positions, branch_root) triples.
+    branch_root is the first child of the split node on this branch — used by the
+    caller to limit the path-coherence check to below the split.
     het_df is pre-filtered to positions within this subtree (plus node_name itself).
     """
     if het_df.empty or max_n == 0:
@@ -126,20 +129,43 @@ def _decompose_subtree(
 
     if not branches:
         # No children have het positions: current node is the deepest reachable.
-        return [(node_name, het_df)]
+        return [(node_name, het_df, branch_root or node_name)]
 
     if len(branches) == 1:
         # Single branch: keep descending (this node is still on the shared path).
-        return _decompose_subtree(branches[0][0], branches[0][2], tree, max_n)
+        return _decompose_subtree(branches[0][0], branches[0][2], tree, max_n, branch_root)
 
-    # Multiple branches: each is a separate contributor (or sub-group of contributors).
-    result: List[Tuple[str, pd.DataFrame]] = []
+    # Multiple branches: split found here. Each child becomes the branch_root for its subtree.
+    result: List[Tuple[str, pd.DataFrame, str]] = []
     for child_name, _, child_het in branches:
         if len(result) >= max_n:
             break
-        sub = _decompose_subtree(child_name, child_het, tree, max_n - len(result))
+        sub = _decompose_subtree(child_name, child_het, tree, max_n - len(result),
+                                 branch_root=child_name)
         result.extend(sub)
     return result
+
+
+def _path_has_called_intermediate(
+    candidate: str,
+    branch_root: str,
+    tree: Tree,
+    called_nodes: set,
+) -> bool:
+    """
+    Walk ancestors from candidate up to (but not including) branch_root.
+    Return True if any intermediate node appears in called_nodes (has a non-het
+    majority call), which contradicts the candidate being a real contributor.
+    """
+    node = tree.get(candidate)
+    while node.parent is not None and node.name != branch_root:
+        if node.name != candidate and node.name in called_nodes:
+            return True
+        node = node.parent
+    # Also check branch_root itself
+    if branch_root in called_nodes:
+        return True
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -186,6 +212,14 @@ def analyze_mixture(
     Analyse .out + .fmf for a single sample/tree pair and return a MixtureResult,
     or None if no mixture signal is detected.
     """
+    # --- Load called (non-het majority) positions from .out file ---
+    called_nodes: set = set()
+    try:
+        out_df = pd.read_csv(out_file, sep="\t")
+        called_nodes = set(out_df["haplogroup"].dropna().unique())
+    except Exception as e:
+        LOG.warning(f"Mixture: could not read {out_file}: {e}")
+
     # --- Load het positions (below base majority, non-NA state, sufficient reads) ---
     try:
         fmf_df = pd.read_csv(fmf_file, sep="\t")
@@ -263,13 +297,25 @@ def analyze_mixture(
     if not decomposed:
         return None
 
-    if len(decomposed) < 2:
-        LOG.debug("Mixture: only one branch found — insufficient evidence for mixture.")
+    # --- Filter incoherent branches (called intermediate between split and leaf) ---
+    coherent = []
+    for hg, unique_het, branch_root in decomposed:
+        if called_nodes and _path_has_called_intermediate(hg, branch_root, tree, called_nodes):
+            LOG.debug(
+                f"Mixture: discarding {hg} (branch_root={branch_root}): "
+                f"called intermediate found on path — likely noise."
+            )
+        else:
+            coherent.append((hg, unique_het))
+    decomposed_pairs = coherent
+
+    if len(decomposed_pairs) < 2:
+        LOG.debug("Mixture: fewer than 2 coherent branches — insufficient evidence for mixture.")
         return None
 
     # --- Build contributor objects, sorted by descending ratio ---
     raw: List[Tuple[str, float, int, float]] = []
-    for hg, unique_het in decomposed:
+    for hg, unique_het in decomposed_pairs:
         ratio = _estimate_ratio(unique_het)
         qc = _compute_qc(unique_het, ratio)
         raw.append((hg, ratio, len(unique_het), qc))
