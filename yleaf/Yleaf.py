@@ -1337,6 +1337,9 @@ def _run_bam_cram_multi_tree_inner(
             mix_output = output_dir / (output_dir.name + out_suffix + ".mix")
             _run_mixture_analysis(outputfile, fmf_output, tree, args.reads_treshold, mix_output)
 
+    if args.private_mutations:
+        find_private_mutations(output_dir, input_file, args, is_bam)
+
     # TODO (production): delete pileup when no longer needed: os.remove(pileupfile)
 
     LOG.debug(f"Finished multi-tree extraction for {input_file}")
