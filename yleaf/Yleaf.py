@@ -46,6 +46,9 @@ _INDEL_CHARS: frozenset = frozenset('+-^$')  # chars that require slow-path pile
 # Worker-process globals for VCF pool (loaded once per worker via _init_vcf_worker)
 _WORKER_MARKERFILE = None
 _WORKER_CHRY_SEQ = None
+_WORKER_TREE = None                  # single-tree cache (loaded by _init_vcf_worker)
+_WORKER_MARKERFILE_CACHE: dict = {}  # multi-tree lazy cache: str(path) → DataFrame
+_WORKER_TREE_CACHE: dict = {}        # multi-tree lazy cache: tree_name → Tree
 
 # path constants
 PREDICTION_OUT_FILE_NAME: str = "hg_prediction.hg"
@@ -74,25 +77,38 @@ class MyFormatter(logging.Formatter):
         return super(MyFormatter, self).format(record)
 
 
-def _init_vcf_worker(markerfile_path: Path, reference_genome: str) -> None:
-    """Pool initializer: load markerfile and chrY FASTA once per worker process."""
-    global _WORKER_MARKERFILE, _WORKER_CHRY_SEQ
-    _WORKER_MARKERFILE = pd.read_csv(
-        markerfile_path, header=None, sep="\t",
-        names=["chr", "marker_name", "haplogroup", "pos", "mutation", "anc", "der"],
-        dtype={"chr": str, "marker_name": str, "haplogroup": str,
-               "pos": int, "mutation": str, "anc": str, "der": str},
-    ).drop_duplicates(subset='pos', keep='first')
+def _load_chry_seq(reference_genome: str) -> Union[str, None]:
+    """Load chrY FASTA into a string; returns None on failure."""
     try:
         chry_ref_path = get_reference_path(reference_genome, False)
         if not (chry_ref_path and chry_ref_path.exists() and os.path.getsize(chry_ref_path) > 0):
             from yleaf.download_reference import download_chry_fasta
             chry_ref_path = download_chry_fasta(reference_genome)
         with open(chry_ref_path) as _f:
-            _WORKER_CHRY_SEQ = ''.join(line.strip().upper() for line in _f if not line.startswith('>'))
+            return ''.join(line.strip().upper() for line in _f if not line.startswith('>'))
     except Exception as e:
         LOG.warning(f"VCF worker: could not load chrY FASTA for reference inference: {e}")
-        _WORKER_CHRY_SEQ = None
+        return None
+
+
+def _init_vcf_worker(markerfile_path: Path, reference_genome: str, tree_name: str = None) -> None:
+    """Pool initializer: load markerfile, chrY FASTA, and optionally the tree once per worker."""
+    global _WORKER_MARKERFILE, _WORKER_CHRY_SEQ, _WORKER_TREE
+    _WORKER_MARKERFILE = pd.read_csv(
+        markerfile_path, header=None, sep="\t",
+        names=["chr", "marker_name", "haplogroup", "pos", "mutation", "anc", "der"],
+        dtype={"chr": str, "marker_name": str, "haplogroup": str,
+               "pos": int, "mutation": str, "anc": str, "der": str},
+    ).drop_duplicates(subset='pos', keep='first')
+    _WORKER_CHRY_SEQ = _load_chry_seq(reference_genome)
+    if tree_name:
+        _WORKER_TREE = Tree(get_tree_path(tree_name))
+
+
+def _init_vcf_worker_multi(reference_genome: str) -> None:
+    """Multi-tree pool initializer: load chrY FASTA once; markerfiles and trees are lazy-loaded."""
+    global _WORKER_CHRY_SEQ
+    _WORKER_CHRY_SEQ = _load_chry_seq(reference_genome)
 
 
 def _infer_from_reference(
@@ -108,15 +124,26 @@ def _infer_from_reference(
     missing = full_markerfile[~full_markerfile['pos'].isin(covered)].copy()
     if missing.empty:
         return df_out, 0
+
+    # Vectorised reference-allele lookup (avoids per-row Python apply)
     seq_len = len(chry_seq)
-    missing['ref_allele'] = missing['pos'].apply(
-        lambda p: chry_seq[p - 1] if 0 < p <= seq_len else 'N')
-    missing = missing[missing.apply(
-        lambda r: r['ref_allele'] in ACCEPTED_REF_BASES and r['ref_allele'] in (r['anc'], r['der']),
-        axis=1)].copy()
+    positions = missing['pos'].values
+    valid = (positions > 0) & (positions <= seq_len)
+    ref_alleles = np.empty(len(positions), dtype=object)
+    ref_alleles[:] = 'N'
+    if valid.any():
+        ref_alleles[valid] = [chry_seq[p - 1] for p in positions[valid]]
+    missing['ref_allele'] = ref_alleles
+
+    # Vectorised filter: must be a known base that matches anc or der
+    ra = missing['ref_allele']
+    keep = ra.isin(ACCEPTED_REF_BASES) & ((ra == missing['anc']) | (ra == missing['der']))
+    missing = missing[keep].copy()
     if missing.empty:
         return df_out, 0
-    missing['state'] = missing.apply(lambda r: 'A' if r['ref_allele'] == r['anc'] else 'D', axis=1)
+
+    # Vectorised state assignment
+    missing['state'] = np.where(missing['ref_allele'] == missing['anc'], 'A', 'D')
     missing['reads'] = 0
     missing['called_perc'] = 100.0
     missing['called_base'] = missing['ref_allele']
@@ -136,23 +163,37 @@ def run_vcf(
         tree_name: str = None,
 ):
     LOG.debug("Starting with extracting haplogroups...")
-    # Use pre-loaded global when running inside a Pool worker; fall back to disk read otherwise.
-    markerfile = _WORKER_MARKERFILE if _WORKER_MARKERFILE is not None else pd.read_csv(
-        path_markerfile, header=None, sep="\t",
-        names=["chr", "marker_name", "haplogroup", "pos", "mutation", "anc", "der"],
-        dtype={"chr": str, "marker_name": str, "haplogroup": str,
-               "pos": int, "mutation": str, "anc": str, "der": str},
-    ).drop_duplicates(subset='pos', keep='first', inplace=False)
+    # Use per-worker cached markerfile (single-tree global, or multi-tree lazy dict).
+    _mf_key = str(path_markerfile)
+    if _WORKER_MARKERFILE is not None:
+        markerfile = _WORKER_MARKERFILE
+    elif _mf_key in _WORKER_MARKERFILE_CACHE:
+        markerfile = _WORKER_MARKERFILE_CACHE[_mf_key]
+    else:
+        markerfile = pd.read_csv(
+            path_markerfile, header=None, sep="\t",
+            names=["chr", "marker_name", "haplogroup", "pos", "mutation", "anc", "der"],
+            dtype={"chr": str, "marker_name": str, "haplogroup": str,
+                   "pos": int, "mutation": str, "anc": str, "der": str},
+        ).drop_duplicates(subset='pos', keep='first', inplace=False)
+        _WORKER_MARKERFILE_CACHE[_mf_key] = markerfile
 
     sample_vcf_folder = base_out_folder / (sample_vcf_file.name.replace(".vcf.gz", ""))
     safe_create_dir(sample_vcf_folder, args.force if not out_suffix else False, reuse_pileup=bool(out_suffix))
 
-    # Detect whether the VCF carries FORMAT/AD (read-based callers: GATK, DeepVariant)
-    # or is GT-only (e.g. 1000G Phase 3 array/imputed genotypes).
-    _hdr = subprocess.run(
-        f"bcftools view -h {sample_vcf_file}",
-        shell=True, capture_output=True, text=True)
-    has_ad = 'ID=AD' in _hdr.stdout
+    # Detect FORMAT/AD by scanning the gzip header directly — avoids spawning bcftools per sample.
+    import gzip as _gzip
+    has_ad = False
+    try:
+        with _gzip.open(sample_vcf_file, 'rt') as _hdr_f:
+            for _hdr_line in _hdr_f:
+                if not _hdr_line.startswith('#'):
+                    break
+                if 'ID=AD' in _hdr_line:
+                    has_ad = True
+                    break
+    except Exception:
+        pass
 
     sample_vcf_file_txt = sample_vcf_folder / (sample_vcf_file.name.replace(".vcf.gz", ".txt"))
 
@@ -340,7 +381,15 @@ def run_vcf(
             mappable_df[lst[3]] = []
         mappable_df[lst[3]].append(lst)
 
-    tree = Tree(get_tree_path(tree_name if tree_name else args.tree))
+    # Use per-worker cached tree (single-tree global, or multi-tree lazy dict).
+    _tree_nm = tree_name if tree_name else args.tree
+    if _WORKER_TREE is not None:
+        tree = _WORKER_TREE
+    elif _tree_nm in _WORKER_TREE_CACHE:
+        tree = _WORKER_TREE_CACHE[_tree_nm]
+    else:
+        tree = Tree(get_tree_path(_tree_nm))
+        _WORKER_TREE_CACHE[_tree_nm] = tree
     with open(outputfile, "w") as f:
         f.write('\t'.join(["chr", "pos", "marker_name", "haplogroup", "mutation", "anc", "der", "reads",
                            "called_perc", "called_base", "state", "depth\n"]))
@@ -698,6 +747,14 @@ def main_vcf_split(
     return sample_vcf_files
 
 
+def _run_vcf_job(job: Tuple, base_out_folder: Path, args: argparse.Namespace,
+                 markerfile_paths: dict) -> None:
+    """Unpack a (sample_vcf_file, tree_name) job and call run_vcf."""
+    sample_vcf_file, tree_name = job
+    run_vcf(markerfile_paths[tree_name], base_out_folder, args, sample_vcf_file,
+            out_suffix=f'.{tree_name}', tree_name=tree_name)
+
+
 def _write_merged_vcf_bed(merged_bed: Path, trees: List[str], reference_genome: str,
                           ancient_dna: bool) -> None:
     """Merge BED files from multiple trees into a union BED for VCF filtering."""
@@ -735,14 +792,18 @@ def main_vcf_multi_tree(
         merged_bed.unlink()
         sample_vcf_files = files
 
-    for tree in trees:
-        path_markerfile = get_position_file(args.reference_genome, args.ancient_DNA, tree)
-        with multiprocessing.Pool(processes=args.threads,
-                                  initializer=_init_vcf_worker,
-                                  initargs=(path_markerfile, args.reference_genome)) as p:
-            p.map(partial(run_vcf, path_markerfile, base_out_folder, args,
-                          out_suffix=f'.{tree}', tree_name=tree),
-                  sample_vcf_files)
+    # Build a {tree: markerfile_path} map and dispatch all (sample, tree) pairs in one pool.
+    # Workers lazy-load each tree's data on first access; all trees run concurrently.
+    markerfile_paths = {
+        tree: get_position_file(args.reference_genome, args.ancient_DNA, tree)
+        for tree in trees
+    }
+    jobs = [(sample, tree) for sample in sample_vcf_files for tree in trees]
+    with multiprocessing.Pool(processes=args.threads,
+                              initializer=_init_vcf_worker_multi,
+                              initargs=(args.reference_genome,)) as p:
+        p.map(partial(_run_vcf_job, base_out_folder=base_out_folder, args=args,
+                      markerfile_paths=markerfile_paths), jobs)
 
     combined_out = base_out_folder / "hg_prediction_combined.hg"
     write_combined_prediction_table(base_out_folder, trees, combined_out,
@@ -773,13 +834,13 @@ def main_vcf(
 
         with multiprocessing.Pool(processes=args.threads,
                                   initializer=_init_vcf_worker,
-                                  initargs=(path_markerfile, args.reference_genome)) as p:
+                                  initargs=(path_markerfile, args.reference_genome, args.tree)) as p:
             p.map(partial(run_vcf, path_markerfile, base_out_folder, args), sample_vcf_files)
 
     else:
         with multiprocessing.Pool(processes=args.threads,
                                   initializer=_init_vcf_worker,
-                                  initargs=(path_markerfile, args.reference_genome)) as p:
+                                  initargs=(path_markerfile, args.reference_genome, args.tree)) as p:
             p.map(partial(run_vcf, path_markerfile, base_out_folder, args), files)
 
 
