@@ -242,7 +242,7 @@ def run_vcf(
 
     else:
         # GT-only VCF: derive called_base from genotype allele index; no read depth available.
-        LOG.info(f"GT-only VCF (no FORMAT/AD): using genotype calls for {sample_vcf_file.name}")
+        LOG.debug(f"GT-only VCF (no FORMAT/AD): using genotype calls for {sample_vcf_file.name}")
         cmd = f"bcftools query -f '%CHROM\t%POS\t%REF\t%ALT[\t%GT]\n' {sample_vcf_file} > {sample_vcf_file_txt}"
         call_command(cmd)
         pileupfile = pd.read_csv(sample_vcf_file_txt, dtype=str, header=None, sep="\t")
@@ -408,7 +408,7 @@ def run_vcf(
         effective_tree = tree_name if tree_name else args.tree
         _run_mixture_analysis(outputfile, fmf_output, effective_tree, args.reads_treshold, mix_output)
 
-    LOG.info(f"Finished extracting genotypes for {sample_vcf_file.name}")
+    LOG.debug(f"Finished extracting genotypes for {sample_vcf_file.name}")
 
 
 # ── PLINK / SNP array support ─────────────────────────────────────────────────
@@ -587,8 +587,8 @@ def _write_plink_sample_out(
         f"Markers with haplogroup information: {n_called}",
     ], suffix=info_suffix)
 
-    LOG.info(f"  {sample_id}: {n_called} markers called, "
-             f"{n_missing} not on array, {n_discordant} discordant")
+    LOG.debug(f"  {sample_id}: {n_called} markers called, "
+              f"{n_missing} not on array, {n_discordant} discordant")
 
 
 def _load_plink_genotypes(args: argparse.Namespace) -> Dict[str, Dict[int, str]]:
@@ -802,11 +802,17 @@ def main_vcf_multi_tree(
         for tree in trees
     }
     jobs = [(sample, tree) for sample in sample_vcf_files for tree in trees]
+    total_jobs = len(jobs)
+    LOG.info(f"[PROGRESS] extraction 0/{total_jobs}")
     with multiprocessing.Pool(processes=args.threads,
                               initializer=_init_vcf_worker_multi,
                               initargs=(args.reference_genome,)) as p:
-        p.map(partial(_run_vcf_job, base_out_folder=base_out_folder, args=args,
-                      markerfile_paths=markerfile_paths), jobs)
+        for i, _ in enumerate(
+            p.imap_unordered(partial(_run_vcf_job, base_out_folder=base_out_folder, args=args,
+                                     markerfile_paths=markerfile_paths), jobs),
+            1,
+        ):
+            LOG.info(f"[PROGRESS] extraction {i}/{total_jobs}")
 
     combined_out = base_out_folder / "hg_prediction_combined.hg"
     write_combined_prediction_table(base_out_folder, trees, combined_out,
@@ -835,16 +841,28 @@ def main_vcf(
         sample_vcf_files = [x for x in sample_vcf_files if x is not None]
         sample_vcf_files = [item for sublist in sample_vcf_files for item in sublist]
 
+        total_vcf = len(sample_vcf_files)
+        LOG.info(f"[PROGRESS] extraction 0/{total_vcf}")
         with multiprocessing.Pool(processes=args.threads,
                                   initializer=_init_vcf_worker,
                                   initargs=(path_markerfile, args.reference_genome, args.tree)) as p:
-            p.map(partial(run_vcf, path_markerfile, base_out_folder, args), sample_vcf_files)
+            for i, _ in enumerate(
+                p.imap_unordered(partial(run_vcf, path_markerfile, base_out_folder, args), sample_vcf_files),
+                1,
+            ):
+                LOG.info(f"[PROGRESS] extraction {i}/{total_vcf}")
 
     else:
+        total_vcf = len(files)
+        LOG.info(f"[PROGRESS] extraction 0/{total_vcf}")
         with multiprocessing.Pool(processes=args.threads,
                                   initializer=_init_vcf_worker,
                                   initargs=(path_markerfile, args.reference_genome, args.tree)) as p:
-            p.map(partial(run_vcf, path_markerfile, base_out_folder, args), files)
+            for i, _ in enumerate(
+                p.imap_unordered(partial(run_vcf, path_markerfile, base_out_folder, args), files),
+                1,
+            ):
+                LOG.info(f"[PROGRESS] extraction {i}/{total_vcf}")
 
 
 def main():
