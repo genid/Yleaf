@@ -681,7 +681,7 @@ def main_vcf_split(
         active_vcf = vcf_file
     else:
         active_vcf = sorted_vcf_file
-        cmd = f"bcftools index -f {sorted_vcf_file}"
+        cmd = f"bcftools index --threads {n_threads} -f {sorted_vcf_file}"
         call_command(cmd)
 
     # get chromosome annotation from whichever file we are using
@@ -711,7 +711,7 @@ def main_vcf_split(
     # filter the vcf file using the reference bed file
     stem = vcf_file.name.replace(".vcf.gz", "")
     filtered_vcf_file = base_out_folder / "filtered_vcf_files" / f"{stem}.filtered.vcf.gz"
-    cmd = f"bcftools view -O z -R {new_position_bed_file} {active_vcf} > {filtered_vcf_file}"
+    cmd = f"bcftools view --threads {n_threads} -O z -R {new_position_bed_file} {active_vcf} > {filtered_vcf_file}"
     call_command(cmd)
 
     # remover temp_position_bed.bed
