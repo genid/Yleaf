@@ -1286,8 +1286,14 @@ def main_bam_cram_multi_tree(
     # Pre-compute union of marker positions across all trees once; workers write BED cheaply per sample.
     merged_positions = _precompute_merged_positions(trees, args.reference_genome, args.ancient_DNA)
 
+    total = len(files)
+    LOG.info(f"[PROGRESS] pileup 0/{total}")
     with multiprocessing.Pool(processes=args.threads) as p:
-        p.map(partial(run_bam_cram_multi_tree, args, base_out_folder, is_bam, trees, merged_positions), files)
+        for i, _ in enumerate(
+            p.imap_unordered(partial(run_bam_cram_multi_tree, args, base_out_folder, is_bam, trees, merged_positions), files),
+            1,
+        ):
+            LOG.info(f"[PROGRESS] pileup {i}/{total}")
 
     # Flush all pending NFS/OS writes from worker processes before reading output files
     os.sync()
@@ -1343,7 +1349,7 @@ def _run_bam_cram_multi_tree_inner(
         merged_positions: List[int],
         input_file: Path
 ):
-    LOG.info(f"Starting multi-tree run for {input_file}")
+    LOG.debug(f"Starting multi-tree run for {input_file}")
     output_dir = base_out_folder / input_file.name.rsplit(".", 1)[0]
     safe_create_dir(output_dir, args.force, reuse_pileup=getattr(args, 'reuse_pileup', False))
 
@@ -1636,7 +1642,7 @@ def run_bam_cram(
         input_file: Path
 ):
     try:
-        LOG.info(f"Starting with running for {input_file}")
+        LOG.debug(f"Starting with running for {input_file}")
         output_dir = base_out_folder / input_file.name.rsplit(".", 1)[0]
         safe_create_dir(output_dir, args.force, reuse_pileup=getattr(args, 'reuse_pileup', False))
         general_info_list = samtools(output_dir, input_file, is_bam, args)

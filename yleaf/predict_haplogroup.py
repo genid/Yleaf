@@ -120,12 +120,12 @@ def main_predict_haplogroup(
         LOG.warning(f"WARNING: failed to find .out file from yleaf run for sample {folder.name}. This sample will"
                     " be skipped.")
         return [None, None, None]
-    LOG.info(f"[diag] {folder.name}: read {len(haplotype_dict)} haplogroups from {out_path.name}; "
-             f"ACTIVE_TREE={ACTIVE_TREE} BACKBONE={len(BACKBONE_GROUPS)} MAIN_HG={len(MAIN_HAPLO_GROUPS)}")
+    LOG.debug(f"[diag] {folder.name}: read {len(haplotype_dict)} haplogroups from {out_path.name}; "
+              f"ACTIVE_TREE={ACTIVE_TREE} BACKBONE={len(BACKBONE_GROUPS)} MAIN_HG={len(MAIN_HAPLO_GROUPS)}")
     tree_file = getattr(namespace, 'tree_file', None) or (yleaf_constants.HG_PREDICTION_FOLDER / yleaf_constants.TREE_FILE)
     tree = Tree(tree_file)
     best_haplotype_score = get_most_likely_haplotype(tree, haplotype_dict, namespace.minimum_score)
-    LOG.info(f"[diag] {folder.name}: best={best_haplotype_score[0]}")
+    LOG.debug(f"[diag] {folder.name}: best={best_haplotype_score[0]}")
     return [haplotype_dict, best_haplotype_score, folder]
 
 
@@ -143,10 +143,19 @@ def main(namespace: argparse.Namespace = None):
     read_backbone_groups(tree_file)
     final_table = []
 
+    folders = list(read_input_folder(in_folder))
+    total = len(folders)
+    LOG.info(f"[PROGRESS] prediction 0/{total}")
+    predictions = []
     with multiprocessing.Pool(processes=threads) as p:
-        predictions = p.map(partial(main_predict_haplogroup, namespace, BACKBONE_GROUPS, MAIN_HAPLO_GROUPS,
-                                    IS_FTDNA_TREE, active_tree=ACTIVE_TREE, out_file_suffix=out_file_suffix),
-                            read_input_folder(in_folder))
+        for i, result in enumerate(
+            p.imap_unordered(partial(main_predict_haplogroup, namespace, BACKBONE_GROUPS, MAIN_HAPLO_GROUPS,
+                                     IS_FTDNA_TREE, active_tree=ACTIVE_TREE, out_file_suffix=out_file_suffix),
+                             folders),
+            1,
+        ):
+            predictions.append(result)
+            LOG.info(f"[PROGRESS] prediction {i}/{total}")
 
     for haplotype_dict, best_haplotype_score, folder in predictions:
         if haplotype_dict is None:
