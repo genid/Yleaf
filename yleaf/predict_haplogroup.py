@@ -26,10 +26,16 @@ MAIN_HAPLO_GROUPS: Set = set()
 QC1_SCORE_CACHE: Dict[str, float] = {}
 IS_FTDNA_TREE: bool = False
 ACTIVE_TREE: str = "yfull"  # tracks which tree is active for QC routing
+_WORKER_TREE: 'Tree' = None  # cached per worker, set by _init_predict_worker
 
 DEFAULT_MIN_SCORE = 0.95
 
 LOG = logging.getLogger("yleaf_logger")
+
+
+def _init_predict_worker(tree_file: Path):
+    global _WORKER_TREE
+    _WORKER_TREE = Tree(tree_file)
 
 
 class HgMarkersLinker:
@@ -122,8 +128,11 @@ def main_predict_haplogroup(
         return [None, None, None]
     LOG.debug(f"[diag] {folder.name}: read {len(haplotype_dict)} haplogroups from {out_path.name}; "
               f"ACTIVE_TREE={ACTIVE_TREE} BACKBONE={len(BACKBONE_GROUPS)} MAIN_HG={len(MAIN_HAPLO_GROUPS)}")
-    tree_file = getattr(namespace, 'tree_file', None) or (yleaf_constants.HG_PREDICTION_FOLDER / yleaf_constants.TREE_FILE)
-    tree = Tree(tree_file)
+    if _WORKER_TREE is not None:
+        tree = _WORKER_TREE
+    else:
+        tree_file = getattr(namespace, 'tree_file', None) or (yleaf_constants.HG_PREDICTION_FOLDER / yleaf_constants.TREE_FILE)
+        tree = Tree(tree_file)
     best_haplotype_score = get_most_likely_haplotype(tree, haplotype_dict, namespace.minimum_score)
     LOG.debug(f"[diag] {folder.name}: best={best_haplotype_score[0]}")
     return [haplotype_dict, best_haplotype_score, folder]
@@ -146,21 +155,20 @@ def main(namespace: argparse.Namespace = None):
     folders = list(read_input_folder(in_folder))
     total = len(folders)
     LOG.info(f"[PROGRESS] prediction 0/{total}")
-    predictions = []
-    with multiprocessing.Pool(processes=threads) as p:
+    effective_tree_file = tree_file or (yleaf_constants.HG_PREDICTION_FOLDER / yleaf_constants.TREE_FILE)
+    with multiprocessing.Pool(processes=threads,
+                               initializer=_init_predict_worker,
+                               initargs=(effective_tree_file,)) as p:
         for i, result in enumerate(
             p.imap_unordered(partial(main_predict_haplogroup, namespace, BACKBONE_GROUPS, MAIN_HAPLO_GROUPS,
                                      IS_FTDNA_TREE, active_tree=ACTIVE_TREE, out_file_suffix=out_file_suffix),
                              folders),
             1,
         ):
-            predictions.append(result)
+            haplotype_dict, best_haplotype_score, folder = result
+            if haplotype_dict is not None:
+                add_to_final_table(final_table, haplotype_dict, best_haplotype_score, folder, info_file_suffix)
             LOG.info(f"[PROGRESS] prediction {i}/{total}")
-
-    for haplotype_dict, best_haplotype_score, folder in predictions:
-        if haplotype_dict is None:
-            continue
-        add_to_final_table(final_table, haplotype_dict, best_haplotype_score, folder, info_file_suffix)
 
     write_final_table(final_table, output)
     LOG.debug("Finished haplogroup prediction")
