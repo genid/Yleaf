@@ -795,24 +795,25 @@ def main_vcf_multi_tree(
         merged_bed.unlink()
         sample_vcf_files = files
 
-    # Build a {tree: markerfile_path} map and dispatch all (sample, tree) pairs in one pool.
-    # Workers lazy-load each tree's data on first access; all trees run concurrently.
-    markerfile_paths = {
-        tree: get_position_file(args.reference_genome, args.ancient_DNA, tree)
-        for tree in trees
-    }
-    jobs = [(sample, tree) for sample in sample_vcf_files for tree in trees]
-    total_jobs = len(jobs)
-    LOG.info(f"[PROGRESS] extraction 0/{total_jobs}")
-    with multiprocessing.Pool(processes=args.threads,
-                              initializer=_init_vcf_worker_multi,
-                              initargs=(args.reference_genome,)) as p:
-        for i, _ in enumerate(
-            p.imap_unordered(partial(_run_vcf_job, base_out_folder=base_out_folder, args=args,
-                                     markerfile_paths=markerfile_paths), jobs),
-            1,
-        ):
-            LOG.info(f"[PROGRESS] extraction {i}/{total_jobs}")
+    # Process trees sequentially, one pool per tree.
+    # Each pool's workers load only one tree's markerfile + Tree object, then the pool exits
+    # and that memory is freed before the next tree's pool starts. This prevents per-worker
+    # memory from accumulating across all trees simultaneously.
+    total_jobs = len(sample_vcf_files) * len(trees)
+    done = 0
+    for tree in trees:
+        mf_path = get_position_file(args.reference_genome, args.ancient_DNA, tree)
+        jobs = [(sample, tree) for sample in sample_vcf_files]
+        with multiprocessing.Pool(processes=args.threads,
+                                  initializer=_init_vcf_worker,
+                                  initargs=(mf_path, args.reference_genome, tree)) as p:
+            for _ in p.imap_unordered(
+                partial(_run_vcf_job, base_out_folder=base_out_folder, args=args,
+                        markerfile_paths={tree: mf_path}),
+                jobs,
+            ):
+                done += 1
+                LOG.info(f"[PROGRESS] extraction {done}/{total_jobs}")
 
     combined_out = base_out_folder / "hg_prediction_combined.hg"
     write_combined_prediction_table(base_out_folder, trees, combined_out,
