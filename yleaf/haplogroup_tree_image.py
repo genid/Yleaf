@@ -171,6 +171,7 @@ def _write_html(svg: str, output_path: Path, hg_colors: Dict[str, str]) -> None:
 {svg}
 </div>
 <script src="https://cdn.jsdelivr.net/npm/svg-pan-zoom@3.6.1/dist/svg-pan-zoom.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
 <script>
 const COLOR_MAP = {colors_js};
 let panZoom = null;
@@ -230,38 +231,31 @@ function updateSelectAllState() {{
 
 function fitVisible() {{
   if (!panZoom) return;
-  const svgEl = document.querySelector('#svg-wrap svg');
   const visible = [...document.querySelectorAll('g.node[data-hg]')]
     .filter(el => el.style.display !== 'none');
   if (visible.length === 0) return;
 
-  // Compute union bounding box in SVG coordinates
-  const ctm = svgEl.getScreenCTM();
-  const inv = ctm.inverse();
+  // getBBox() returns stable original SVG coordinates regardless of current pan/zoom state
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
   for (const el of visible) {{
-    const r = el.getBoundingClientRect();
-    // Convert screen corners to SVG coordinate space
-    const tl = new DOMPoint(r.left, r.top).matrixTransform(inv);
-    const br = new DOMPoint(r.right, r.bottom).matrixTransform(inv);
-    minX = Math.min(minX, tl.x, br.x);
-    minY = Math.min(minY, tl.y, br.y);
-    maxX = Math.max(maxX, tl.x, br.x);
-    maxY = Math.max(maxY, tl.y, br.y);
+    try {{
+      const b = el.getBBox();
+      minX = Math.min(minX, b.x);
+      minY = Math.min(minY, b.y);
+      maxX = Math.max(maxX, b.x + b.width);
+      maxY = Math.max(maxY, b.y + b.height);
+    }} catch (_) {{}}
   }}
 
   const pad = 30;
   const bw = maxX - minX + pad * 2;
   const bh = maxY - minY + pad * 2;
   const wrap = document.getElementById('svg-wrap');
-  const scaleX = wrap.clientWidth / bw;
-  const scaleY = wrap.clientHeight / bh;
-  const newZoom = Math.min(scaleX, scaleY, panZoom.getMaxZoom());
-
-  panZoom.zoom(newZoom);
-  // Center on the midpoint of the bounding box
+  const newZoom = Math.min(wrap.clientWidth / bw, wrap.clientHeight / bh, panZoom.getMaxZoom());
   const cx = (minX + maxX) / 2;
   const cy = (minY + maxY) / 2;
+
+  panZoom.zoom(newZoom);
   panZoom.pan({{
     x: wrap.clientWidth / 2 - cx * newZoom,
     y: wrap.clientHeight / 2 - cy * newZoom,
@@ -269,7 +263,41 @@ function fitVisible() {{
 }}
 
 function savePdf() {{
-  window.print();
+  const svgEl = document.querySelector('#svg-wrap svg');
+  const vb = svgEl.viewBox.baseVal;
+  const w = vb.width || svgEl.clientWidth || 1200;
+  const h = vb.height || svgEl.clientHeight || 800;
+
+  const clone = svgEl.cloneNode(true);
+  clone.querySelectorAll('[style*="display: none"]').forEach(el => el.remove());
+  clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+  clone.setAttribute('width', w);
+  clone.setAttribute('height', h);
+
+  const svgStr = new XMLSerializer().serializeToString(clone);
+  const svgData = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svgStr)));
+
+  const img = new Image();
+  img.onload = function() {{
+    const scale = 2;
+    const canvas = document.createElement('canvas');
+    canvas.width = w * scale;
+    canvas.height = h * scale;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#1a1a2e';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.scale(scale, scale);
+    ctx.drawImage(img, 0, 0, w, h);
+    const imgData = canvas.toDataURL('image/jpeg', 0.92);
+    const {{ jsPDF }} = window.jspdf;
+    const doc = new jsPDF({{ orientation: w > h ? 'l' : 'p', unit: 'px', format: [w, h] }});
+    doc.addImage(imgData, 'JPEG', 0, 0, w, h);
+    doc.save('yleaf_haplogroup_tree.pdf');
+  }};
+  img.onerror = function() {{
+    alert('PDF export failed. Use File → Print → Save as PDF instead.');
+  }};
+  img.src = svgData;
 }}
 </script>
 </body>
