@@ -40,10 +40,14 @@ class HgMarkersLinker:
 
     _ancestral_markers: Set[str]
     _derived_markers: Set[str]
+    _d: int
+    _a: int
 
     def __init__(self):
         self._ancestral_markers = set()
         self._derived_markers = set()
+        self._d = 0
+        self._a = 0
 
     def add(
         self,
@@ -52,31 +56,36 @@ class HgMarkersLinker:
     ):
         if state == self.DERIVED:
             self._derived_markers.add(marker_name)
+            self._d += 1
         else:
             self._ancestral_markers.add(marker_name)
+            self._a += 1
 
     def get_derived_markers(self) -> Set[str]:
         return self._derived_markers
 
     @property
     def nr_total(self) -> int:
-        return len(self._ancestral_markers) + len(self._derived_markers)
+        return self._d + self._a
 
     @property
     def nr_derived(self) -> int:
-        return len(self._derived_markers)
+        return self._d
 
     @property
     def nr_ancestral(self) -> int:
-        return len(self._ancestral_markers)
+        return self._a
 
     def get_state(self) -> str:
         """at least a fraction of 0.6 need to either derived or ancestral, otherwise the state can not be accurately
         determined and will be returned as undefined"""
-
-        if self.nr_derived / self.nr_total >= 0.6:
+        d, a = self._d, self._a
+        total = d + a
+        if total == 0:
+            return self.UNDEFINED
+        if d / total >= 0.6:
             return self.DERIVED
-        if self.nr_ancestral / self.nr_total >= 0.6:
+        if a / total >= 0.6:
             return self.ANCESTRAL
         return self.UNDEFINED
 
@@ -281,19 +290,36 @@ def get_most_likely_haplotype(
         # only record most specific nodes regardless of scores
         if node in covered_nodes:
             continue
+
+        # QC2 pre-check: skip path building for haplogroups with no/insufficient derived markers.
+        # Profiling shows 99.9 % of haplogroups fail here, so this avoids the expensive tree walk
+        # for virtually all candidates.
+        h = haplotype_dict[haplotype_name]
+        _d, _a = h._d, h._a
+        _total = _d + _a
+        if _total == 0:
+            qc2_score = 0
+        else:
+            qc2_score = _d / _total
+        if qc2_score < treshold:
+            continue
+
+        node_name = node.name
+        node_first_char = node_name[0]
         parent = node.parent
-        path = [node.name]
+        path = [node_name]
 
         # caclulate score 3 already since this is most efficient
         qc3_score = [0, 0]  # matching, total
 
         # walk the tree back
         while parent is not None:
-            path.append(parent.name)
-            if parent.name in haplotype_dict:
+            pname = parent.name
+            path.append(pname)
+            if pname in haplotype_dict:
                 # in the same overal haplogroup
-                if node.name[0] in parent.name and parent.name != node.name[0]:
-                    state = haplotype_dict[parent.name].get_state()
+                if node_first_char in pname and pname != node_first_char:
+                    state = haplotype_dict[pname].get_state()
                     if state == HgMarkersLinker.DERIVED:
                         qc3_score[0] += 1
 
@@ -309,12 +335,9 @@ def get_most_likely_haplotype(
         if qc1_score < treshold:
             continue
 
-        if haplotype_dict[node.name].nr_total == 0:
-            qc2_score = 0
-        else:
-            qc2_score = haplotype_dict[node.name].nr_derived / haplotype_dict[node.name].nr_total
-            if qc2_score < treshold:
-                continue
+        # QC2 already computed above; only repeat the threshold check
+        if qc2_score < treshold:
+            continue
         if qc3_score[1] == 0:
             # No intermediate ancestor data — neutral (no contradicting evidence).
             # FTDNA keeps 0 to block false positives at low coverage (see CLAUDE.md).
