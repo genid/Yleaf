@@ -12,7 +12,6 @@ A copy of GNU GPL v3 should have been included in this software package in LICEN
 Autor: Bram van Wersch
 """
 
-import json
 from pathlib import Path
 from typing import List, Dict, Tuple, Set
 from collections import defaultdict
@@ -71,234 +70,85 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
 <title>Yleaf Haplogroup Tree</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: sans-serif; display: flex; height: 100vh;
+  body { font-family: sans-serif; display: flex; flex-direction: column; height: 100vh;
          background: #1a1a2e; color: #e0e0e0; overflow: hidden; }
-  #sidebar { width: 195px; flex-shrink: 0; display: flex; flex-direction: column;
-             background: #16213e; border-right: 1px solid #0f3460; }
-  #sidebar-header { padding: 10px 14px 8px; border-bottom: 1px solid #0f3460; flex-shrink: 0; }
-  #sidebar-header h2 { font-size: 0.78rem; text-transform: uppercase;
-                       letter-spacing: 0.12em; color: #6a8ac0; margin-bottom: 8px; }
-  .select-all-row { display: flex; align-items: center; gap: 7px;
-                    font-size: 0.80rem; cursor: pointer; }
-  .select-all-row input { cursor: pointer; accent-color: #4a9eff; flex-shrink: 0; }
-  #sidebar-scroll { flex: 1; overflow-y: auto; padding: 10px 14px; }
-  #sidebar-scroll h3 { font-size: 0.65rem; text-transform: uppercase;
-                       letter-spacing: 0.1em; color: #506070; margin-bottom: 8px; }
-  .filter-item { display: flex; align-items: center; gap: 7px;
-                 padding: 3px 0; cursor: pointer; font-size: 0.80rem; }
-  .filter-item input { cursor: pointer; accent-color: #4a9eff; flex-shrink: 0; }
-  .color-dot { width: 10px; height: 10px; border-radius: 50%;
-               border: 1px solid rgba(255,255,255,0.25); flex-shrink: 0; }
-  .btn-row { display: flex; gap: 6px; padding: 10px 14px 12px;
-             border-top: 1px solid #0f3460; flex-shrink: 0; }
-  .btn { flex: 1; padding: 5px 4px; border: 1px solid #1a4070;
-         background: #0f2a50; color: #80b0e0; border-radius: 5px;
-         cursor: pointer; font-size: 0.72rem; }
+  #toolbar { display: flex; align-items: center; gap: 6px; padding: 6px 10px;
+             background: #16213e; border-bottom: 1px solid #0f3460; flex-shrink: 0; flex-wrap: wrap; }
+  #toolbar h2 { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.12em;
+                color: #6a8ac0; margin-right: 6px; white-space: nowrap; }
+  .tab-btn { padding: 4px 10px; border: 1px solid #1a4070; background: #0f2a50;
+             color: #80b0e0; border-radius: 4px; cursor: pointer; font-size: 0.75rem; }
+  .tab-btn:hover { background: #1a4a8a; }
+  .tab-btn.active { background: #1a4a8a; border-color: #4a9eff; color: #fff; }
+  .spacer { flex: 1; }
+  .btn { padding: 4px 10px; border: 1px solid #1a4070; background: #0f2a50;
+         color: #80b0e0; border-radius: 4px; cursor: pointer; font-size: 0.75rem; white-space: nowrap; }
   .btn:hover { background: #1a4a8a; }
-  .btn:disabled { opacity: 0.5; cursor: default; }
   #svg-wrap { flex: 1; overflow: hidden; position: relative; }
-  #svg-wrap svg { width: 100%; height: 100%; }
-  #loading { position: absolute; inset: 0; display: flex; align-items: center;
-             justify-content: center; font-size: 0.9rem; color: #6a8ac0;
-             background: #1a1a2e; }
+  .svg-container { display: none; width: 100%; height: 100%; position: absolute; inset: 0; }
+  .svg-container.active { display: block; }
+  .svg-container > svg { width: 100%; height: 100%; }
   .svgpanzoom-control-icons { filter: invert(0.8); }
   @media print {
-    #sidebar { display: none; }
+    #toolbar { display: none; }
     body { display: block; height: auto; background: white; }
     #svg-wrap { width: 100vw; height: 100vh; }
-    #svg-wrap svg { width: 100%; height: 100%; }
-    .svgpanzoom-control-icons { display: none; }
   }
 </style>
 </head>
 <body>
-<div id="sidebar">
-  <div id="sidebar-header">
-    <h2>Yleaf Haplogroup Tree</h2>
-    <label class="select-all-row">
-      <input type="checkbox" id="select-all-cb" checked onchange="toggleAll(this.checked)">
-      <span>Select all</span>
-    </label>
-  </div>
-  <div id="sidebar-scroll">
-    <h3>Filter by major haplogroup</h3>
-    <div id="filters"></div>
-  </div>
-  <div class="btn-row">
-    <button class="btn" id="fit-btn" onclick="fitView()">Fit view</button>
-    <button class="btn" id="pdf-btn" onclick="savePdf()">Save PDF</button>
-  </div>
+<div id="toolbar">
+  <h2>Yleaf Haplogroup Tree</h2>
+  TAB_BUTTONS_PLACEHOLDER
+  <span class="spacer"></span>
+  <button class="btn" onclick="fitView()">Fit view</button>
+  <button class="btn" onclick="savePdf()">Save PDF</button>
 </div>
 <div id="svg-wrap">
-  <div id="loading">Rendering tree…</div>
+SVG_CONTAINERS_PLACEHOLDER
 </div>
-
-<script src="https://cdn.jsdelivr.net/npm/viz.js@2.1.2/viz.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/viz.js@2.1.2/full.render.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/svg-pan-zoom@3.6.1/dist/svg-pan-zoom.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+<script>SVG_PAN_ZOOM_JS_PLACEHOLDER</script>
+<script>SVG_JSPDF_JS_PLACEHOLDER</script>
 <script>
-const TREE = TREE_DATA_PLACEHOLDER;
+const panZooms = {};
+let activeTab = null;
 
-// Build adjacency maps
-const childrenOf = {};
-const parentOf   = {};
-for (const [from, to, lbl] of TREE.edges) {
-  if (!childrenOf[from]) childrenOf[from] = [];
-  childrenOf[from].push([to, lbl]);
-  parentOf[to] = from;
-}
-
-// Bottom-up DFS: a node is visible if its hg is checked OR any descendant is visible
-function computeVisible(checkedHgs) {
-  const visited = new Set();
-  const visible = new Set();
-  function visit(id) {
-    if (visited.has(id)) return visible.has(id);
-    visited.add(id);
-    const node = TREE.nodes[id];
-    const kids = childrenOf[id] || [];
-    // Visit ALL children — never short-circuit
-    let anyChildVis = false;
-    for (const [c] of kids) {
-      if (visit(c)) anyChildVis = true;
-    }
-    if (checkedHgs.has(node.hg) || anyChildVis) {
-      visible.add(id);
-      return true;
-    }
-    return false;
-  }
-  const roots = Object.keys(TREE.nodes).filter(id => !(id in parentOf));
-  for (const r of roots) visit(r);
-  return visible;
-}
-
-function dotEsc(s) {
-  return s.replace(/\\\\/g, '\\\\\\\\')
-          .replace(/"/g, '\\\\"')
-          .replace(/\\n/g, '\\\\n');
-}
-
-function buildDot(visible) {
-  let dot = 'digraph {\\n  ratio=compress bgcolor=white\\n';
-  for (const id of visible) {
-    const n = TREE.nodes[id];
-    const lbl = dotEsc(n.label);
-    dot += `  "${id}" [label="${lbl}" shape=box style=filled fillcolor="${n.color}" fontcolor=black]\\n`;
-  }
-  for (const [from, to, lbl] of TREE.edges) {
-    if (!visible.has(from) || !visible.has(to)) continue;
-    const lattr = lbl ? ` [label="${dotEsc(lbl)}"]` : '';
-    dot += `  "${from}" -> "${to}"${lattr}\\n`;
-  }
-  dot += '}';
-  return dot;
-}
-
-let viz = null;
-let panZoom = null;
-let rendering = false;
-let pendingChecked = null;
-
-async function render(checkedHgs) {
-  if (rendering) { pendingChecked = checkedHgs; return; }
-  rendering = true;
-  document.getElementById('loading').style.display = 'flex';
-  document.getElementById('fit-btn').disabled = true;
-
-  const visible = computeVisible(checkedHgs);
-  const dot = buildDot(visible);
-
-  try {
-    const svgStr = await viz.renderString(dot, { format: 'svg' });
-    const wrap = document.getElementById('svg-wrap');
-    if (panZoom) { panZoom.destroy(); panZoom = null; }
-    wrap.innerHTML = '<div id="loading" style="display:none"></div>' + svgStr;
-    const svgEl = wrap.querySelector('svg');
-    svgEl.setAttribute('width', '100%');
-    svgEl.setAttribute('height', '100%');
-    panZoom = svgPanZoom(svgEl, {
+function initPanZoom(id) {
+  if (panZooms[id]) return;
+  const svgEl = document.querySelector('#tab-' + id + ' > svg');
+  if (svgEl) {
+    panZooms[id] = svgPanZoom(svgEl, {
       zoomEnabled: true, controlIconsEnabled: true, fit: true, center: true,
       minZoom: 0.01, maxZoom: 100,
     });
-  } catch(e) {
-    console.error('viz.js render error:', e);
-  }
-
-  document.getElementById('loading').style.display = 'none';
-  document.getElementById('fit-btn').disabled = false;
-  rendering = false;
-
-  if (pendingChecked) {
-    const next = pendingChecked;
-    pendingChecked = null;
-    render(next);
   }
 }
 
-function buildSidebar() {
-  const filtersDiv = document.getElementById('filters');
-  const hgGroups = Object.keys(TREE.hg_colors)
-    .filter(h => h !== 'ROOT' && h !== 'SAMPLE' && h !== 'OTHER').sort();
-  for (const hg of hgGroups) {
-    const color = TREE.hg_colors[hg];
-    const lbl = document.createElement('label');
-    lbl.className = 'filter-item';
-    lbl.innerHTML =
-      '<input type="checkbox" checked onchange="onFilterChange()">' +
-      '<span class="color-dot" style="background:' + color + '"></span>' +
-      '<span>' + hg + '</span>';
-    filtersDiv.appendChild(lbl);
-  }
-}
-
-function getCheckedHgs() {
-  const checked = new Set(['ROOT', 'SAMPLE', 'OTHER']);
-  document.querySelectorAll('#filters input').forEach(cb => {
-    const label = cb.parentElement.querySelector('span:last-child').textContent;
-    if (cb.checked) checked.add(label);
-  });
-  return checked;
-}
-
-function onFilterChange() {
-  updateSelectAllState();
-  render(getCheckedHgs());
-}
-
-function toggleAll(checked) {
-  document.querySelectorAll('#filters input').forEach(cb => cb.checked = checked);
-  render(getCheckedHgs());
-}
-
-function updateSelectAllState() {
-  const all = document.querySelectorAll('#filters input');
-  const n = [...all].filter(cb => cb.checked).length;
-  const cb = document.getElementById('select-all-cb');
-  cb.indeterminate = n > 0 && n < all.length;
-  cb.checked = n === all.length;
+function switchTab(id) {
+  document.querySelectorAll('.svg-container').forEach(c => c.classList.remove('active'));
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('tab-' + id).classList.add('active');
+  document.querySelector('[data-tab="' + id + '"]').classList.add('active');
+  activeTab = id;
+  initPanZoom(id);
 }
 
 function fitView() {
-  if (panZoom) { panZoom.fit(); panZoom.center(); }
+  if (activeTab && panZooms[activeTab]) { panZooms[activeTab].fit(); panZooms[activeTab].center(); }
 }
 
 function savePdf() {
-  const svgEl = document.querySelector('#svg-wrap svg');
+  if (!activeTab) return;
+  const svgEl = document.querySelector('#tab-' + activeTab + ' > svg');
   if (!svgEl) return;
   const vb = svgEl.viewBox.baseVal;
   const w = vb.width || svgEl.clientWidth || 1200;
   const h = vb.height || svgEl.clientHeight || 800;
-
   const clone = svgEl.cloneNode(true);
   clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
-  clone.setAttribute('width', w);
-  clone.setAttribute('height', h);
-
+  clone.setAttribute('width', w); clone.setAttribute('height', h);
   const svgStr = new XMLSerializer().serializeToString(clone);
   const svgData = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svgStr)));
-
   const img = new Image();
   img.onload = function() {
     const scale = 2;
@@ -307,8 +157,7 @@ function savePdf() {
     const ctx = canvas.getContext('2d');
     ctx.fillStyle = '#1a1a2e';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.scale(scale, scale);
-    ctx.drawImage(img, 0, 0, w, h);
+    ctx.scale(scale, scale); ctx.drawImage(img, 0, 0, w, h);
     const { jsPDF } = window.jspdf;
     const doc = new jsPDF({ orientation: w > h ? 'l' : 'p', unit: 'px', format: [w, h] });
     doc.addImage(canvas.toDataURL('image/jpeg', 0.92), 'JPEG', 0, 0, w, h);
@@ -318,12 +167,9 @@ function savePdf() {
   img.src = svgData;
 }
 
-window.addEventListener('load', async function() {
-  const src = document.getElementById('full-render-src').textContent;
-  const blob = new Blob([src], {type: 'application/javascript'});
-  viz = new Viz({ workerURL: URL.createObjectURL(blob) });
-  buildSidebar();
-  await render(getCheckedHgs());
+window.addEventListener('load', function() {
+  const first = document.querySelector('.tab-btn');
+  if (first) switchTab(first.dataset.tab);
 });
 </script>
 </body>
@@ -331,42 +177,55 @@ window.addEventListener('load', async function() {
 """
 
 
+import re as _re
+
 _DATA_DIR = Path(__file__).parent / 'data'
 
-_CDN_BLOCK = (
-    '<script src="https://cdn.jsdelivr.net/npm/viz.js@2.1.2/viz.js"></script>\n'
-    '<script src="https://cdn.jsdelivr.net/npm/viz.js@2.1.2/full.render.js"></script>\n'
-    '<script src="https://cdn.jsdelivr.net/npm/svg-pan-zoom@3.6.1/dist/svg-pan-zoom.min.js"></script>\n'
-    '<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>'
-)
+
+def _dot_esc(s: str) -> str:
+    return s.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n')
 
 
-def _build_inline_js() -> str:
-    # viz.js, svg-pan-zoom, jspdf: inline normally.
-    # full.render.js: stored in a text/plain tag so a Blob Worker URL can be created from it.
-    parts = []
-    for name in ['viz.js', 'svg-pan-zoom.min.js', 'jspdf.umd.min.js']:
-        p = _DATA_DIR / name
-        if p.exists():
-            parts.append(f'<script>{p.read_text(encoding="utf-8")}</script>')
-        else:
-            LOG.warning(f"Bundled JS library not found: {p}")
-    full_render = _DATA_DIR / 'full.render.js'
-    if full_render.exists():
-        parts.append(
-            f'<script id="full-render-src" type="text/plain">'
-            f'{full_render.read_text(encoding="utf-8")}'
-            f'</script>'
+def _build_dot_string(nodes: dict, edges: list) -> str:
+    lines = ['digraph {', '  ratio=compress bgcolor=white']
+    for nid, n in nodes.items():
+        lines.append(
+            f'  "{nid}" [label="{_dot_esc(n["label"])}" shape=box style=filled '
+            f'fillcolor="{n["color"]}" fontcolor=black]'
         )
-    else:
-        LOG.warning(f"Bundled JS library not found: {full_render}")
-    return '\n'.join(parts)
+    for from_id, to_id, lbl in edges:
+        lattr = f' [label="{_dot_esc(lbl)}"]' if lbl else ''
+        lines.append(f'  "{from_id}" -> "{to_id}"{lattr}')
+    lines.append('}')
+    return '\n'.join(lines)
 
 
-def _write_html(tree_data: dict, output_path: Path) -> None:
-    tree_json = json.dumps(tree_data, ensure_ascii=False)
-    html = _HTML_TEMPLATE.replace('TREE_DATA_PLACEHOLDER', tree_json)
-    html = html.replace(_CDN_BLOCK, _build_inline_js())
+def _render_svg(dot_str: str) -> str:
+    import graphviz
+    svg = graphviz.Source(dot_str).pipe(format='svg').decode('utf-8')
+    svg = _re.sub(r'<\?xml[^?]*\?>', '', svg)
+    svg = _re.sub(r'<!DOCTYPE[^>]*>', '', svg)
+    return svg.strip()
+
+
+def _write_html(svgs: list, output_path: Path) -> None:
+    """svgs: list of (label, svg_string) pairs; first entry shown by default."""
+    tab_buttons = '\n  '.join(
+        f'<button class="tab-btn" data-tab="{lbl.lower()}" '
+        f'onclick="switchTab(\'{lbl.lower()}\')">{lbl}</button>'
+        for lbl, _ in svgs
+    )
+    containers = '\n'.join(
+        f'<div id="tab-{lbl.lower()}" class="svg-container">{svg}</div>'
+        for lbl, svg in svgs
+    )
+    spz = (_DATA_DIR / 'svg-pan-zoom.min.js').read_text(encoding='utf-8')
+    pdf = (_DATA_DIR / 'jspdf.umd.min.js').read_text(encoding='utf-8')
+    html = _HTML_TEMPLATE
+    html = html.replace('TAB_BUTTONS_PLACEHOLDER', tab_buttons)
+    html = html.replace('SVG_CONTAINERS_PLACEHOLDER', containers)
+    html = html.replace('SVG_PAN_ZOOM_JS_PLACEHOLDER', spz)
+    html = html.replace('SVG_JSPDF_JS_PLACEHOLDER', pdf)
     output_path.write_text(html, encoding='utf-8')
 
 
@@ -378,6 +237,7 @@ def main(namespace: argparse.Namespace = None):
     if len(haplogroups) == 0:
         LOG.warning("No haplogroups found in provided input file.")
         return
+    original_haplogroups = list(haplogroups)
     add_main_haplogroups(haplogroups)
     tree_file = getattr(namespace, 'tree_file', None)
     partial_haplogroup_dict = haplogroup_tree_dict(haplogroups, tree_file)
@@ -385,7 +245,9 @@ def main(namespace: argparse.Namespace = None):
         edge_mapping = collapse_tree_dict(partial_haplogroup_dict, sample_mapping)
     else:
         edge_mapping = {}
-    make_dendrogram(partial_haplogroup_dict, sample_mapping, edge_mapping, namespace.outfile)
+    make_dendrogram(partial_haplogroup_dict, sample_mapping, edge_mapping, namespace.outfile,
+                    original_haplogroups=original_haplogroups, tree_file=tree_file,
+                    collapse_mode=namespace.collapse_mode)
     LOG.info("Finished drawing haplogroups")
 
 
@@ -499,12 +361,11 @@ def can_collapse(
     return True
 
 
-def make_dendrogram(
+def _build_nodes_edges(
     partial_tree_dict: Dict[str, Set[str]],
     sample_mapping: Dict[str, List[str]],
     edge_mapping: Dict[Tuple[str, str], str],
-    output_file,
-):
+) -> Tuple[dict, list]:
     node_ids: Dict[str, str] = {}
     nodes: Dict[str, dict] = {}
     edges = []
@@ -523,7 +384,6 @@ def make_dendrogram(
                                      "color": _HG_COLORS.get(parent_hg, _HG_COLORS['OTHER']),
                                      "is_sample": False}
             covered_nodes.add(parent)
-
         for child in children:
             child_hg = _get_major_hg(child)
             if child not in covered_nodes:
@@ -531,12 +391,10 @@ def make_dendrogram(
                                         "color": _HG_COLORS.get(child_hg, _HG_COLORS['OTHER']),
                                         "is_sample": False}
                 covered_nodes.add(child)
-
             if (parent, child) not in covered_edges:
                 label = edge_mapping.get((parent, child), '')
                 edges.append([get_id(parent), get_id(child), label])
                 covered_edges.add((parent, child))
-
                 if child in sample_mapping:
                     sample_label = '\n'.join(sorted(sample_mapping[child]))
                     if sample_label not in covered_nodes:
@@ -545,13 +403,44 @@ def make_dendrogram(
                                                        "is_sample": True}
                         covered_nodes.add(sample_label)
                     edges.append([get_id(child), get_id(sample_label), ""])
+    return nodes, edges
 
-    hg_colors = {hg: _HG_COLORS.get(hg, _HG_COLORS['OTHER'])
-                 for hg in sorted(set(n["hg"] for n in nodes.values()))}
-    tree_data = {"nodes": nodes, "edges": edges, "hg_colors": hg_colors}
+
+def make_dendrogram(
+    partial_tree_dict: Dict[str, Set[str]],
+    sample_mapping: Dict[str, List[str]],
+    edge_mapping: Dict[Tuple[str, str], str],
+    output_file,
+    original_haplogroups: List[str] = None,
+    tree_file=None,
+    collapse_mode: bool = False,
+):
+    svgs = []
+
+    # Full tree
+    LOG.info("Rendering full tree SVG (this may take a while for large datasets)…")
+    all_nodes, all_edges = _build_nodes_edges(partial_tree_dict, sample_mapping, edge_mapping)
+    svgs.append(('All', _render_svg(_build_dot_string(all_nodes, all_edges))))
+
+    # Per-major-haplogroup trees
+    if original_haplogroups:
+        by_major: Dict[str, List[str]] = {}
+        for hg in original_haplogroups:
+            major = _get_major_hg(hg)
+            if major not in ('ROOT', 'OTHER'):
+                by_major.setdefault(major, []).append(hg)
+
+        for major in sorted(by_major):
+            LOG.info(f"Rendering haplogroup {major} SVG…")
+            sub_hgs = list(by_major[major])
+            add_main_haplogroups(sub_hgs)
+            sub_partial = haplogroup_tree_dict(sub_hgs, tree_file)
+            sub_edge_map = collapse_tree_dict(sub_partial, sample_mapping) if collapse_mode else {}
+            sub_nodes, sub_edges = _build_nodes_edges(sub_partial, sample_mapping, sub_edge_map)
+            svgs.append((major, _render_svg(_build_dot_string(sub_nodes, sub_edges))))
 
     html_path = Path(str(output_file) + '.html')
-    _write_html(tree_data, html_path)
+    _write_html(svgs, html_path)
     LOG.info(f"Haplogroup tree written to {html_path}")
 
 
