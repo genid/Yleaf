@@ -329,9 +329,31 @@ window.addEventListener('load', async function() {
 """
 
 
+_JS_LIBS = ['viz.js', 'full.render.js', 'svg-pan-zoom.min.js', 'jspdf.umd.min.js']
+_DATA_DIR = Path(__file__).parent / 'data'
+
+
+def _inline_js() -> str:
+    parts = []
+    for name in _JS_LIBS:
+        p = _DATA_DIR / name
+        if p.exists():
+            parts.append(f'<script>{p.read_text(encoding="utf-8")}</script>')
+        else:
+            LOG.warning(f"Bundled JS library not found: {p}; falling back to CDN")
+    return '\n'.join(parts)
+
+
 def _write_html(tree_data: dict, output_path: Path) -> None:
     tree_json = json.dumps(tree_data, ensure_ascii=False)
     html = _HTML_TEMPLATE.replace('TREE_DATA_PLACEHOLDER', tree_json)
+    cdn_block = (
+        '<script src="https://cdn.jsdelivr.net/npm/viz.js@2.1.2/viz.js"></script>\n'
+        '<script src="https://cdn.jsdelivr.net/npm/viz.js@2.1.2/full.render.js"></script>\n'
+        '<script src="https://cdn.jsdelivr.net/npm/svg-pan-zoom@3.6.1/dist/svg-pan-zoom.min.js"></script>\n'
+        '<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>'
+    )
+    html = html.replace(cdn_block, _inline_js())
     output_path.write_text(html, encoding='utf-8')
 
 
