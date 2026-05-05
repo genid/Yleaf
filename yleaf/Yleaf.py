@@ -145,15 +145,16 @@ def _infer_from_reference(
     if missing.empty:
         return df_out, 0
 
-    # Vectorised state assignment
-    missing['state'] = np.where(missing['ref_allele'] == missing['anc'], 'A', 'D')
+    # Vectorised state assignment — use 'RA'/'RD' to mark reference-inferred positions.
+    # predict_haplogroup ignores these when the haplogroup has real detected markers.
+    missing['state'] = np.where(missing['ref_allele'] == missing['anc'], 'RA', 'RD')
     missing['reads'] = 0
     missing['called_perc'] = 100.0
     missing['called_base'] = missing['ref_allele']
     inferred = missing[['chr', 'pos', 'marker_name', 'haplogroup', 'mutation', 'anc', 'der',
                          'reads', 'called_perc', 'called_base', 'state']]
     LOG.debug(f"Reference inference: added {len(inferred)} markers "
-              f"({(missing['state'] == 'A').sum()} A, {(missing['state'] == 'D').sum()} D)")
+              f"({(missing['state'] == 'RA').sum()} RA, {(missing['state'] == 'RD').sum()} RD)")
     return pd.concat([df_out, inferred], axis=0, sort=False), len(inferred)
 
 
