@@ -43,23 +43,17 @@ class HgMarkersLinker:
     DERIVED: str = "D"
     ANCESTRAL: str = "A"
     UNDEFINED: str = "N"
-    INFERRED_DERIVED: str = "RD"
-    INFERRED_ANCESTRAL: str = "RA"
 
     _ancestral_markers: Set[str]
     _derived_markers: Set[str]
     _d: int
     _a: int
-    _inferred_d: int
-    _inferred_a: int
 
     def __init__(self):
         self._ancestral_markers = set()
         self._derived_markers = set()
         self._d = 0
         self._a = 0
-        self._inferred_d = 0
-        self._inferred_a = 0
 
     def add(
         self,
@@ -69,42 +63,29 @@ class HgMarkersLinker:
         if state == self.DERIVED:
             self._derived_markers.add(marker_name)
             self._d += 1
-        elif state == self.INFERRED_DERIVED:
-            self._inferred_d += 1
-        elif state == self.INFERRED_ANCESTRAL:
-            self._inferred_a += 1
         else:
             self._ancestral_markers.add(marker_name)
             self._a += 1
-
-    def _effective_counts(self):
-        """Return (d, a) using inferred markers only when no real markers exist."""
-        if self._d + self._a > 0:
-            return self._d, self._a
-        return self._inferred_d, self._inferred_a
 
     def get_derived_markers(self) -> Set[str]:
         return self._derived_markers
 
     @property
     def nr_total(self) -> int:
-        d, a = self._effective_counts()
-        return d + a
+        return self._d + self._a
 
     @property
     def nr_derived(self) -> int:
-        d, _ = self._effective_counts()
-        return d
+        return self._d
 
     @property
     def nr_ancestral(self) -> int:
-        _, a = self._effective_counts()
-        return a
+        return self._a
 
     def get_state(self) -> str:
         """at least a fraction of 0.6 need to either derived or ancestral, otherwise the state can not be accurately
         determined and will be returned as undefined"""
-        d, a = self._effective_counts()
+        d, a = self._d, self._a
         total = d + a
         if total == 0:
             return self.UNDEFINED

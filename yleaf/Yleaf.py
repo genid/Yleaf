@@ -145,16 +145,15 @@ def _infer_from_reference(
     if missing.empty:
         return df_out, 0
 
-    # Vectorised state assignment — use 'RA'/'RD' to mark reference-inferred positions.
-    # predict_haplogroup ignores these when the haplogroup has real detected markers.
-    missing['state'] = np.where(missing['ref_allele'] == missing['anc'], 'RA', 'RD')
+    # Vectorised state assignment
+    missing['state'] = np.where(missing['ref_allele'] == missing['anc'], 'A', 'D')
     missing['reads'] = 0
     missing['called_perc'] = 100.0
     missing['called_base'] = missing['ref_allele']
     inferred = missing[['chr', 'pos', 'marker_name', 'haplogroup', 'mutation', 'anc', 'der',
                          'reads', 'called_perc', 'called_base', 'state']]
     LOG.debug(f"Reference inference: added {len(inferred)} markers "
-              f"({(missing['state'] == 'RA').sum()} RA, {(missing['state'] == 'RD').sum()} RD)")
+              f"({(missing['state'] == 'A').sum()} A, {(missing['state'] == 'D').sum()} D)")
     return pd.concat([df_out, inferred], axis=0, sort=False), len(inferred)
 
 
@@ -339,24 +338,6 @@ def run_vcf(
     df_out = df_out[['chr', 'pos', 'marker_name', 'haplogroup', 'mutation', 'anc', 'der', 'reads',
                      'called_perc', 'called_base', 'state']]
 
-    # Infer states for marker positions absent from the VCF.
-    # Standard VCFs only contain variant positions; ancestral positions where the sample
-    # matches the reference are not emitted. By looking up the reference allele at those
-    # positions from the downloaded chrY FASTA we can recover the vast majority of markers.
-    chry_seq = _WORKER_CHRY_SEQ
-    if chry_seq is None:
-        # Fallback: load from disk (happens when run_vcf is called outside a Pool)
-        try:
-            chry_ref_path = get_reference_path(args.reference_genome, False)
-            if not (chry_ref_path and chry_ref_path.exists() and os.path.getsize(chry_ref_path) > 0):
-                from yleaf.download_reference import download_chry_fasta
-                chry_ref_path = download_chry_fasta(args.reference_genome)
-            with open(chry_ref_path) as _ref_f:
-                chry_seq = ''.join(line.strip().upper() for line in _ref_f if not line.startswith('>'))
-        except Exception as e:
-            LOG.warning(f"Could not load chrY FASTA for reference inference: {e}")
-    df_out, ref_inferred_count = _infer_from_reference(df_out, full_markerfile, intersect_pos, chry_seq)
-
     general_info_list.append("Markers with zero reads: " + str(len(df_belowzero)))
     general_info_list.append(
         "Markers below the read threshold {" + str(reads_thresh) + "}: " + str(len(df_readsthreshold)))
@@ -364,7 +345,6 @@ def run_vcf(
         "Markers below the base majority threshold {" + str(base_majority) + "}: " + str(len(df_basemajority)))
     general_info_list.append("Markers with discordant genotype: " + str(len(df_discordantgenotype)))
     general_info_list.append("Markers without haplogroup information: " + str(len(df_fmf)))
-    general_info_list.append("Reference-inferred markers: " + str(ref_inferred_count))
     general_info_list.append("Markers with haplogroup information: " + str(len(df_out)))
 
     write_info_file(sample_vcf_folder, general_info_list, suffix=f"{out_suffix}.info" if out_suffix else ".info")
