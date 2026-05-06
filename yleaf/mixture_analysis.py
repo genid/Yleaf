@@ -140,7 +140,7 @@ def _decompose_subtree(
     result: List[Tuple[str, pd.DataFrame, str]] = []
     for child_name, _, child_het in branches:
         sub = _decompose_subtree(child_name, child_het, tree,
-                                 branch_root=branch_root if branch_root is not None else child_name)
+                                 branch_root=child_name)
         result.extend(sub)
     return result
 
