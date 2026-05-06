@@ -230,11 +230,7 @@ def analyze_mixture(
     called_nodes: set = set()
     try:
         out_df = pd.read_csv(out_file, sep="\t")
-        # Only D-called nodes can contradict a contributor branch (ancestral calls are expected).
-        if "state" in out_df.columns:
-            called_nodes = set(out_df.loc[out_df["state"] == "D", "haplogroup"].dropna().unique())
-        else:
-            called_nodes = set(out_df["haplogroup"].dropna().unique())
+        called_nodes = set(out_df["haplogroup"].dropna().unique())
     except Exception as e:
         LOG.warning(f"Mixture: could not read {out_file}: {e}")
 
@@ -298,20 +294,15 @@ def analyze_mixture(
     het_nodes = list(het_df["haplogroup"].unique())
     LOG.debug(f"Mixture: {len(het_df)} het positions across {len(het_nodes)} nodes after filtering.")
 
-    # --- Find LCA: use predicted haplogroup from .out file (deepest D-called node).
-    #     This is the shared ancestor of all contributors; below it the het positions
-    #     diverge into contributor-specific paths. Noise positions above this node
-    #     (e.g. deep basal lineages present at 2% due to sequencing error) are excluded.
-    lca = _find_predicted_haplogroup(out_df, tree) if not out_df.empty else None
-    if lca is None:
-        LOG.debug("Mixture: no D-called node in .out file, falling back to het-based LCA.")
-        try:
-            lca = _find_lca(het_nodes, tree)
-        except Exception as e:
-            LOG.warning(f"Mixture: LCA computation failed: {e}")
-            return None
+    # --- Find LCA: deepest D-called node in the .out file = predicted haplogroup.
+    #     Below it, het positions diverge into contributor-specific paths.
+    try:
+        lca = _find_predicted_haplogroup(out_df, tree)
+    except Exception as e:
+        LOG.warning(f"Mixture: LCA computation failed: {e}")
+        return None
 
-    LOG.debug(f"Mixture: LCA = {lca} (from .out file prediction)")
+    LOG.debug(f"Mixture: LCA = {lca}")
 
     # --- Decompose subtree into contributor branches ---
     lca_nodes = {lca} | _get_subtree_nodes(lca, tree)
