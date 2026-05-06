@@ -103,7 +103,6 @@ def _decompose_subtree(
     node_name: str,
     het_df: pd.DataFrame,
     tree: Tree,
-    max_n: int,
     branch_root: Optional[str] = None,
 ) -> List[Tuple[str, pd.DataFrame, str]]:
     """
@@ -114,7 +113,7 @@ def _decompose_subtree(
     caller to limit the path-coherence check to below the split.
     het_df is pre-filtered to positions within this subtree (plus node_name itself).
     """
-    if het_df.empty or max_n == 0:
+    if het_df.empty:
         return []
 
     node = tree.get(node_name)
@@ -133,16 +132,14 @@ def _decompose_subtree(
 
     if len(branches) == 1:
         # Single branch: keep descending (this node is still on the shared path).
-        return _decompose_subtree(branches[0][0], branches[0][2], tree, max_n, branch_root)
+        return _decompose_subtree(branches[0][0], branches[0][2], tree, branch_root)
 
     # Multiple branches: split found here. Process largest branches first so that
     # real contributors (many het positions) fill slots before single-position noise.
     branches.sort(key=lambda x: len(x[2]), reverse=True)
     result: List[Tuple[str, pd.DataFrame, str]] = []
     for child_name, _, child_het in branches:
-        if len(result) >= max_n:
-            break
-        sub = _decompose_subtree(child_name, child_het, tree, max_n - len(result),
+        sub = _decompose_subtree(child_name, child_het, tree,
                                  branch_root=branch_root if branch_root is not None else child_name)
         result.extend(sub)
     return result
@@ -208,7 +205,6 @@ def analyze_mixture(
     tree_name: str,
     tree_file: Path,
     reads_threshold: int,
-    max_contributors: int = 5,
 ) -> Optional[MixtureResult]:
     """
     Analyse .out + .fmf for a single sample/tree pair and return a MixtureResult,
@@ -294,7 +290,7 @@ def analyze_mixture(
     # --- Decompose subtree into contributor branches ---
     lca_nodes = {lca} | _get_subtree_nodes(lca, tree)
     lca_het = het_df[het_df["haplogroup"].isin(lca_nodes)]
-    decomposed = _decompose_subtree(lca, lca_het, tree, max_contributors)
+    decomposed = _decompose_subtree(lca, lca_het, tree)
 
     if not decomposed:
         return None
