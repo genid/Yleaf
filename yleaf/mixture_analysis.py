@@ -95,20 +95,6 @@ def _find_lca(node_names: List[str], tree: Tree) -> str:
     return max(common, key=lambda n: tree.get(n).depth)
 
 
-def _find_predicted_haplogroup(out_df: pd.DataFrame, tree: Tree) -> Optional[str]:
-    """
-    Return the deepest D-called node from the .out file — this is the predicted
-    haplogroup, which serves as the LCA for mixture decomposition.
-    Only nodes that exist in the tree are considered.
-    """
-    try:
-        d_rows = out_df[(out_df["state"] == "D") & (out_df["haplogroup"].isin(tree.node_mapping))]
-        if d_rows.empty:
-            return None
-        return d_rows.loc[d_rows["depth"].idxmax(), "haplogroup"]
-    except Exception:
-        return None
-
 
 # ---------------------------------------------------------------------------
 # Core decomposition
@@ -294,10 +280,11 @@ def analyze_mixture(
     het_nodes = list(het_df["haplogroup"].unique())
     LOG.debug(f"Mixture: {len(het_df)} het positions across {len(het_nodes)} nodes after filtering.")
 
-    # --- Find LCA: deepest D-called node in the .out file = predicted haplogroup.
-    #     Below it, het positions diverge into contributor-specific paths.
+    # --- Find LCA: deepest common ancestor of all connected het positions.
+    #     With the corrected tree structure (DE and CF under CT), this returns CT
+    #     for an E+R mixture after the noise filter has removed isolated spurious nodes.
     try:
-        lca = _find_predicted_haplogroup(out_df, tree)
+        lca = _find_lca(het_nodes, tree)
     except Exception as e:
         LOG.warning(f"Mixture: LCA computation failed: {e}")
         return None
