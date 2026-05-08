@@ -168,6 +168,47 @@ def _path_has_called_intermediate(
     return False
 
 
+def _path_coherent_to_lca(node_name: str, lca: str, tree: Tree, called_nodes: set) -> bool:
+    """
+    Return True if no node strictly between node_name (exclusive) and lca (exclusive)
+    is in called_nodes.  A coherent path means every intermediate is heterozygous —
+    consistent with this being a real contributor branch.
+    """
+    node = tree.get(node_name)
+    if node.parent is None or node.name == lca:
+        return True
+    node = node.parent
+    while node is not None and node.name != lca:
+        if node.name in called_nodes:
+            return False
+        if node.parent is None:
+            break
+        node = node.parent
+    return True
+
+
+def _find_deepest_coherent_ancestor(
+    candidate: str,
+    lca: str,
+    tree: Tree,
+    called_nodes: set,
+) -> Optional[str]:
+    """
+    Starting from candidate, climb toward lca.
+    Return the deepest node (inclusive of candidate) whose path to lca contains
+    no majority-called intermediates.  Returns None if even the direct child of
+    lca on this path is incoherent (should not normally happen).
+    """
+    node = tree.get(candidate)
+    while node is not None and node.name != lca:
+        if _path_coherent_to_lca(node.name, lca, tree, called_nodes):
+            return node.name
+        if node.parent is None:
+            break
+        node = node.parent
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Ratio and QC
 # ---------------------------------------------------------------------------
@@ -306,17 +347,33 @@ def analyze_mixture(
         if not (_get_subtree_nodes(hg, tree) & hg_names)
     ]
 
-    # --- Filter incoherent branches (called intermediate between split and leaf) ---
-    coherent = []
-    for hg, unique_het, branch_root in decomposed:
-        if called_nodes and _path_has_called_intermediate(hg, branch_root, tree, called_nodes):
-            LOG.debug(
-                f"Mixture: discarding {hg} (branch_root={branch_root}): "
-                f"called intermediate found on path — likely noise."
-            )
+    # --- Resolve each branch to its deepest coherent ancestor ---
+    # A branch is coherent when every node on the path from the candidate back to
+    # the LCA is heterozygous (absent from called_nodes, which holds all majority-called
+    # positions regardless of state — both A and D are non-het and therefore incoherent).
+    # Incoherent branches are climbed toward the LCA until a coherent ancestor is found.
+    # Multiple branches that collapse to the same ancestor are merged automatically.
+    resolved: Dict[str, pd.DataFrame] = {}
+    for hg, _unique_het, _branch_root in decomposed:
+        if not called_nodes or _path_coherent_to_lca(hg, lca, tree, called_nodes):
+            coherent_hg = hg
         else:
-            coherent.append((hg, unique_het))
-    decomposed_pairs = coherent
+            coherent_hg = _find_deepest_coherent_ancestor(hg, lca, tree, called_nodes)
+            if coherent_hg is None:
+                LOG.debug(f"Mixture: discarding {hg} — no coherent ancestor found below LCA.")
+                continue
+            if coherent_hg != hg:
+                LOG.debug(f"Mixture: {hg} → promoted to coherent ancestor {coherent_hg}")
+
+        if coherent_hg in resolved:
+            continue  # het positions for this ancestor already collected
+
+        coherent_nodes = {coherent_hg} | _get_subtree_nodes(coherent_hg, tree)
+        branch_het = lca_het[lca_het["haplogroup"].isin(coherent_nodes)]
+        if not branch_het.empty:
+            resolved[coherent_hg] = branch_het
+
+    decomposed_pairs = list(resolved.items())
 
     if len(decomposed_pairs) < 2:
         LOG.debug("Mixture: fewer than 2 coherent branches — insufficient evidence for mixture.")
