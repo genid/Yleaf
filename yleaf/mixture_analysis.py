@@ -299,6 +299,14 @@ def analyze_mixture(
         LOG.debug("Mixture: all het positions below reads threshold.")
         return None
 
+    # Require at least 2 minor-allele reads to exclude single-read sequencing noise.
+    # Minor allele count = reads * (1 - called_perc / 100).
+    minor_allele_reads = het_df["reads"] * (1.0 - het_df["called_perc"] / 100.0)
+    het_df = het_df[minor_allele_reads >= 2]
+    if het_df.empty:
+        LOG.debug("Mixture: all het positions filtered by minor allele read count.")
+        return None
+
     # --- Load tree ---
     try:
         tree = Tree(tree_file)
