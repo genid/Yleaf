@@ -183,16 +183,18 @@ def _path_coherent_to_lca(
     out_per_node: "pd.Series",
 ) -> bool:
     """
-    Return True if every node strictly between node_name and lca has het fraction > 0.5.
-    A coherent path means every intermediate node has a majority of heterozygous positions,
-    consistent with it being a genuine contributor branch below the split point.
+    Return True if every observed intermediate node between node_name and lca has
+    het fraction > 0.5.  Nodes with zero total observations are unobserved and
+    treated as neutral (they do not block the path).
     """
     node = tree.get(node_name)
     if node.parent is None or node.name == lca:
         return True
     node = node.parent
     while node is not None and node.name != lca:
-        if _het_fraction(node.name, het_per_node, out_per_node) <= 0.5:
+        n_het = het_per_node.get(node.name, 0)
+        n_tot = n_het + out_per_node.get(node.name, 0)
+        if n_tot > 0 and n_het / n_tot <= 0.5:
             return False
         if node.parent is None:
             break
@@ -418,6 +420,10 @@ def analyze_mixture(
                 continue
             if coherent_hg != hg:
                 LOG.debug(f"Mixture: {hg} → promoted to coherent ancestor {coherent_hg}")
+
+        if coherent_hg in called_nodes:
+            LOG.debug(f"Mixture: discarding {coherent_hg} — has called positions (incoherent with mixture)")
+            continue
 
         if coherent_hg in resolved:
             continue  # het positions for this ancestor already collected
