@@ -168,18 +168,31 @@ def _path_has_called_intermediate(
     return False
 
 
-def _path_coherent_to_lca(node_name: str, lca: str, tree: Tree, called_nodes: set) -> bool:
+def _het_fraction(node_name: str, het_per_node: "pd.Series", out_per_node: "pd.Series") -> float:
+    """Fraction of observed positions for node_name that are heterozygous."""
+    n_het = het_per_node.get(node_name, 0)
+    n_tot = n_het + out_per_node.get(node_name, 0)
+    return n_het / n_tot if n_tot > 0 else 0.0
+
+
+def _path_coherent_to_lca(
+    node_name: str,
+    lca: str,
+    tree: Tree,
+    het_per_node: "pd.Series",
+    out_per_node: "pd.Series",
+) -> bool:
     """
-    Return True if no node strictly between node_name (exclusive) and lca (exclusive)
-    is in called_nodes.  A coherent path means every intermediate is heterozygous —
-    consistent with this being a real contributor branch.
+    Return True if every node strictly between node_name and lca has het fraction > 0.5.
+    A coherent path means every intermediate node has a majority of heterozygous positions,
+    consistent with it being a genuine contributor branch below the split point.
     """
     node = tree.get(node_name)
     if node.parent is None or node.name == lca:
         return True
     node = node.parent
     while node is not None and node.name != lca:
-        if node.name in called_nodes:
+        if _het_fraction(node.name, het_per_node, out_per_node) <= 0.5:
             return False
         if node.parent is None:
             break
@@ -191,17 +204,17 @@ def _find_deepest_coherent_ancestor(
     candidate: str,
     lca: str,
     tree: Tree,
-    called_nodes: set,
+    het_per_node: "pd.Series",
+    out_per_node: "pd.Series",
 ) -> Optional[str]:
     """
     Starting from candidate, climb toward lca.
-    Return the deepest node (inclusive of candidate) whose path to lca contains
-    no majority-called intermediates.  Returns None if even the direct child of
-    lca on this path is incoherent (should not normally happen).
+    Return the deepest node (inclusive of candidate) whose path to lca is coherent
+    (every intermediate has het fraction > 0.5).  Returns None if no such node exists.
     """
     node = tree.get(candidate)
     while node is not None and node.name != lca:
-        if _path_coherent_to_lca(node.name, lca, tree, called_nodes):
+        if _path_coherent_to_lca(node.name, lca, tree, het_per_node, out_per_node):
             return node.name
         if node.parent is None:
             break
@@ -321,14 +334,56 @@ def analyze_mixture(
     het_nodes = list(het_df["haplogroup"].unique())
     LOG.debug(f"Mixture: {len(het_df)} het positions across {len(het_nodes)} nodes after filtering.")
 
-    # --- Find LCA: deepest common ancestor of all connected het positions.
-    #     With the corrected tree structure (DE and CF under CT), this returns CT
-    #     for an E+R mixture after the noise filter has removed isolated spurious nodes.
+    # --- Filter het nodes for LCA computation: majority of observed positions must be het ---
+    # A node qualifies only if more than half its total observed positions (called + het)
+    # are heterozygous.  Universal ancestor nodes (A0-T, A1, …) have mostly clear derived
+    # calls and will be excluded, preventing them from pulling the LCA above the real split.
+    out_per_node = out_df["haplogroup"].value_counts() if not out_df.empty else pd.Series(dtype=int)
+    het_per_node = het_df["haplogroup"].value_counts()
+    lca_het_nodes = [
+        n for n in het_nodes
+        if (het_per_node.get(n, 0) + out_per_node.get(n, 0)) > 0
+        and het_per_node.get(n, 0) / (het_per_node.get(n, 0) + out_per_node.get(n, 0)) > 0.5
+    ]
+    if not lca_het_nodes:
+        lca_het_nodes = het_nodes  # fallback if filter removes everything
+
+    dropped = set(het_nodes) - set(lca_het_nodes)
+    if dropped:
+        LOG.debug(f"Mixture: excluded {len(dropped)} node(s) from LCA computation (het fraction ≤ 0.5): {dropped}")
+
+    # --- Find LCA from het-majority nodes only ---
     try:
-        lca = _find_lca(het_nodes, tree)
+        lca = _find_lca(lca_het_nodes, tree)
     except Exception as e:
         LOG.warning(f"Mixture: LCA computation failed: {e}")
         return None
+
+    # --- Validate LCA: must have ≥2 direct children with het-majority positions ---
+    # If the computed LCA has fewer than 2 qualifying children, descend into the
+    # single qualifying child until we reach a proper split point.
+    # If 0 children qualify directly, the LCA is too high (pulled up by noise);
+    # descend into the child whose subtree contains the most het nodes and try again.
+    lca_het_nodes_set = set(lca_het_nodes)
+    while True:
+        qualifying_children = [
+            c for c in tree.get(lca).children
+            if c in tree.node_mapping and _het_fraction(c, het_per_node, out_per_node) > 0.5
+        ]
+        if len(qualifying_children) >= 2:
+            break
+        if len(qualifying_children) == 1:
+            lca = qualifying_children[0]
+        else:
+            best_child = max(
+                (c for c in tree.get(lca).children if c in tree.node_mapping),
+                key=lambda c: len((_get_subtree_nodes(c, tree) | {c}) & lca_het_nodes_set),
+                default=None,
+            )
+            if best_child is None or not ((_get_subtree_nodes(best_child, tree) | {best_child}) & lca_het_nodes_set):
+                LOG.debug("Mixture: no het signal below LCA — no mixture detected.")
+                return None
+            lca = best_child
 
     LOG.debug(f"Mixture: LCA = {lca}")
 
@@ -349,16 +404,15 @@ def analyze_mixture(
 
     # --- Resolve each branch to its deepest coherent ancestor ---
     # A branch is coherent when every node on the path from the candidate back to
-    # the LCA is heterozygous (absent from called_nodes, which holds all majority-called
-    # positions regardless of state — both A and D are non-het and therefore incoherent).
+    # the LCA has het fraction > 0.5 (majority of observed positions are heterozygous).
     # Incoherent branches are climbed toward the LCA until a coherent ancestor is found.
     # Multiple branches that collapse to the same ancestor are merged automatically.
     resolved: Dict[str, pd.DataFrame] = {}
     for hg, _unique_het, _branch_root in decomposed:
-        if not called_nodes or _path_coherent_to_lca(hg, lca, tree, called_nodes):
+        if _path_coherent_to_lca(hg, lca, tree, het_per_node, out_per_node):
             coherent_hg = hg
         else:
-            coherent_hg = _find_deepest_coherent_ancestor(hg, lca, tree, called_nodes)
+            coherent_hg = _find_deepest_coherent_ancestor(hg, lca, tree, het_per_node, out_per_node)
             if coherent_hg is None:
                 LOG.debug(f"Mixture: discarding {hg} — no coherent ancestor found below LCA.")
                 continue
