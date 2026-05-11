@@ -1417,7 +1417,8 @@ def _run_bam_cram_multi_tree_inner(
     if args.private_mutations:
         find_private_mutations(output_dir, input_file, args, is_bam)
 
-    # TODO (production): delete pileup when no longer needed: os.remove(pileupfile)
+    if not reuse_pileup:
+        os.remove(pileupfile)
 
     LOG.debug(f"Finished multi-tree extraction for {input_file}")
 
@@ -1796,7 +1797,8 @@ def samtools(
         mix_output = output_folder / (output_folder.name + ".mix")
         _run_mixture_analysis(outputfile, fmf_output, args.tree, args.reads_treshold, mix_output)
 
-    # TODO (production): delete pileup when no longer needed: os.remove(pileupfile)
+    if not reuse_pileup:
+        os.remove(pileupfile)
     if bed is not None:
         os.remove(bed)
 
