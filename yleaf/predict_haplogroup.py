@@ -112,7 +112,11 @@ def main(namespace: argparse.Namespace = None):
     read_backbone_groups()
     final_table = []
 
-    with multiprocessing.Pool(processes=threads) as p:
+    # Pool workers on macOS/Windows use the 'spawn' start method (Python 3.8+
+    # default), which re-imports this module fresh — leaving BACKBONE_GROUPS
+    # and MAIN_HAPLO_GROUPS empty in each worker. Pass read_backbone_groups
+    # as an initializer so every worker hydrates its own copy.
+    with multiprocessing.Pool(processes=threads, initializer=read_backbone_groups) as p:
         predictions = p.map(partial(main_predict_haplogroup, namespace), read_input_folder(in_folder))
 
     for haplotype_dict, best_haplotype_score, folder in predictions:
