@@ -12,14 +12,21 @@ Autor: Bram van Wersch
 """
 
 import argparse
+import json
 import multiprocessing
 from functools import partial
 from pathlib import Path
-from typing import Set, Dict, Iterator, List, Any, Union, Tuple
+from typing import Set, Dict, Iterator, List, Any, Union, Tuple, Optional
 import logging
 
+from yleaf import __version__ as _YLEAF_VERSION
 from yleaf import yleaf_constants
 from yleaf.tree import Tree, Node
+
+# Bump this whenever the JSON report shape changes in a way consumers care
+# about (renaming or removing keys, changing semantics of an existing key).
+# Additive changes (new optional keys) do not require a bump.
+JSON_REPORT_SCHEMA_VERSION: int = 1
 
 BACKBONE_GROUPS: Set = set()
 MAIN_HAPLO_GROUPS: Set = set()
@@ -109,8 +116,10 @@ def main(namespace: argparse.Namespace = None):
     in_folder = namespace.input
     output = namespace.outfile
     threads = namespace.threads
+    report_json = getattr(namespace, "report_json", None)
     read_backbone_groups()
     final_table = []
+    final_records: List[Dict[str, Any]] = []
 
     with multiprocessing.Pool(processes=threads) as p:
         predictions = p.map(partial(main_predict_haplogroup, namespace), read_input_folder(in_folder))
@@ -119,8 +128,12 @@ def main(namespace: argparse.Namespace = None):
         if haplotype_dict is None:
             continue
         add_to_final_table(final_table, haplotype_dict, best_haplotype_score, folder)
+        if report_json is not None:
+            add_to_json_records(final_records, haplotype_dict, best_haplotype_score, folder)
 
     write_final_table(final_table, output)
+    if report_json is not None:
+        write_json_report(final_records, report_json)
     LOG.debug("Finished haplogroup prediction")
 
 
@@ -138,6 +151,12 @@ def get_arguments() -> argparse.Namespace:
     parser.add_argument("-o", "--outfile", required=True, help="Output file name", metavar="FILE")
 
     parser.add_argument("-t", "--threads", help="Number of threads to use (default=1).", type=int, default=1)
+
+    parser.add_argument("--report-json", dest="report_json", required=False, metavar="PATH", default=None,
+                        help="Optional path. If set, also emit a schema-versioned JSON sidecar with the "
+                             "same per-sample fields as the TSV plus structured haplogroup info "
+                             "(bare clade, excluded subclades, marker list). Designed for pipeline "
+                             "consumers that prefer json.load() over column-positional TSV parsing.")
 
     args = parser.parse_args()
     return args
@@ -417,6 +436,107 @@ def write_final_table(
         f.write(header)
         for line in final_table:
             f.write('\t'.join(map(str, line)) + "\n")
+
+
+def _maybe_int(value: Any) -> Optional[int]:
+    """Return value coerced to int, or None for the 'NA' sentinel and unparseables."""
+    if value is None or value == "NA":
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _maybe_float(value: Any) -> Optional[float]:
+    """Return value coerced to float, or None for the 'NA' sentinel and unparseables."""
+    if value is None or value == "NA":
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def add_to_json_records(
+    records: List[Dict[str, Any]],
+    haplotype_dict: Dict[str, HgMarkersLinker],
+    best_haplotype_scores: Tuple[str, str, int, int, int, int, int],
+    folder: Path,
+):
+    """Build a structured per-sample record for the JSON sidecar.
+
+    Pulls the same inputs as add_to_final_table but emits typed fields:
+    haplotype is null when the predictor returned NA, the excluded-subclades
+    list is split out from the TSV's "*(xA,xB,...)" syntax, and the marker
+    list is the full set (the TSV truncates at 2 + "etc." for readability).
+    """
+    total_reads, valid_markers = process_info_file(folder / (folder.name + ".info"))
+    hg, ancestral_children, qc1, qc2, qc3, total, _ = best_haplotype_scores
+
+    record: Dict[str, Any] = {
+        "sample_name": folder.name,
+        "haplogroup": None if hg == "NA" else hg,
+        "haplogroup_full": None,
+        "excluded_subclades": [],
+        "hg_markers": [],
+        "total_reads": _maybe_int(total_reads),
+        "valid_markers": _maybe_int(valid_markers),
+        "qc_score": _maybe_float(total),
+        "qc_1": _maybe_float(qc1),
+        "qc_2": _maybe_float(qc2),
+        "qc_3": _maybe_float(qc3),
+    }
+
+    if hg != "NA" and hg in haplotype_dict:
+        markers = sorted(haplotype_dict[hg].get_derived_markers())
+        record["hg_markers"] = markers
+        if isinstance(ancestral_children, list) and ancestral_children:
+            record["excluded_subclades"] = list(ancestral_children)
+            # Match the TSV's existing format exactly (single leading 'x') so
+            # consumers can cross-reference the two files. The
+            # excluded_subclades list above is the canonical structured form.
+            ancestral_string = "x" + ",".join(ancestral_children)
+            record["haplogroup_full"] = f"{hg}*({ancestral_string})"
+        else:
+            record["haplogroup_full"] = hg
+
+    records.append(record)
+
+
+def write_json_report(
+    records: List[Dict[str, Any]],
+    out_file: Union[Path, str],
+):
+    """Write the schema-versioned JSON sidecar.
+
+    Schema (v1):
+      {
+        "schema_version": 1,
+        "yleaf_version": "...",
+        "samples": [
+          { "sample_name": "...", "haplogroup": "I-Y9434" | null,
+            "haplogroup_full": "I-Y9434*(xI-FGC17588,...)" | null,
+            "excluded_subclades": ["I-FGC17588", ...],
+            "hg_markers": ["Y18928", "FGC17581", ...],
+            "total_reads": <int|null>, "valid_markers": <int|null>,
+            "qc_score": <float|null>, "qc_1": ..., "qc_2": ..., "qc_3": ...
+          },
+          ...
+        ]
+      }
+
+    Additive changes (new optional keys) do not bump schema_version; consumers
+    should ignore unknown keys. Renames or semantic changes bump it.
+    """
+    payload = {
+        "schema_version": JSON_REPORT_SCHEMA_VERSION,
+        "yleaf_version": _YLEAF_VERSION,
+        "samples": sorted(records, key=lambda r: r["sample_name"]),
+    }
+    with open(out_file, "w") as f:
+        json.dump(payload, f, indent=2)
+        f.write("\n")
 
 
 def product(

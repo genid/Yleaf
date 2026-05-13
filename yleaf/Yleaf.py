@@ -384,7 +384,8 @@ def main():
         LOG.error("Please specify either a bam, a cram, a fastq, or a vcf file")
         raise ValueError("Please specify either a bam, a cram, a fastq, or a vcf file")
     hg_out = out_folder / PREDICTION_OUT_FILE_NAME
-    predict_haplogroup(out_folder, hg_out, args.use_old, args.prediction_quality, args.threads)
+    predict_haplogroup(out_folder, hg_out, args.use_old, args.prediction_quality, args.threads,
+                       report_json=args.report_json)
     if args.draw_haplogroups:
         draw_haplogroups(hg_out, args.collapsed_draw_mode)
 
@@ -478,6 +479,11 @@ def get_arguments() -> argparse.Namespace:
     parser.add_argument("-maf", "--minor_allele_frequency", help="Maximum rate of minor allele for it to be considered"
                                                                  " as a private mutation. (default=0.01)",
                         default=0.01, type=float, metavar="FLOAT")
+
+    parser.add_argument("--report-json", dest="report_json", required=False, metavar="PATH", default=None,
+                        help="Optional path. If set, also emit a schema-versioned JSON sidecar of the "
+                             "haplogroup prediction. Replaces the need to parse the 9-column TSV by "
+                             "column position. See predict_haplogroup --report-json.")
 
     args = parser.parse_args()
     return args
@@ -1188,6 +1194,7 @@ def predict_haplogroup(
         use_old: bool,
         prediction_quality: float,
         threads: int,
+        report_json: Union[Path, None] = None,
 ):
     if use_old:
         script = yleaf_constants.SRC_FOLDER / "old_predict_haplogroup.py"
@@ -1196,7 +1203,8 @@ def predict_haplogroup(
     else:
         from yleaf import predict_haplogroup
         namespace = argparse.Namespace(input=path_file, outfile=output,
-                                       minimum_score=prediction_quality, threads=threads)
+                                       minimum_score=prediction_quality, threads=threads,
+                                       report_json=report_json)
         predict_haplogroup.main(namespace)
 
 
