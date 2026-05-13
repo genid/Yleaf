@@ -32,7 +32,9 @@ setup(
         "Programming Language :: Python :: 3",
         "Programming Language :: Python :: 3.6",
         "License :: OSI Approved :: GNU License",
-        "Operating System :: Linux",
+        "Operating System :: POSIX :: Linux",
+        "Operating System :: MacOS",
+        "Operating System :: Microsoft :: Windows",
         "Intended Audience :: Science/Research",
         "Topic :: Scientific/Engineering :: Bio-Informatics",
     ],
@@ -45,5 +47,18 @@ setup(
         ],
     },
     include_package_data=True,
-    package_data={"yleaf": ["data/*", "config.txt"]}
+    # NOTE: shipping data/ recursively. The "data/*" glob used previously
+    # only matched top-level entries inside data/, which silently excluded the
+    # hg_prediction_tables/, hg19/, hg38/ subtrees and rendered the wheel
+    # unusable without a manual data-dir copy. See MANIFEST.in for the sdist
+    # equivalent.
+    package_data={
+        "yleaf": [
+            "config.txt",
+            "data/hg_prediction_tables/*",
+            "data/hg_prediction_tables/major_tables/*",
+            "data/hg19/*",
+            "data/hg38/*",
+        ]
+    }
 )

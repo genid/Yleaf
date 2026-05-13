@@ -1,0 +1,11 @@
+# Source distribution manifest.
+# The wheel ships data/ via package_data in setup.py; this file ensures the
+# sdist also carries the full data tree (Intermediates.txt, tree.json,
+# *_int.txt, position files, the empty full_reference.fa placeholders, etc.)
+# and the top-level docs.
+include README.md
+include LICENSE.txt
+include requirements.txt
+include yleaf_manual.pdf
+include yleaf/config.txt
+recursive-include yleaf/data *

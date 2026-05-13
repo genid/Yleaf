@@ -13,3 +13,8 @@ yleaf/data/hg38/chrY.fa
 yleaf/data/hg19/chrY.fa
 male_pedigree_toolbox.egg-info/
 /venv/
+
+# Build artefacts
+dist/
+build/
+*.egg-info/
