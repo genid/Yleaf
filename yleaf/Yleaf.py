@@ -369,6 +369,11 @@ def main():
 
     LOG.info(f"Running Yleaf with command: {' '.join(sys.argv)}")
 
+    # If -rg wasn't given on the CLI, infer it from the BAM/CRAM @SQ headers.
+    # This mutates args.reference_genome in place so the rest of the pipeline
+    # (which already reads that attribute) needs no changes.
+    resolve_reference_genome(args)
+
     # make sure the reference genome is present before doing something else, if not present it is downloaded
     check_reference(args.reference_genome)
 
@@ -425,11 +430,15 @@ def get_arguments() -> argparse.Namespace:
     parser.add_argument("-force", "--force", action="store_true",
                         help="Delete files without asking")
     parser.add_argument("-rg", "--reference_genome",
-                        help="The reference genome build to be used. If no reference is available "
-                             "they will be downloaded. If you added references in your config.txt file these"
-                             " will be used instead as reference or the location will be used to download the "
-                             "reference if those files are missing or empty.",
-                        choices=[yleaf_constants.HG19, yleaf_constants.HG38], required=True)
+                        help="The reference genome build to be used. If omitted and the input is a "
+                             "BAM or CRAM file, the build is inferred from @SQ headers (chr1 length, "
+                             "or chr20 length for chrY-only BAMs). Required for FASTQ and VCF inputs. "
+                             "If no reference is available they will be downloaded. If you added "
+                             "references in your config.txt file these will be used instead as "
+                             "reference or the location will be used to download the reference if "
+                             "those files are missing or empty.",
+                        choices=[yleaf_constants.HG19, yleaf_constants.HG38], required=False,
+                        default=None)
     parser.add_argument("-o", "--output", required=True,
                         help="Folder name containing outputs", metavar="STRING")
     parser.add_argument("-r", "--reads_treshold",
@@ -654,6 +663,137 @@ def get_files_with_extension(
         return filtered_files
     else:
         return [path]
+
+
+# Reference chromosome lengths used to disambiguate hg19 vs hg38 from a BAM/CRAM
+# @SQ header. chr1 anchors a whole-genome BAM; chr20 falls back when the input
+# is chrY-only (where chr1 may be absent). All four lengths are unique across
+# the two builds and are >290 kb apart from each other, so a ±1 kb tolerance
+# is comfortably distinguishing.
+_HG19_CHR1_LEN = 249_250_621
+_HG38_CHR1_LEN = 248_956_422
+_HG19_CHR20_LEN = 63_025_520
+_HG38_CHR20_LEN = 64_444_167
+_BUILD_INFERENCE_TOLERANCE = 1_000  # bp
+
+
+def _read_sq_lengths(
+        bam_or_cram_path: Path,
+) -> Dict[str, int]:
+    """Return a dict of {sequence_name: length_bp} from @SQ headers."""
+    cmd = ["samtools", "view", "-H", str(bam_or_cram_path)]
+    result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+    out: Dict[str, int] = {}
+    for line in result.stdout.splitlines():
+        if not line.startswith("@SQ"):
+            continue
+        sn = ln = None
+        for field in line.split("\t"):
+            if field.startswith("SN:"):
+                sn = field[3:]
+            elif field.startswith("LN:"):
+                try:
+                    ln = int(field[3:])
+                except ValueError:
+                    ln = None
+        if sn and ln is not None:
+            out[sn] = ln
+    return out
+
+
+def _build_for_length(
+        length: int,
+        hg19_len: int,
+        hg38_len: int,
+        tolerance: int = _BUILD_INFERENCE_TOLERANCE,
+) -> Union[str, None]:
+    """Return 'hg19', 'hg38', or None for an @SQ length.
+
+    Uses closest-match within ``tolerance``. None is returned when neither
+    build is within tolerance, which indicates an unknown reference (e.g. T2T,
+    a patch release with a different chr1 length, or a non-human genome).
+    """
+    d19 = abs(length - hg19_len)
+    d38 = abs(length - hg38_len)
+    if min(d19, d38) > tolerance:
+        return None
+    return yleaf_constants.HG19 if d19 < d38 else yleaf_constants.HG38
+
+
+def infer_build_from_bam(
+        bam_or_cram_path: Path,
+) -> str:
+    """Infer 'hg19' or 'hg38' from a BAM/CRAM's @SQ headers.
+
+    Match order:
+      1. chr1 / 1 length          -- preferred, anchors a whole-genome BAM
+      2. chr20 / 20 length        -- fallback for chrY-only BAMs
+    Raises ValueError if the input has no @SQ entries we recognise or if the
+    length doesn't match either supported build within tolerance.
+    """
+    sq = _read_sq_lengths(bam_or_cram_path)
+    if not sq:
+        raise ValueError(
+            f"Cannot infer reference build: no @SQ headers parsed from "
+            f"{bam_or_cram_path}. Pass -rg hg19 or -rg hg38 explicitly."
+        )
+
+    # chr1 first
+    for name in ("chr1", "1"):
+        if name in sq:
+            build = _build_for_length(sq[name], _HG19_CHR1_LEN, _HG38_CHR1_LEN)
+            if build is not None:
+                LOG.info(
+                    f"Inferred reference build {build} from {bam_or_cram_path.name} "
+                    f"@SQ {name} length {sq[name]:,} bp"
+                )
+                return build
+
+    # chr20 fallback (chrY-only BAMs that strip chr1)
+    for name in ("chr20", "20"):
+        if name in sq:
+            build = _build_for_length(sq[name], _HG19_CHR20_LEN, _HG38_CHR20_LEN)
+            if build is not None:
+                LOG.info(
+                    f"Inferred reference build {build} from {bam_or_cram_path.name} "
+                    f"@SQ {name} length {sq[name]:,} bp (chr1 not present)"
+                )
+                return build
+
+    raise ValueError(
+        f"Cannot infer reference build from {bam_or_cram_path}: chr1/chr20 "
+        f"@SQ lengths don't match hg19 or hg38 within ±{_BUILD_INFERENCE_TOLERANCE} bp. "
+        f"Saw chr1/1={sq.get('chr1') or sq.get('1')!r}, "
+        f"chr20/20={sq.get('chr20') or sq.get('20')!r}. "
+        f"Pass -rg hg19 or -rg hg38 explicitly."
+    )
+
+
+def resolve_reference_genome(
+        args: argparse.Namespace,
+) -> str:
+    """Return the reference build name to use, honoring -rg or inferring from
+    @SQ headers when -rg was omitted on a BAM/CRAM input.
+
+    For FASTQ and VCF inputs there's no header to introspect, so -rg remains
+    required. Mutates args.reference_genome so downstream consumers (which
+    already read args.reference_genome) work unchanged.
+    """
+    if args.reference_genome is not None:
+        return args.reference_genome
+
+    if args.bamfile is not None:
+        build = infer_build_from_bam(Path(args.bamfile))
+    elif args.cramfile is not None:
+        build = infer_build_from_bam(Path(args.cramfile))
+    else:
+        raise ValueError(
+            "-rg / --reference_genome is required for FASTQ and VCF inputs "
+            "(BAM/CRAM inputs infer it from @SQ headers automatically)."
+        )
+
+    args.reference_genome = build
+    return build
 
 
 def check_reference(
