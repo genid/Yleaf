@@ -356,6 +356,17 @@ def analyze_mixture(
         if het_per_node.get(n, 0) >= 2
         and het_per_node.get(n, 0) / (het_per_node.get(n, 0) + out_per_node.get(n, 0)) > 0.5
     ]
+    # Remove nodes that are isolated from all other lca_het_nodes (no ancestor or descendant
+    # in the set). These are cross-haplogroup noise nodes that survive the ≥2/hf>0.5 filter
+    # but are unrelated to the real contributor signal and pull the LCA toward the root.
+    if lca_het_nodes:
+        lca_set_pre = set(lca_het_nodes)
+        lca_connected = {
+            n for n in lca_set_pre
+            if (_get_ancestors(n, tree) | _get_subtree_nodes(n, tree)) & lca_set_pre
+        }
+        if lca_connected:
+            lca_het_nodes = [n for n in lca_het_nodes if n in lca_connected]
     if not lca_het_nodes:
         lca_het_nodes = het_nodes  # fallback if filter removes everything
 
