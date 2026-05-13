@@ -346,13 +346,14 @@ def analyze_mixture(
 
     # --- Filter het nodes for LCA computation: majority of observed positions must be het ---
     # A node qualifies only if more than half its total observed positions (called + het)
-    # are heterozygous.  Universal ancestor nodes (A0-T, A1, …) have mostly clear derived
-    # calls and will be excluded, preventing them from pulling the LCA above the real split.
+    # are heterozygous AND has at least 2 het positions.  The ≥2 minimum prevents singleton
+    # BBM hits (1 noisy read) from being included — a single read anywhere in the tree passes
+    # the >0.5 fraction test trivially (1/1=1.0) and pulls the LCA to near-root level.
     out_per_node = out_df["haplogroup"].value_counts() if not out_df.empty else pd.Series(dtype=int)
     het_per_node = het_df["haplogroup"].value_counts()
     lca_het_nodes = [
         n for n in het_nodes
-        if (het_per_node.get(n, 0) + out_per_node.get(n, 0)) > 0
+        if het_per_node.get(n, 0) >= 2
         and het_per_node.get(n, 0) / (het_per_node.get(n, 0) + out_per_node.get(n, 0)) > 0.5
     ]
     if not lca_het_nodes:
@@ -360,7 +361,7 @@ def analyze_mixture(
 
     dropped = set(het_nodes) - set(lca_het_nodes)
     if dropped:
-        LOG.debug(f"Mixture: excluded {len(dropped)} node(s) from LCA computation (het fraction ≤ 0.5): {dropped}")
+        LOG.debug(f"Mixture: excluded {len(dropped)} node(s) from LCA computation (het fraction ≤ 0.5 or <2 het positions): {dropped}")
 
     # --- Find LCA from het-majority nodes only ---
     try:
@@ -374,12 +375,27 @@ def analyze_mixture(
     # single qualifying child until we reach a proper split point.
     # If 0 children qualify directly, the LCA is too high (pulled up by noise);
     # descend into the child whose subtree contains the most het nodes and try again.
+    #
+    # A direct child qualifies if:
+    #   - it has at least one covered position AND het fraction > 0.5 (normal case), OR
+    #   - it has zero covered positions (unobserved node) AND its subtree contains at least
+    #     one lca_het_node — the node itself is just a tree backbone entry with no markers,
+    #     so we look one level deeper to decide whether this branch carries real signal.
     lca_het_nodes_set = set(lca_het_nodes)
     while True:
-        qualifying_children = [
-            c for c in tree.get(lca).children
-            if c in tree.node_mapping and _het_fraction(c, het_per_node, out_per_node) > 0.5
-        ]
+        qualifying_children = []
+        for c in tree.get(lca).children:
+            if c not in tree.node_mapping:
+                continue
+            h = het_per_node.get(c, 0)
+            o = out_per_node.get(c, 0)
+            if h + o == 0:
+                # Unobserved node: qualify if any lca_het_node lives in its subtree
+                if (_get_subtree_nodes(c, tree) | {c}) & lca_het_nodes_set:
+                    qualifying_children.append(c)
+            else:
+                if h / (h + o) > 0.5:
+                    qualifying_children.append(c)
         if len(qualifying_children) >= 2:
             break
         if len(qualifying_children) == 1:
