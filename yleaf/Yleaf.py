@@ -369,8 +369,15 @@ def main():
 
     LOG.info(f"Running Yleaf with command: {' '.join(sys.argv)}")
 
+    # Apply --ref-fasta / $YLEAF_REF_DIR overrides before the existence check.
+    # When an override is in effect we trust the caller and skip the automatic
+    # UCSC download — otherwise we'd defeat the purpose of letting users point
+    # Yleaf at an existing FASTA on disk.
+    override_in_effect = apply_reference_overrides(args)
+
     # make sure the reference genome is present before doing something else, if not present it is downloaded
-    check_reference(args.reference_genome)
+    if not override_in_effect:
+        check_reference(args.reference_genome)
 
     if args.fastq:
         main_fastq(args, out_folder)
@@ -430,6 +437,13 @@ def get_arguments() -> argparse.Namespace:
                              " will be used instead as reference or the location will be used to download the "
                              "reference if those files are missing or empty.",
                         choices=[yleaf_constants.HG19, yleaf_constants.HG38], required=True)
+    parser.add_argument("--ref-fasta", dest="ref_fasta", required=False, metavar="PATH",
+                        type=check_file,
+                        help="Path to an external full reference genome FASTA for the requested -rg "
+                             "build. When set, this overrides the bundled data/<build>/full_reference.fa "
+                             "lookup and the YLEAF_REF_DIR environment variable, and disables the "
+                             "automatic UCSC download. Use this to point Yleaf at an existing FASTA "
+                             "without having to symlink it into the installed package.")
     parser.add_argument("-o", "--output", required=True,
                         help="Folder name containing outputs", metavar="STRING")
     parser.add_argument("-r", "--reads_treshold",
@@ -654,6 +668,57 @@ def get_files_with_extension(
         return filtered_files
     else:
         return [path]
+
+
+def apply_reference_overrides(
+        args: argparse.Namespace,
+) -> bool:
+    """Apply --ref-fasta and $YLEAF_REF_DIR overrides for the full-genome reference.
+
+    Resolution order for the full reference FASTA of the requested -rg build:
+      1. --ref-fasta PATH (CLI flag)              -- if set, used verbatim
+      2. $YLEAF_REF_DIR/<build>.{fa,fasta,fna}    -- if env var is set
+      3. data/<build>/full_reference.fa           -- bundled (existing behaviour)
+      4. config.txt override                       -- existing behaviour (loaded at module import)
+
+    Returns True iff an override was applied; the caller can use that to skip
+    the automatic UCSC download in check_reference().
+    """
+    build = args.reference_genome
+
+    chosen: Union[Path, None] = None
+    if getattr(args, "ref_fasta", None):
+        chosen = Path(args.ref_fasta).resolve()
+        if chosen.suffix.lower() not in (".fa", ".fasta", ".fna"):
+            raise ValueError(
+                f"--ref-fasta must point to a .fa, .fasta, or .fna file (got: {chosen})"
+            )
+        if chosen.stat().st_size < 100:
+            raise ValueError(
+                f"--ref-fasta target is empty or truncated: {chosen} "
+                f"({chosen.stat().st_size} bytes)"
+            )
+        LOG.info(f"Using --ref-fasta override for {build}: {chosen}")
+    else:
+        env_dir = os.environ.get("YLEAF_REF_DIR")
+        if env_dir:
+            for suffix in (".fa", ".fasta", ".fna"):
+                candidate = Path(env_dir) / f"{build}{suffix}"
+                if candidate.exists() and candidate.stat().st_size >= 100:
+                    chosen = candidate.resolve()
+                    LOG.info(f"Using YLEAF_REF_DIR override for {build}: {chosen}")
+                    break
+
+    if chosen is None:
+        return False
+
+    # Mutate the module-level constant so downstream consumers
+    # (get_reference_path, main_fastq, find_private_mutations) see the override.
+    if build == yleaf_constants.HG19:
+        yleaf_constants.HG19_FULL_GENOME = chosen
+    else:
+        yleaf_constants.HG38_FULL_GENOME = chosen
+    return True
 
 
 def check_reference(
