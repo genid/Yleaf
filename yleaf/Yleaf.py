@@ -1127,6 +1127,19 @@ def main_fastq(
             cmd = "samtools index -@ {} {}".format(args.threads, bam_file)
             call_command(cmd)
             os.remove(sam_file)
+        else:
+            # Plain single-end .fastq (no pair suffix, not gzipped)
+            LOG.info(f"Starting with running for {fastq_file}")
+            sam_file = bam_folder / "temp_fastq_sam.sam"
+            fastq_cmd = f"minimap2 -ax sr -k14 -w7 -t {args.threads} {reference} {fastq_file} > {sam_file}"
+            call_command(fastq_cmd)
+            bam_file = bam_folder / (fastq_file.stem + ".bam")
+            cmd = "samtools view -@ {} -bS {} | samtools sort -@ {} -m 2G -o {}".format(args.threads, sam_file,
+                                                                                        args.threads, bam_file)
+            call_command(cmd)
+            cmd = "samtools index -@ {} {}".format(args.threads, bam_file)
+            call_command(cmd)
+            os.remove(sam_file)
     args.bamfile = bam_folder
     if trees is not None:
         main_bam_cram_multi_tree(args, out_folder, True, trees)
@@ -1688,7 +1701,7 @@ def get_files_with_extension(
                 filtered_files.append(file)
         return filtered_files
     else:
-        return [path]
+        return [path] if str(path).endswith(ext) else []
 
 
 def check_reference(
