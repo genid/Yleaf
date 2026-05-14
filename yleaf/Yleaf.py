@@ -26,6 +26,12 @@ from argparse import ArgumentParser
 from pathlib import Path
 from typing import Union, List, TextIO, Tuple, Dict, Set
 from collections import defaultdict, Counter
+
+# When running as a PyInstaller bundle, prepend the bundle directory to PATH
+# so samtools/minimap2/bcftools bundled alongside the executable are found first.
+if getattr(sys, 'frozen', False):
+    _bundle_dir = getattr(sys, '_MEIPASS', str(Path(sys.executable).parent))
+    os.environ['PATH'] = _bundle_dir + os.pathsep + os.environ.get('PATH', '')
 import re
 import time
 import datetime
