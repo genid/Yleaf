@@ -54,7 +54,10 @@ jobs:
         run: tar czf ${{ matrix.artifact }} -C dist yleaf
 
       # ── Windows ───────────────────────────────────────────────────────────
-      - name: Install tools via MSYS2 (Windows)
+      # samtools and bcftools are available in MSYS2 MINGW64.
+      # minimap2 is not in MSYS2; we try to download a Windows binary from
+      # the official releases and fall back gracefully if none is available.
+      - name: Install samtools + bcftools via MSYS2 (Windows)
         if: runner.os == 'Windows'
         uses: msys2/setup-msys2@v2
         with:
@@ -63,20 +66,46 @@ jobs:
           install: >-
             mingw-w64-x86_64-samtools
             mingw-w64-x86_64-bcftools
-            mingw-w64-x86_64-minimap2
 
       - name: Stage tools and DLLs (Windows)
         if: runner.os == 'Windows'
         shell: msys2 {0}
         run: |
           mkdir -p /c/yleaf-tools
-          for tool in samtools bcftools minimap2; do
+          for tool in samtools bcftools; do
             cp /mingw64/bin/${tool}.exe /c/yleaf-tools/
             ldd /mingw64/bin/${tool}.exe \
               | grep '/mingw64' | awk '{print $3}' \
               | while read f; do cp "$f" /c/yleaf-tools/ 2>/dev/null || true; done
           done
-          echo "Staged $(ls /c/yleaf-tools | wc -l) files in /c/yleaf-tools"
+          echo "Staged $(ls /c/yleaf-tools | wc -l) files"
+
+      - name: Download minimap2 Windows binary (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          # Find the most recent minimap2 release that ships a Windows binary
+          $releases = gh release list --repo lh3/minimap2 --json tagName --limit 10 | ConvertFrom-Json
+          foreach ($rel in $releases) {
+            $assets = gh release view $rel.tagName --repo lh3/minimap2 --json assets | ConvertFrom-Json
+            $winAsset = $assets.assets | Where-Object { $_.name -match 'win' } | Select-Object -First 1
+            if ($winAsset) {
+              Write-Host "Found Windows binary in $($rel.tagName): $($winAsset.name)"
+              Invoke-WebRequest $winAsset.browserDownloadUrl -OutFile mm2-win.zip
+              Expand-Archive mm2-win.zip -DestinationPath C:/mm2-tmp
+              $exe = Get-ChildItem -Recurse C:/mm2-tmp -Filter "minimap2*.exe" | Select-Object -First 1
+              if ($exe) {
+                Copy-Item $exe.FullName "C:/yleaf-tools/minimap2.exe"
+                Write-Host "minimap2.exe staged"
+              }
+              break
+            }
+          }
+          if (-not (Test-Path "C:/yleaf-tools/minimap2.exe")) {
+            Write-Host "No Windows minimap2 binary found — FASTQ mode unavailable on Windows"
+          }
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set YLEAF_BUNDLED_TOOLS (Windows)
         if: runner.os == 'Windows'
@@ -112,6 +141,8 @@ jobs:
   release:
     name: Create GitHub Release
     needs: build
+    # Run even if some build jobs failed (e.g. one platform); skip only if all failed
+    if: ${{ always() && contains(needs.build.result, 'success') }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -136,11 +167,13 @@ jobs:
 
       - name: Publish release
         run: |
+          ASSETS=""
+          [ -f yleaf-linux.tar.gz ]  && ASSETS="$ASSETS yleaf-linux.tar.gz"
+          [ -f yleaf-macos.tar.gz ]  && ASSETS="$ASSETS yleaf-macos.tar.gz"
+          [ -f yleaf-windows.zip ]   && ASSETS="$ASSETS yleaf-windows.zip"
           gh release create ${{ github.ref_name }} \
             --title "Yleaf ${{ github.ref_name }}" \
             --notes-file release_notes.txt \
-            yleaf-linux.tar.gz \
-            yleaf-macos.tar.gz \
-            yleaf-windows.zip
+            $ASSETS
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
