@@ -24,7 +24,6 @@ from yleaf.tree import Tree, Node
 BACKBONE_GROUPS: Set = set()
 MAIN_HAPLO_GROUPS: Set = set()
 QC1_SCORE_CACHE: Dict[str, float] = {}
-IS_FTDNA_TREE: bool = False
 ACTIVE_TREE: str = "yfull"  # tracks which tree is active for QC routing
 _WORKER_TREE: 'Tree' = None  # cached per worker, set by _init_predict_worker
 
@@ -100,7 +99,6 @@ def main_predict_haplogroup(
     namespace: argparse.Namespace,
     backbone_groups: Set,
     main_haplo_groups: Set,
-    is_ftdna_tree: bool,
     folder: Path,
     active_tree: str = "yfull",
     out_file_suffix: str = ".out",
@@ -108,10 +106,9 @@ def main_predict_haplogroup(
     # Re-assign globals so spawned worker processes (which don't inherit parent
     # state on platforms using the "spawn" start method, e.g. macOS) have the
     # required data available (fixes issue #34).
-    global BACKBONE_GROUPS, MAIN_HAPLO_GROUPS, QC1_SCORE_CACHE, IS_FTDNA_TREE, ACTIVE_TREE
+    global BACKBONE_GROUPS, MAIN_HAPLO_GROUPS, QC1_SCORE_CACHE, ACTIVE_TREE
     BACKBONE_GROUPS = backbone_groups
     MAIN_HAPLO_GROUPS = main_haplo_groups
-    IS_FTDNA_TREE = is_ftdna_tree
     ACTIVE_TREE = active_tree
     # make sure to reset this for each sample
     QC1_SCORE_CACHE = {}
@@ -161,7 +158,7 @@ def main(namespace: argparse.Namespace = None):
                                initargs=(effective_tree_file,)) as p:
         for i, result in enumerate(
             p.imap_unordered(partial(main_predict_haplogroup, namespace, BACKBONE_GROUPS, MAIN_HAPLO_GROUPS,
-                                     IS_FTDNA_TREE, active_tree=ACTIVE_TREE, out_file_suffix=out_file_suffix),
+                                     active_tree=ACTIVE_TREE, out_file_suffix=out_file_suffix),
                              folders),
             1,
         ):
@@ -195,17 +192,17 @@ def get_arguments() -> argparse.Namespace:
 
 def read_backbone_groups(tree_file: Path = None):
     """Read some basic data that is always needed"""
-    global BACKBONE_GROUPS, MAIN_HAPLO_GROUPS, IS_FTDNA_TREE, ACTIVE_TREE
+    global BACKBONE_GROUPS, MAIN_HAPLO_GROUPS, ACTIVE_TREE
     # Reset per-tree globals so sequential multi-tree calls don't accumulate stale entries
     BACKBONE_GROUPS = set()
     MAIN_HAPLO_GROUPS = set()
     hg_folder = yleaf_constants.HG_PREDICTION_FOLDER
 
-    IS_FTDNA_TREE = tree_file is not None and str(tree_file).endswith(yleaf_constants.FTDNA_TREE_FILE)
+    is_ftdna = tree_file is not None and str(tree_file).endswith(yleaf_constants.FTDNA_TREE_FILE)
     is_isogg = tree_file is not None and str(tree_file).endswith(yleaf_constants.ISOGG_TREE_FILE)
     is_yfull_v10 = tree_file is not None and str(tree_file).endswith(yleaf_constants.YFULL_V10_TREE_FILE)
 
-    if IS_FTDNA_TREE:
+    if is_ftdna:
         ACTIVE_TREE = yleaf_constants.TREE_FTDNA
         major_tables_dir = hg_folder / "ftdna_major_tables"
     elif is_isogg:
