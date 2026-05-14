@@ -29,7 +29,7 @@ import numpy as np
 import pandas as pd
 from pathlib import Path
 from typing import List, Optional, Tuple, Dict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from yleaf.tree import Tree
 
@@ -43,6 +43,7 @@ class MixtureContributor:
     ratio: float
     markers: int
     qc: float
+    exclusions: List[str] = field(default_factory=list)
 
 
 @dataclass
@@ -77,6 +78,27 @@ def _get_subtree_nodes(node_name: str, tree: Tree) -> set:
         result.add(name)
         queue.extend(tree.get(name).children)
     return result
+
+
+def _get_minimal_exclusions(haplogroup: str, a_called_nodes: set, tree: Tree) -> List[str]:
+    """
+    Return the minimal set of A-called descendants of haplogroup that constrain placement.
+    A node is included only when none of its ancestors between haplogroup and itself are
+    also A-called descendants (avoids redundant entries like listing both R-YP5700 and
+    its child when R-YP5700 already implies the exclusion).
+    """
+    candidates = _get_subtree_nodes(haplogroup, tree) & a_called_nodes
+    if not candidates:
+        return []
+    haplogroup_ancestors = _get_ancestors(haplogroup, tree)
+    minimal = []
+    for n in candidates:
+        # Ancestors strictly between haplogroup (excl.) and n (excl.)
+        between = _get_ancestors(n, tree) - haplogroup_ancestors - {haplogroup}
+        if not (between & candidates):
+            minimal.append(n)
+    minimal.sort(key=lambda n: tree.get(n).depth)
+    return minimal
 
 
 def _find_lca(node_names: List[str], tree: Tree) -> str:
@@ -270,9 +292,12 @@ def analyze_mixture(
     # --- Load called (non-het majority) positions from .out file ---
     out_df = pd.DataFrame()
     called_nodes: set = set()
+    a_called_nodes: set = set()
     try:
         out_df = pd.read_csv(out_file, sep="\t")
         called_nodes = set(out_df["haplogroup"].dropna().unique())
+        if "state" in out_df.columns:
+            a_called_nodes = set(out_df[out_df["state"] == "A"]["haplogroup"].dropna().unique())
     except Exception as e:
         LOG.warning(f"Mixture: could not read {out_file}: {e}")
 
@@ -489,7 +514,8 @@ def analyze_mixture(
 
     contributors = [
         MixtureContributor(rank=i + 1, haplogroup=hg, ratio=round(ratio, 4),
-                           markers=markers, qc=round(qc, 4))
+                           markers=markers, qc=round(qc, 4),
+                           exclusions=_get_minimal_exclusions(hg, a_called_nodes, tree))
         for i, (hg, ratio, markers, qc) in enumerate(raw)
     ]
 
@@ -513,7 +539,10 @@ def write_mix_file(mix_file: Path, result: MixtureResult) -> None:
         f.write(f"#n_contributors\t{len(result.contributors)}\n")
         f.write("contributor\thaplogroup\tratio\tmarkers\tqc\n")
         for c in result.contributors:
-            f.write(f"{c.rank}\t{c.haplogroup}\t{c.ratio}\t{c.markers}\t{c.qc}\n")
+            hg_str = c.haplogroup
+            if c.exclusions:
+                hg_str += "*(" + ",".join(f"x{e}" for e in c.exclusions) + ")"
+            f.write(f"{c.rank}\t{hg_str}\t{c.ratio}\t{c.markers}\t{c.qc}\n")
 
 
 def read_mix_file(mix_file: Path) -> Optional[MixtureResult]:
