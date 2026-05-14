@@ -107,8 +107,8 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
 <div id="svg-wrap">
 SVG_CONTAINERS_PLACEHOLDER
 </div>
+PDF_LINKS_PLACEHOLDER
 <script>SVG_PAN_ZOOM_JS_PLACEHOLDER</script>
-<script>SVG_JSPDF_JS_PLACEHOLDER</script>
 <script>
 const panZooms = {};
 let activeTab = null;
@@ -139,32 +139,8 @@ function fitView() {
 
 function savePdf() {
   if (!activeTab) return;
-  const svgEl = document.querySelector('#tab-' + activeTab + ' > svg');
-  if (!svgEl) return;
-  const vb = svgEl.viewBox.baseVal;
-  const w = vb.width || svgEl.clientWidth || 1200;
-  const h = vb.height || svgEl.clientHeight || 800;
-  const clone = svgEl.cloneNode(true);
-  clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
-  clone.setAttribute('width', w); clone.setAttribute('height', h);
-  const svgStr = new XMLSerializer().serializeToString(clone);
-  const svgData = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svgStr)));
-  const img = new Image();
-  img.onload = function() {
-    const scale = 2;
-    const canvas = document.createElement('canvas');
-    canvas.width = w * scale; canvas.height = h * scale;
-    const ctx = canvas.getContext('2d');
-    ctx.fillStyle = '#1a1a2e';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.scale(scale, scale); ctx.drawImage(img, 0, 0, w, h);
-    const { jsPDF } = window.jspdf;
-    const doc = new jsPDF({ orientation: w > h ? 'l' : 'p', unit: 'px', format: [w, h] });
-    doc.addImage(canvas.toDataURL('image/jpeg', 0.92), 'JPEG', 0, 0, w, h);
-    doc.save('yleaf_haplogroup_tree.pdf');
-  };
-  img.onerror = () => alert('PDF export failed. Use File → Print → Save as PDF instead.');
-  img.src = svgData;
+  const link = document.getElementById('pdf-' + activeTab);
+  if (link) link.click();
 }
 
 window.addEventListener('load', function() {
@@ -200,32 +176,40 @@ def _build_dot_string(nodes: dict, edges: list) -> str:
     return '\n'.join(lines)
 
 
-def _render_svg(dot_str: str) -> str:
+def _render_dot(dot_str: str):
+    """Return (svg_string, pdf_bytes) for a DOT graph string."""
     import graphviz
-    svg = graphviz.Source(dot_str).pipe(format='svg').decode('utf-8')
+    src = graphviz.Source(dot_str)
+    svg = src.pipe(format='svg').decode('utf-8')
     svg = _re.sub(r'<\?xml[^?]*\?>', '', svg)
     svg = _re.sub(r'<!DOCTYPE[^>]*>', '', svg)
-    return svg.strip()
+    pdf_bytes = src.pipe(format='pdf')
+    return svg.strip(), pdf_bytes
 
 
 def _write_html(svgs: list, output_path: Path) -> None:
-    """svgs: list of (label, svg_string) pairs; first entry shown by default."""
+    """svgs: list of (label, svg_string, pdf_bytes) tuples; first entry shown by default."""
+    import base64
     tab_buttons = '\n  '.join(
         f'<button class="tab-btn" data-tab="{lbl.lower()}" '
         f'onclick="switchTab(\'{lbl.lower()}\')">{lbl}</button>'
-        for lbl, _ in svgs
+        for lbl, _, _pdf in svgs
     )
     containers = '\n'.join(
         f'<div id="tab-{lbl.lower()}" class="svg-container">{svg}</div>'
-        for lbl, svg in svgs
+        for lbl, svg, _pdf in svgs
+    )
+    pdf_links = '\n'.join(
+        f'<a id="pdf-{lbl.lower()}" href="data:application/pdf;base64,{base64.b64encode(pdf_bytes).decode()}" '
+        f'download="yleaf_tree_{lbl}.pdf" style="display:none"></a>'
+        for lbl, _svg, pdf_bytes in svgs
     )
     spz = (_DATA_DIR / 'svg-pan-zoom.min.js').read_text(encoding='utf-8')
-    pdf = (_DATA_DIR / 'jspdf.umd.min.js').read_text(encoding='utf-8')
     html = _HTML_TEMPLATE
     html = html.replace('TAB_BUTTONS_PLACEHOLDER', tab_buttons)
     html = html.replace('SVG_CONTAINERS_PLACEHOLDER', containers)
+    html = html.replace('PDF_LINKS_PLACEHOLDER', pdf_links)
     html = html.replace('SVG_PAN_ZOOM_JS_PLACEHOLDER', spz)
-    html = html.replace('SVG_JSPDF_JS_PLACEHOLDER', pdf)
     output_path.write_text(html, encoding='utf-8')
 
 
@@ -420,7 +404,7 @@ def make_dendrogram(
     # Full tree
     LOG.info("Rendering full tree SVG (this may take a while for large datasets)…")
     all_nodes, all_edges = _build_nodes_edges(partial_tree_dict, sample_mapping, edge_mapping)
-    svgs.append(('All', _render_svg(_build_dot_string(all_nodes, all_edges))))
+    svgs.append(('All', *_render_dot(_build_dot_string(all_nodes, all_edges))))
 
     # Per-major-haplogroup trees
     if original_haplogroups:
@@ -437,7 +421,7 @@ def make_dendrogram(
             sub_partial = haplogroup_tree_dict(sub_hgs, tree_file)
             sub_edge_map = collapse_tree_dict(sub_partial, sample_mapping) if collapse_mode else {}
             sub_nodes, sub_edges = _build_nodes_edges(sub_partial, sample_mapping, sub_edge_map)
-            svgs.append((major, _render_svg(_build_dot_string(sub_nodes, sub_edges))))
+            svgs.append((major, *_render_dot(_build_dot_string(sub_nodes, sub_edges))))
 
     html_path = Path(str(output_file) + '.html')
     _write_html(svgs, html_path)
