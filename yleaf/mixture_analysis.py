@@ -246,6 +246,62 @@ def _find_deepest_coherent_ancestor(
     return None
 
 
+def _merge_sibling_branches(
+    resolved: "Dict[str, pd.DataFrame]",
+    lca: str,
+    tree: Tree,
+    het_per_node: "pd.Series",
+    out_per_node: "pd.Series",
+    called_nodes: set,
+    lca_het: "pd.DataFrame",
+) -> "Dict[str, pd.DataFrame]":
+    """Iteratively merge pairs of resolved contributors whose closest common ancestor
+    (below the LCA) is het-majority.  This collapses artificially split sibling branches
+    (e.g. multiple ISOGG J sub-branches) into their correct shared ancestor."""
+    changed = True
+    while changed:
+        changed = False
+        keys = list(resolved.keys())
+        for i in range(len(keys)):
+            for j in range(i + 1, len(keys)):
+                a, b = keys[i], keys[j]
+                if a not in resolved or b not in resolved:
+                    continue
+                common = _find_lca([a, b], tree)
+                if common is None or common == lca:
+                    continue
+                if common == a:
+                    # b is a descendant of a — keep a, drop b
+                    del resolved[b]
+                    changed = True
+                    break
+                elif common == b:
+                    # a is a descendant of b — keep b, drop a
+                    del resolved[a]
+                    changed = True
+                    break
+                else:
+                    nh = het_per_node.get(common, 0)
+                    nt = nh + out_per_node.get(common, 0)
+                    if nt == 0 or nh / nt <= 0.5:
+                        continue
+                    if common in called_nodes:
+                        continue
+                    if not _path_coherent_to_lca(common, lca, tree, het_per_node, out_per_node):
+                        continue
+                    common_nodes = {common} | _get_subtree_nodes(common, tree)
+                    sh = lca_het[lca_het["haplogroup"].isin(common_nodes)]
+                    del resolved[a]
+                    del resolved[b]
+                    if not sh.empty:
+                        resolved[common] = sh
+                    changed = True
+                    break
+            if changed:
+                break
+    return resolved
+
+
 # ---------------------------------------------------------------------------
 # Ratio and QC
 # ---------------------------------------------------------------------------
@@ -520,16 +576,18 @@ def analyze_mixture(
         if not branch_het.empty:
             resolved[coherent_hg] = branch_het
 
-    # Salvage pass: nodes with ≥2 direct het that were orphaned when decompose descended
-    # into their children. Climb from each unresolved decompose leaf toward LCA.
+    # Salvage pass: nodes orphaned when decompose descended into their children.
+    # Prefer ≥2-het ancestors; fall back to 1-het leaf only when no ancestor covers it.
     salvage_added = False
     for hg, _, _ in decomposed:
         if hg in resolved:
             continue
+        found = False
         node = tree.get(hg).parent
         while node is not None and node.name != lca:
             if node.name in resolved:
-                break  # leaf's contribution already captured by this ancestor
+                found = True  # already covered by a resolved ancestor
+                break
             nd = het_per_node.get(node.name, 0)
             if (nd >= 2
                     and node.name not in called_nodes
@@ -539,13 +597,36 @@ def analyze_mixture(
                 if not sh.empty:
                     resolved[node.name] = sh
                     salvage_added = True
+                found = True
                 break
             node = node.parent
+        if not found:
+            # Last resort: accept 1-het leaf when nothing better exists above it
+            nd_leaf = het_per_node.get(hg, 0)
+            if (nd_leaf >= 1
+                    and hg not in called_nodes
+                    and _path_coherent_to_lca(hg, lca, tree, het_per_node, out_per_node)):
+                leaf_nodes = {hg} | _get_subtree_nodes(hg, tree)
+                sh = lca_het[lca_het["haplogroup"].isin(leaf_nodes)]
+                if not sh.empty:
+                    resolved[hg] = sh
+                    salvage_added = True
 
     # Post-salvage: keep only the deepest representative (remove ancestors covered by a
     # deeper resolved node)
     if salvage_added:
         all_res = set(resolved.keys())
+        resolved = {hg: v for hg, v in resolved.items()
+                    if not (_get_subtree_nodes(hg, tree) & all_res)}
+
+    # Merge sibling branches that share a het-majority common ancestor below the LCA.
+    # This collapses artificially split branches (e.g. multiple ISOGG J sub-branches).
+    resolved = _merge_sibling_branches(
+        resolved, lca, tree, het_per_node, out_per_node, called_nodes, lca_het
+    )
+    # Post-merge deepest filter
+    all_res = set(resolved.keys())
+    if len(all_res) > 1:
         resolved = {hg: v for hg, v in resolved.items()
                     if not (_get_subtree_nodes(hg, tree) & all_res)}
 
