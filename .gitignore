@@ -1,6 +1,7 @@
 __pycache__
 *.fai
-test*
+/test[^s]*
+/test_data/
 Position_files/new_position_files/WGS_Yfull_hg38.bed
 Position_files/new_position_files/WGS_Yfull_hg19.bed
 Yleaf.egg-info/

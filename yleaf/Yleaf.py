@@ -998,15 +998,20 @@ def get_frequencies(
     index = 0
     while index < len(sequence):
         char = sequence[index]
-        if char in fastadict:
+        if char in {"-", "+"}:
+            # Must be tested before the fastadict membership check: "-" and "+"
+            # are keys in fastadict, so the generic branch would fire first and
+            # increment their counters while leaving the following nucleotide
+            # characters (e.g. "-3ACG") to bleed into A/T/G/C counts.
+            fastadict[char] += 1   # count the indel event itself
+            index += 1
+            digit, index = find_digit(sequence, index)
+            index += digit         # skip the nucleotide sequence
+        elif char in fastadict:
             fastadict[char] += 1
             index += 1
         elif char == "^":
             index += 2
-        elif char in {"-", "+"}:
-            index += 1
-            digit, index = find_digit(sequence, index)
-            index += digit
         else:
             index += 1
     fastadict["-"] += fastadict["*"]
