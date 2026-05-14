@@ -32,19 +32,14 @@ Yleaf -h
 ```      
 or manually install everything
 ```bash
-# install python and libraries
-apt-get install python3.6
+# install python 3.7+ and libraries
+apt-get install python3
 pip3 install pandas
 pip3 install numpy
-# install Burrows-Wheeler Aligner for FASTQ files
+# install minimap2 for FASTQ alignment
 sudo apt-get install minimap2 
 # install SAMtools
-wget https://github.com/samtools/samtools/releases/download/1.4.1/
-samtools-1.4.1.tar.bz2 -O samtools.tar.bz2
-tar -xjvf samtools.tar.bz2
-cd samtools-1.4.1/
-./configure make
-make install
+sudo apt-get install samtools
 # clone the yleaf repository
 git clone https://github.com/genid/Yleaf.git
 # pip install the yleaf repository
@@ -54,22 +49,21 @@ pip install -e .
 # verify that Yleaf is installed correctly. You can call this command from any directory on your system
 Yleaf -h 
 ```
-After installation you can navigate to the yleaf/config.txt folder and add custom paths for the files listed there. This will make sure that Yleaf does not download the files on the first go or downloads the files in the provided location. This allows you to use a custom reference if you want. Please keep in mind that custom reference files might cause other issues or give problems in combination with already existing data files. Positions are based on either hg38 or hg19.
+After installation you can navigate to the yleaf/config.txt folder and add custom paths for the files listed there. This will make sure that Yleaf does not download the files on the first go or downloads the files in the provided location. This allows you to use a custom reference if you want. Please keep in mind that custom reference files might cause other issues or give problems in combination with already existing data files. Positions are based on hg38, hg19 or T2T (hs1).
 
 ## Usage and examples
 Here follow some minimal working examples of how to use Yleaf with different input files. There are additional options
 that can be used to tune how strict Yleaf is as well as options to get private mutations as well as a graph showing 
-the positioning of predicted haplogroups of all your samples in the Haplogroup tree.
+the positioning of predicted haplogroups of all your samples in the haplogroup tree.
 
-_Note: In version 3.0 we switched to using YFull (v10.01) for the underlying tree structure of the haplogroups.
- This also means that predictions are a bit different compared to earlier versions._
 ### Yleaf: FASTQ (raw reads)
 
     Yleaf -fastq raw_reads.fastq -o fastq_output --reference_genome hg38
         
 ### Yleaf: BAM or CRAM format
+
     Yleaf -bam file.bam -o bam_output --reference_genome hg19 
-    Yleaf -cram file.bam -o cram_output --reference_genome hg38 
+    Yleaf -cram file.cram -o cram_output --reference_genome hg38 
 
 ### With drawing predicted haplogroups in a tree and showing all private mutations
 
@@ -80,6 +74,31 @@ _Note: In version 3.0 we switched to using YFull (v10.01) for the underlying tre
 Use the `-aDNA` / `--ancient_DNA` flag when working with ancient DNA. This ignores G>A and C>T mutations, which are common post-mortem deamination artefacts and would otherwise be misinterpreted as derived alleles.
 
     Yleaf -bam ancient_sample.bam -o output --reference_genome hg38 --ancient_DNA
+
+### Selecting a haplogroup tree
+
+Yleaf supports multiple reference trees. Use the `--tree` flag to select one or more trees:
+
+| Tree name   | Description                          |
+|-------------|--------------------------------------|
+| `yfull`     | YFull v14 (default)                  |
+| `yfull_v10` | YFull v10.01 (legacy)                |
+| `ftdna`     | FTDNA Y-haplotree                    |
+| `isogg`     | ISOGG tree                           |
+
+    # Single tree
+    Yleaf -bam file.bam -o output --reference_genome hg38 --tree yfull
+
+    # Multiple trees in one run (single pileup, per-tree prediction)
+    Yleaf -bam file.bam -o output --reference_genome hg38 --tree yfull ftdna isogg
+
+### Mixture analysis (forensic)
+
+The `-mix` flag enables forensic mixture deconvolution: Yleaf identifies the contributing Y-haplogroups in a DNA mixture from multiple male donors.
+
+    Yleaf -bam mixture.bam -o output --reference_genome hg38 --tree yfull -mix
+
+Results are written to a `.mix` file per sample. Mixture analysis is tree-aware and supports all reference trees.
 
 ## Additional information
 
@@ -93,4 +112,3 @@ If you have a bug to report or a question about installation consider sending an
 A. Ralf, et al., Yleaf: software for human Y-chromosomal haplogroup inference from next generation sequencing data (2018).
 
 https://academic.oup.com/mbe/article/35/5/1291/4922696
-
