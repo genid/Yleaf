@@ -1047,13 +1047,19 @@ def setup_logger(
     LOG.addHandler(handler)
 
     out_folder.mkdir(parents=True, exist_ok=True)
-    try:
-        file_handler = logging.FileHandler(filename=out_folder / "run.log")
-        file_handler.setFormatter(formatter)
-        file_handler.setLevel(logging.DEBUG)
-        LOG.addHandler(file_handler)
-    except OSError as e:
-        LOG.warning(f"Could not create log file in {out_folder} ({e}); logging to stdout only.")
+    last_exc = None
+    for _ in range(5):
+        try:
+            file_handler = logging.FileHandler(filename=out_folder / "run.log")
+            break
+        except OSError as e:
+            last_exc = e
+            time.sleep(0.2)
+    else:
+        raise OSError(f"Could not create log file in {out_folder}: {last_exc}")
+    file_handler.setFormatter(formatter)
+    file_handler.setLevel(logging.DEBUG)
+    LOG.addHandler(file_handler)
 
     LOG.debug("Logger created")
 
