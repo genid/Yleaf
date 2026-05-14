@@ -216,7 +216,7 @@ def _path_coherent_to_lca(
     while node is not None and node.name != lca:
         n_het = het_per_node.get(node.name, 0)
         n_tot = n_het + out_per_node.get(node.name, 0)
-        if n_tot > 0 and n_het / n_tot <= 0.5:
+        if n_tot > 0 and n_het / n_tot < 0.5:
             return False
         if node.parent is None:
             break
@@ -481,9 +481,36 @@ def analyze_mixture(
             if coherent_hg != hg:
                 LOG.debug(f"Mixture: {hg} → promoted to coherent ancestor {coherent_hg}")
 
-        if coherent_hg in called_nodes:
-            LOG.debug(f"Mixture: discarding {coherent_hg} — has called positions (incoherent with mixture)")
+        # Universal minimum: discard contributors with <2 direct het positions
+        if het_per_node.get(coherent_hg, 0) < 2:
+            LOG.debug(f"Mixture: discarding {coherent_hg} — <2 direct het positions at node")
             continue
+
+        if coherent_hg in called_nodes:
+            # Only attempt rescue when coherent_hg is a direct decomposition leaf
+            # (not a promoted ancestor) AND has ≥2 het positions at the node itself.
+            # Promoted ancestors (coherent_hg != hg) and 1-het noise should just be
+            # discarded — rescuing them causes backbone cascade false positives.
+            if coherent_hg != hg or het_per_node.get(coherent_hg, 0) < 2:
+                LOG.debug(f"Mixture: discarding {coherent_hg} — has called positions (incoherent with mixture)")
+                continue
+            # Climb toward LCA to find the nearest ancestor that is (1) not in
+            # called_nodes, (2) has ≥2 het positions directly assigned to that node,
+            # and (3) is path-coherent to the LCA.
+            fallback = None
+            climb_node = tree.get(coherent_hg).parent
+            while climb_node is not None and climb_node.name != lca:
+                if (climb_node.name not in called_nodes
+                        and het_per_node.get(climb_node.name, 0) >= 2
+                        and _path_coherent_to_lca(climb_node.name, lca, tree, het_per_node, out_per_node)):
+                    fallback = climb_node.name
+                    break
+                climb_node = climb_node.parent
+            if fallback is None:
+                LOG.debug(f"Mixture: discarding {coherent_hg} — has called positions, no ancestor fallback")
+                continue
+            LOG.debug(f"Mixture: {coherent_hg} → rescued to ancestor with direct het: {fallback}")
+            coherent_hg = fallback
 
         if coherent_hg in resolved:
             continue  # het positions for this ancestor already collected
@@ -492,6 +519,35 @@ def analyze_mixture(
         branch_het = lca_het[lca_het["haplogroup"].isin(coherent_nodes)]
         if not branch_het.empty:
             resolved[coherent_hg] = branch_het
+
+    # Salvage pass: nodes with ≥2 direct het that were orphaned when decompose descended
+    # into their children. Climb from each unresolved decompose leaf toward LCA.
+    salvage_added = False
+    for hg, _, _ in decomposed:
+        if hg in resolved:
+            continue
+        node = tree.get(hg).parent
+        while node is not None and node.name != lca:
+            if node.name in resolved:
+                break  # leaf's contribution already captured by this ancestor
+            nd = het_per_node.get(node.name, 0)
+            if (nd >= 2
+                    and node.name not in called_nodes
+                    and _path_coherent_to_lca(node.name, lca, tree, het_per_node, out_per_node)):
+                salvage_nodes = {node.name} | _get_subtree_nodes(node.name, tree)
+                sh = lca_het[lca_het["haplogroup"].isin(salvage_nodes)]
+                if not sh.empty:
+                    resolved[node.name] = sh
+                    salvage_added = True
+                break
+            node = node.parent
+
+    # Post-salvage: keep only the deepest representative (remove ancestors covered by a
+    # deeper resolved node)
+    if salvage_added:
+        all_res = set(resolved.keys())
+        resolved = {hg: v for hg, v in resolved.items()
+                    if not (_get_subtree_nodes(hg, tree) & all_res)}
 
     decomposed_pairs = list(resolved.items())
 
