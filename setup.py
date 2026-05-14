@@ -30,14 +30,14 @@ setup(
     description='Tool for human Y-chromosomal phylogenetic analysis and haplogroup inference.',
     classifiers=[
         "Programming Language :: Python :: 3",
-        "Programming Language :: Python :: 3.6",
+        "Programming Language :: Python :: 3.7",
         "License :: OSI Approved :: MIT License",
-        "Operating System :: Linux",
+        "Operating System :: POSIX :: Linux",
         "Intended Audience :: Science/Research",
         "Topic :: Scientific/Engineering :: Bio-Informatics",
     ],
     install_requires=required,
-    python_requires=">=3.6",
+    python_requires=">=3.7",
     entry_points={
         'console_scripts': [
             'Yleaf=yleaf.Yleaf:main',
