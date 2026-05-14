@@ -1,0 +1,146 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    name: Build on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            artifact: yleaf-linux.tar.gz
+          - os: macos-latest
+            artifact: yleaf-macos.tar.gz
+          - os: windows-latest
+            artifact: yleaf-windows.zip
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # ── Linux / macOS ─────────────────────────────────────────────────────
+      - name: Set up Miniconda (Linux/macOS)
+        if: runner.os != 'Windows'
+        uses: conda-incubator/setup-miniconda@v3
+        with:
+          python-version: "3.11"
+          channels: conda-forge,bioconda,defaults
+          auto-activate-base: true
+          activate-environment: ''
+
+      - name: Install tools (Linux/macOS)
+        if: runner.os != 'Windows'
+        shell: bash -el {0}
+        run: conda install -y samtools minimap2 bcftools
+
+      - name: Install Yleaf + PyInstaller (Linux/macOS)
+        if: runner.os != 'Windows'
+        shell: bash -el {0}
+        run: pip install -e . && pip install pyinstaller
+
+      - name: Build (Linux/macOS)
+        if: runner.os != 'Windows'
+        shell: bash -el {0}
+        run: python -m PyInstaller --distpath dist --workpath build --noconfirm pyinstaller_yleaf.spec
+
+      - name: Package (Linux/macOS)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: tar czf ${{ matrix.artifact }} -C dist yleaf
+
+      # ── Windows ───────────────────────────────────────────────────────────
+      - name: Install tools via MSYS2 (Windows)
+        if: runner.os == 'Windows'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: false
+          install: >-
+            mingw-w64-x86_64-samtools
+            mingw-w64-x86_64-bcftools
+            mingw-w64-x86_64-minimap2
+
+      - name: Stage tools and DLLs (Windows)
+        if: runner.os == 'Windows'
+        shell: msys2 {0}
+        run: |
+          mkdir -p /c/yleaf-tools
+          for tool in samtools bcftools minimap2; do
+            cp /mingw64/bin/${tool}.exe /c/yleaf-tools/
+            ldd /mingw64/bin/${tool}.exe \
+              | grep '/mingw64' | awk '{print $3}' \
+              | while read f; do cp "$f" /c/yleaf-tools/ 2>/dev/null || true; done
+          done
+          echo "Staged $(ls /c/yleaf-tools | wc -l) files in /c/yleaf-tools"
+
+      - name: Set YLEAF_BUNDLED_TOOLS (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: echo "YLEAF_BUNDLED_TOOLS=C:/yleaf-tools" >> $env:GITHUB_ENV
+
+      - name: Set up Python (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Yleaf + PyInstaller (Windows)
+        if: runner.os == 'Windows'
+        run: pip install -e . && pip install pyinstaller
+
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        run: python -m PyInstaller --distpath dist --workpath build --noconfirm pyinstaller_yleaf.spec
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Compress-Archive -Path dist\yleaf -DestinationPath ${{ matrix.artifact }}
+
+      # ── Upload ────────────────────────────────────────────────────────────
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}
+
+  release:
+    name: Create GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+
+      - name: Generate changelog
+        run: |
+          PREV=$(git tag --sort=-v:refname | sed -n '2p')
+          RANGE="${PREV:+${PREV}..}HEAD"
+          git log $RANGE --pretty=format:"- %s" \
+            | grep -v "Co-Authored-By" > release_notes.txt
+          cat release_notes.txt
+
+      - name: Publish release
+        run: |
+          gh release create ${{ github.ref_name }} \
+            --title "Yleaf ${{ github.ref_name }}" \
+            --notes-file release_notes.txt \
+            yleaf-linux.tar.gz \
+            yleaf-macos.tar.gz \
+            yleaf-windows.zip
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
