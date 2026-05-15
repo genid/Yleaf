@@ -2150,7 +2150,7 @@ def extract_haplogroups(
     bool_list_der = bool_list_der.astype('object')
     bool_list_state = np.equal(bool_list_anc, bool_list_der)
 
-    df["called_perc"] = np.array(called_perc, dtype=int)
+    df["called_perc"] = np.array(np.nan_to_num(called_perc, nan=0), dtype=int)
     df["called_base"] = called_base
     df["state"] = bool_list_anc
     df["bool_state"] = bool_list_state
