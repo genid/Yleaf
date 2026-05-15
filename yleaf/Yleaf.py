@@ -643,6 +643,7 @@ def main_plink_multi_tree(args: argparse.Namespace, base_out_folder: Path, trees
         args.prediction_quality, args.threads,
         draw_hg=args.draw_haplogroups,
         collapsed_draw_mode=args.collapsed_draw_mode,
+        report_json=getattr(args, 'report_json', None),
     )
 
 
@@ -806,7 +807,8 @@ def main_vcf_multi_tree(
     write_combined_prediction_table(base_out_folder, trees, combined_out,
                                     args.prediction_quality, args.threads,
                                     draw_hg=args.draw_haplogroups,
-                                    collapsed_draw_mode=args.collapsed_draw_mode)
+                                    collapsed_draw_mode=args.collapsed_draw_mode,
+                                    report_json=getattr(args, 'report_json', None))
 
 
 def main_vcf(
@@ -876,6 +878,21 @@ def main():
     multi_tree = isinstance(args.tree, list)  # True when multiple trees were specified
     trees = args.tree if multi_tree else [args.tree]
 
+    # Resolve reference genome: auto-detect for BAM/CRAM, require explicit -rg for FASTQ/VCF/PLINK
+    if args.reference_genome is None:
+        bam_or_cram = args.bamfile or args.cramfile
+        if bam_or_cram:
+            ext = '.bam' if args.bamfile else '.cram'
+            files = get_files_with_extension(bam_or_cram, ext)
+            if not files:
+                LOG.error(f"No {ext} files found at {bam_or_cram}. Cannot auto-detect reference build.")
+                sys.exit(1)
+            args.reference_genome = _detect_reference_build_from_bam(files[0])
+        else:
+            LOG.error("Please specify the reference genome build with -rg hg19, -rg hg38, or -rg t2t. "
+                      "Auto-detection requires BAM or CRAM input.")
+            sys.exit(1)
+
     # make sure the reference genome is present before doing something else, if not present it is downloaded
     check_reference(args.reference_genome)
 
@@ -906,7 +923,8 @@ def main():
         LOG.error("Please specify either a bam, cram, fastq, vcf, or plink file")
         raise ValueError("Please specify either a bam, cram, fastq, vcf, or plink file")
     hg_out = out_folder / PREDICTION_OUT_FILE_NAME
-    predict_haplogroup(out_folder, hg_out, args.prediction_quality, args.threads, args.tree)
+    predict_haplogroup(out_folder, hg_out, args.prediction_quality, args.threads, args.tree,
+                       report_json=getattr(args, 'report_json', None))
     _write_path_file(out_folder, args.tree, hg_out, ".out", threads=args.threads)
     if args.draw_haplogroups:
         draw_haplogroups(hg_out, args.collapsed_draw_mode)
@@ -958,11 +976,12 @@ def get_arguments() -> argparse.Namespace:
     parser.add_argument("-force", "--force", action="store_true",
                         help="Delete files without asking")
     parser.add_argument("-rg", "--reference_genome",
-                        help="The reference genome build to be used. If no reference is available "
-                             "they will be downloaded. If you added references in your config.txt file these"
-                             " will be used instead as reference or the location will be used to download the "
-                             "reference if those files are missing or empty.",
-                        choices=[yleaf_constants.HG19, yleaf_constants.HG38, yleaf_constants.T2T], required=True)
+                        help="The reference genome build to be used (hg19, hg38, or t2t). "
+                             "For BAM/CRAM input this can be omitted — Yleaf will auto-detect the build "
+                             "from the @SQ headers. For FASTQ and VCF input -rg is required. "
+                             "If no reference is available it will be downloaded on first use.",
+                        choices=[yleaf_constants.HG19, yleaf_constants.HG38, yleaf_constants.T2T],
+                        default=None)
     parser.add_argument("-o", "--output", required=True,
                         help="Folder name containing outputs", metavar="STRING")
     parser.add_argument("-r", "--reads_treshold",
@@ -1024,6 +1043,11 @@ def get_arguments() -> argparse.Namespace:
                              "estimate mixture ratios, and assign a haplogroup per contributor. "
                              "Requires per-allele read counts (BAM/CRAM or VCF with FORMAT/AD). "
                              "Sets --base_majority to 99%% unless explicitly overridden.")
+
+    parser.add_argument("--report-json", dest="report_json", default=None, metavar="FILE",
+                        help="Write a structured JSON report to FILE alongside the normal TSV output. "
+                             "In multi-tree mode the tree name is inserted before the .json extension "
+                             "(e.g. report.yfull.json, report.ftdna.json).")
 
     args = parser.parse_args()
     return args
@@ -1167,6 +1191,46 @@ _CRAM_CHRY_MD5 = {
     "17ceeafc3a372967496cd94f2572c341": yleaf_constants.HG19,
     "360f2d39c52a70539bac6b12ff76c123": yleaf_constants.T2T,
 }
+
+# chr1 and chr20 lengths per build used for closest-match reference auto-detection
+_BUILD_CHR_LENGTHS = {
+    yleaf_constants.HG19: {"chr1": 249_250_621, "chr20": 63_025_520},
+    yleaf_constants.HG38: {"chr1": 248_956_422, "chr20": 64_444_167},
+    yleaf_constants.T2T:  {"chr1": 248_387_328, "chr20": 66_210_255},
+}
+
+
+def _detect_reference_build_from_bam(bam_file: Path) -> str:
+    """Detect hg19/hg38/t2t from BAM/CRAM @SQ headers using closest-match chr1 or chr20 length."""
+    result = subprocess.run(
+        ["samtools", "view", "-H", str(bam_file)],
+        capture_output=True, text=True
+    )
+    sq_lengths: dict = {}
+    for line in result.stdout.splitlines():
+        if not line.startswith("@SQ"):
+            continue
+        fields = dict(f.split(":", 1) for f in line.split("\t")[1:] if ":" in f)
+        sn = fields.get("SN", "")
+        ln = fields.get("LN")
+        if ln is not None and sn in ("chr1", "1", "chr20", "20"):
+            key = "chr1" if sn in ("chr1", "1") else "chr20"
+            sq_lengths[key] = int(ln)
+
+    anchor = "chr1" if "chr1" in sq_lengths else ("chr20" if "chr20" in sq_lengths else None)
+    if anchor is None:
+        raise ValueError(
+            "Cannot auto-detect reference build: no chr1 or chr20 @SQ entry found in BAM/CRAM header. "
+            "Please specify the reference build with -rg hg19, -rg hg38, or -rg t2t."
+        )
+
+    observed = sq_lengths[anchor]
+    best_build = min(
+        _BUILD_CHR_LENGTHS,
+        key=lambda b: abs(_BUILD_CHR_LENGTHS[b][anchor] - observed)
+    )
+    LOG.info(f"Auto-detected reference build from BAM/CRAM {anchor} length ({observed:,}): {best_build}")
+    return best_build
 
 
 def _download_cram_reference(url: str, dest: Path) -> None:
@@ -1351,7 +1415,8 @@ def main_bam_cram_multi_tree(
     write_combined_prediction_table(base_out_folder, trees, combined_out,
                                     args.prediction_quality, args.threads,
                                     draw_hg=args.draw_haplogroups,
-                                    collapsed_draw_mode=args.collapsed_draw_mode)
+                                    collapsed_draw_mode=args.collapsed_draw_mode,
+                                    report_json=getattr(args, 'report_json', None))
 
 
 def run_bam_cram_multi_tree(
@@ -1498,13 +1563,15 @@ def write_combined_prediction_table(
         prediction_quality: float,
         threads: int,
         draw_hg: bool = False,
-        collapsed_draw_mode: bool = False
+        collapsed_draw_mode: bool = False,
+        report_json: Path = None,
 ):
     """Run predict_haplogroup per tree (sequentially) and write combined TSV with one row per sample."""
     tree_results = {}
     for tree in trees:
         tree_hg_out = base_out_folder / f"hg_prediction_{tree}.hg"
-        _predict_for_tree(base_out_folder, tree, tree_hg_out, prediction_quality, threads)
+        _predict_for_tree(base_out_folder, tree, tree_hg_out, prediction_quality, threads,
+                          report_json=report_json)
         if draw_hg:
             draw_haplogroups(tree_hg_out, collapsed_draw_mode,
                              outfile=base_out_folder / f"haplogroup_tree_{tree}",
@@ -1536,10 +1603,15 @@ def _predict_for_tree(
         tree: str,
         hg_out: Path,
         prediction_quality: float,
-        threads: int
+        threads: int,
+        report_json: Path = None,
 ):
     """Run haplogroup prediction for one tree, reading tree-specific .{tree}.out files."""
     from yleaf import predict_haplogroup
+    tree_report_json = None
+    if report_json is not None:
+        p = Path(report_json)
+        tree_report_json = p.parent / f"{p.stem}.{tree}{p.suffix}"
     namespace = argparse.Namespace(
         input=base_out_folder,
         outfile=hg_out,
@@ -1548,6 +1620,7 @@ def _predict_for_tree(
         tree_file=get_tree_path(tree),
         out_file_suffix=f".{tree}.out",
         info_file_suffix=f".{tree}.info",
+        report_json=tree_report_json,
     )
     predict_haplogroup.main(namespace)
     _write_path_file(base_out_folder, tree, hg_out, f".{tree}.out", threads=threads)
@@ -2308,11 +2381,13 @@ def predict_haplogroup(
         prediction_quality: float,
         threads: int,
         tree: str = yleaf_constants.TREE_YFULL,
+        report_json: Path = None,
 ):
     from yleaf import predict_haplogroup
     namespace = argparse.Namespace(input=path_file, outfile=output,
                                    minimum_score=prediction_quality, threads=threads,
-                                   tree_file=get_tree_path(tree))
+                                   tree_file=get_tree_path(tree),
+                                   report_json=report_json)
     predict_haplogroup.main(namespace)
 
 
