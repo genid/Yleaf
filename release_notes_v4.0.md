@@ -1,0 +1,10 @@
+- Added graphical dashboard (GUI) for Windows, macOS, and Linux — the new primary interface for end users
+- Added multi-tree prediction: run all supported trees in a single command with one shared pileup (`-tree yfull ftdna isogg`)
+- Added FamilyTreeDNA (FTDNA) haplogroup tree support with hg19, hg38, and T2T positions
+- Added ISOGG haplogroup tree support
+- Added YFull v14.01 as the new default tree (replacing v10.01; ~235,000 marker positions on hg38)
+- Added forensic mixture analysis mode (`-mix`): detects multiple Y-chromosome contributors, estimates ratios, and assigns a haplogroup per contributor
+- Added ancient DNA mode (`-aDNA`): ignores G>A and C>T post-mortem deamination artefacts
+- Added T2T (CHM13v2.0 / hs1) reference genome support
+- Added PLINK/SNP-array input (`-plink`)
+- Replaced static PDF haplogroup tree output with an interactive self-contained HTML file (`-dh`)

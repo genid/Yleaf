@@ -338,10 +338,15 @@ jobs:
 
       - name: Generate changelog
         run: |
-          PREV=$(git tag --sort=-v:refname | sed -n '2p')
-          RANGE="${PREV:+${PREV}..}HEAD"
-          git log $RANGE --pretty=format:"- %s" \
-            | grep -v "Co-Authored-By" > release_notes.txt
+          NOTES_FILE="release_notes_${{ github.ref_name }}.md"
+          if [ -f "$NOTES_FILE" ]; then
+            cp "$NOTES_FILE" release_notes.txt
+          else
+            PREV=$(git tag --sort=-v:refname | sed -n '2p')
+            RANGE="${PREV:+${PREV}..}HEAD"
+            git log $RANGE --pretty=format:"- %s" \
+              | grep -v "Co-Authored-By" > release_notes.txt
+          fi
           cat release_notes.txt
 
       - name: Publish release
