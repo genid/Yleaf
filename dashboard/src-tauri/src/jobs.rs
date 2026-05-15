@@ -172,6 +172,8 @@ pub async fn run_yleaf(
     if mixture_mode {
         args.push("-mix".into());
     }
+    args.push("--report-json".into());
+    args.push(format!("{}/report.json", output_dir));
     args.push("-force".into());
 
     // Derive a display name from the input filename
