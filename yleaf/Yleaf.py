@@ -893,6 +893,12 @@ def main():
                       "Auto-detection requires BAM or CRAM input.")
             sys.exit(1)
 
+    # Apply --ref-fasta or YLEAF_REF_DIR override before check_reference() so the download is skipped
+    if getattr(args, 'ref_fasta', None):
+        _apply_ref_fasta_override(args.reference_genome, args.ref_fasta)
+    else:
+        _apply_ref_dir_override(args.reference_genome)
+
     # make sure the reference genome is present before doing something else, if not present it is downloaded
     check_reference(args.reference_genome)
 
@@ -982,6 +988,11 @@ def get_arguments() -> argparse.Namespace:
                              "If no reference is available it will be downloaded on first use.",
                         choices=[yleaf_constants.HG19, yleaf_constants.HG38, yleaf_constants.T2T],
                         default=None)
+    parser.add_argument("--ref-fasta", dest="ref_fasta", default=None, metavar="FILE",
+                        help="Path to the full reference FASTA (.fa/.fasta/.fna) for the selected -rg build. "
+                             "Skips the auto-download when provided. "
+                             "The YLEAF_REF_DIR environment variable can be used as a directory-level alternative: "
+                             "place files named hg19.fa, hg38.fa, t2t.fa (or .fasta/.fna) there.")
     parser.add_argument("-o", "--output", required=True,
                         help="Folder name containing outputs", metavar="STRING")
     parser.add_argument("-r", "--reads_treshold",
@@ -1790,6 +1801,48 @@ def get_files_with_extension(
         return filtered_files
     else:
         return [path] if str(path).endswith(ext) else []
+
+
+def _apply_ref_fasta_override(reference_genome: str, ref_fasta: str) -> None:
+    """Mutate yleaf_constants so the given FASTA is used instead of downloading."""
+    path = Path(ref_fasta)
+    if path.suffix not in (".fa", ".fasta", ".fna"):
+        raise ValueError(
+            f"--ref-fasta must end in .fa, .fasta, or .fna (got: {path.suffix}). "
+            "Please supply a FASTA file."
+        )
+    if not path.exists() or path.stat().st_size < 100:
+        raise ValueError(
+            f"--ref-fasta file not found or too small (expected a FASTA ≥100 bytes): {path}"
+        )
+    if reference_genome == yleaf_constants.HG19:
+        yleaf_constants.HG19_FULL_GENOME = path
+    elif reference_genome == yleaf_constants.T2T:
+        yleaf_constants.T2T_FULL_GENOME = path
+    else:
+        yleaf_constants.HG38_FULL_GENOME = path
+    LOG.info(f"Using user-supplied reference FASTA for {reference_genome}: {path}")
+
+
+def _apply_ref_dir_override(reference_genome: str) -> bool:
+    """Check YLEAF_REF_DIR env var; mutate yleaf_constants if a matching FASTA is found.
+    Returns True if an override was applied."""
+    ref_dir = os.environ.get("YLEAF_REF_DIR")
+    if not ref_dir:
+        return False
+    ref_dir_path = Path(ref_dir)
+    for ext in (".fa", ".fasta", ".fna"):
+        candidate = ref_dir_path / f"{reference_genome}{ext}"
+        if candidate.exists() and candidate.stat().st_size >= 100:
+            if reference_genome == yleaf_constants.HG19:
+                yleaf_constants.HG19_FULL_GENOME = candidate
+            elif reference_genome == yleaf_constants.T2T:
+                yleaf_constants.T2T_FULL_GENOME = candidate
+            else:
+                yleaf_constants.HG38_FULL_GENOME = candidate
+            LOG.info(f"Using YLEAF_REF_DIR reference FASTA for {reference_genome}: {candidate}")
+            return True
+    return False
 
 
 def check_reference(
