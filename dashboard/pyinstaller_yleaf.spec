@@ -42,11 +42,15 @@ binaries = []
 tools_dir = os.environ.get('YLEAF_BUNDLED_TOOLS', '')
 
 if tools_dir and os.path.isdir(tools_dir):
-    # Windows CI: staged .exe + .dll files from MSYS2 MINGW64
+    # Windows CI: staged .exe + .dll files from MSYS2 MINGW64 + Graphviz
     for f in glob.glob(os.path.join(tools_dir, '*.exe')):
         binaries.append((f, '.'))
     for f in glob.glob(os.path.join(tools_dir, '*.dll')):
         binaries.append((f, '.'))
+    # Graphviz needs its config6 file to locate rendering plugins at runtime
+    for f in glob.glob(os.path.join(tools_dir, 'config*')):
+        if os.path.isfile(f):
+            datas.append((f, '.'))
 else:
     # Linux / macOS: tools installed via conda bioconda
     for tool in ['samtools', 'minimap2', 'bcftools']:

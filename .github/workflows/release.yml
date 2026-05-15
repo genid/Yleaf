@@ -78,6 +78,15 @@ jobs:
           done
           echo "Staged $(ls /c/yleaf-tools | wc -l) files"
 
+      - name: Install Graphviz and stage binaries (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          choco install graphviz -y --no-progress
+          $gv_bin = "C:\Program Files\Graphviz\bin"
+          Get-ChildItem "$gv_bin" | Copy-Item -Destination "C:\yleaf-tools\"
+          Write-Host "Graphviz staged. Total files in C:\yleaf-tools: $((Get-ChildItem C:\yleaf-tools).Count)"
+
       - name: Download minimap2 Windows binary (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
@@ -205,6 +214,15 @@ jobs:
               | while read f; do cp "$f" /c/yleaf-tools/ 2>/dev/null || true; done
           done
           echo "Staged $(ls /c/yleaf-tools | wc -l) files"
+
+      - name: Install Graphviz and stage binaries (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          choco install graphviz -y --no-progress
+          $gv_bin = "C:\Program Files\Graphviz\bin"
+          Get-ChildItem "$gv_bin" | Copy-Item -Destination "C:\yleaf-tools\"
+          Write-Host "Graphviz staged. Total files in C:\yleaf-tools: $((Get-ChildItem C:\yleaf-tools).Count)"
 
       - name: Download minimap2 Windows binary (Windows)
         if: runner.os == 'Windows'
