@@ -7,14 +7,36 @@
 ### Department of Genetic Identification 
 #### Erasmus MC University Medical Centre Rotterdam, The Netherlands
 
-## Requirements
+## Dashboard (GUI) — recommended for most users
+
+The easiest way to use Yleaf is through the graphical dashboard. Download the installer for your platform from the [releases page](https://github.com/genid/Yleaf/releases):
+
+**Windows**
+- Download `Yleaf.4.0_..._x64-setup.exe` (or the `.msi`) and run the installer.
+- Launch **Yleaf 4.0** from the Start menu.
+
+**macOS**
+- Download the `.dmg` file, open it, and drag **Yleaf 4.0** to your Applications folder.
+- Open **Yleaf 4.0** from Applications.
+
+**Linux**
+- `.AppImage`: download, make executable (`chmod +x`), and double-click or run directly.
+- `.deb`: install with `sudo dpkg -i yleaf-dashboard_*.deb` and launch from your application menu.
+
+No Python, samtools, or other tools need to be installed separately — everything is bundled.
+
+---
+
+## Command-line installation
+
+For users who prefer the command line. Requires Python 3.7+.
+
+### Requirements
 
     Operating system: Linux, macOS, or Windows (via standalone executable).
     Internet connection: when running for the first time for downloading the reference genome. Alternatively you 
                          can configure your own references.
     Data storage: For installation we recommend a storage capacity of > 8 GB. 
-
-## Installation
 
 ### Option 1: Standalone executable (no Python required)
 
@@ -36,7 +58,7 @@ Expand-Archive yleaf-windows.zip
 .\yleaf\yleaf.exe -h
 ```
 
-### Option 2: conda environment (recommended for source installs)
+### Option 2: Conda environment (recommended for source installs)
 
 ```bash
 # first clone this repository to get the environment_yleaf.yaml
@@ -53,7 +75,7 @@ pip install -e .
 Yleaf -h 
 ```
 
-### Option 3: manual install
+### Option 3: Manual install
 
 ```bash
 # install python 3.7+ and libraries
