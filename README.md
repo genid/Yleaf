@@ -103,7 +103,7 @@ Here follow some minimal working examples of how to use Yleaf with different inp
     Yleaf -bam file.bam -o bam_output --reference_genome hg38
     Yleaf -cram file.cram -o cram_output --reference_genome hg38
 
-For CRAM files the reference genome is usually auto-detected from the file header; `-rg` is only needed if auto-detection fails.
+For BAM and CRAM files `-rg` is optional — Yleaf auto-detects the reference build (hg19/hg38/T2T) from the `@SQ` headers. Only specify it explicitly if you want to override the detected build.
 
 ### FASTQ (raw reads)
 
@@ -153,6 +153,20 @@ The `-mix` flag enables forensic mixture deconvolution: Yleaf identifies the con
     Yleaf -bam mixture.bam -o output --reference_genome hg38 --tree yfull -mix
 
 Results are written to a `.mix` file per sample. Mixture analysis is tree-aware and supports all reference trees.
+
+### JSON output
+
+Use `--report-json` to write a structured JSON sidecar alongside the normal TSV. The JSON includes the full untruncated marker list, QC scores, and excluded sub-clades for each sample. In multi-tree mode separate files are written per tree (e.g. `report.yfull.json`).
+
+    Yleaf -bam file.bam -o output --reference_genome hg38 --report-json output/report.json
+
+### Using an existing reference genome
+
+By default Yleaf downloads the reference genome on first run. To skip the download, point Yleaf at an existing FASTA with `--ref-fasta`:
+
+    Yleaf -bam file.bam -o output --reference_genome hg38 --ref-fasta /data/hg38.fa
+
+Alternatively, set the `YLEAF_REF_DIR` environment variable to a directory containing files named `hg38.fa` (or `.fasta`/`.fna`) and Yleaf will find the right one automatically. You can also edit `yleaf/config.txt` to set persistent paths for each build.
 
 ## Additional information
 
