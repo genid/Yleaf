@@ -218,8 +218,13 @@ pub async fn run_yleaf(
         .sidecar("yleaf")
         .map_err(|e| e.to_string())?
         .env("YLEAF_DATA_DIR", app_data_dir.to_string_lossy().as_ref())
+        .env("PYTHONUNBUFFERED", "1")
         .args(&args);
 
+    app.emit("yleaf-progress", ProgressPayload {
+        job_id,
+        line: "Starting Yleaf (first run may take a few minutes while the reference genome is prepared)...".to_string(),
+    }).ok();
     let (mut rx, child) = sidecar.spawn().map_err(|e| e.to_string())?;
     active_child.0.lock().unwrap().insert(job_id, (output_dir.clone(), child));
 
