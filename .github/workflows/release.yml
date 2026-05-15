@@ -356,10 +356,11 @@ jobs:
           [ -f yleaf-linux.tar.gz ]  && ASSETS+=("yleaf-linux.tar.gz")
           [ -f yleaf-macos.tar.gz ]  && ASSETS+=("yleaf-macos.tar.gz")
           [ -f yleaf-windows.zip ]   && ASSETS+=("yleaf-windows.zip")
-          # Dashboard installers (filenames may contain spaces from productName)
-          for f in *.AppImage *.deb *.dmg *.exe *.msi; do
-            [ -f "$f" ] && ASSETS+=("$f")
-          done
+          # Dashboard installers — search recursively because upload-artifact@v4
+          # preserves subdirectory structure when multiple paths are specified
+          while IFS= read -r -d '' f; do
+            ASSETS+=("$f")
+          done < <(find . \( -name "*.AppImage" -o -name "*.deb" -o -name "*.dmg" -o -name "*.exe" -o -name "*.msi" \) -print0)
           gh release create ${{ github.ref_name }} \
             --title "Yleaf ${{ github.ref_name }}" \
             --notes-file release_notes.txt \
