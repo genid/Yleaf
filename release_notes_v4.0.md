@@ -8,3 +8,6 @@
 - Added T2T (CHM13v2.0 / hs1) reference genome support
 - Added PLINK/SNP-array input (`-plink`)
 - Replaced static PDF haplogroup tree output with an interactive self-contained HTML file (`-dh`)
+- Added `--report-json` flag: write a structured, schema-versioned JSON sidecar with full marker lists and QC scores per sample
+- `-rg` is now optional for BAM/CRAM input: Yleaf auto-detects hg19/hg38/T2T from `@SQ` header lengths (closest-match)
+- Added `--ref-fasta PATH` flag and `YLEAF_REF_DIR` environment variable to point Yleaf at an existing reference FASTA, skipping the auto-download
