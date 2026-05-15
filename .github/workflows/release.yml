@@ -383,9 +383,13 @@ jobs:
           while IFS= read -r -d '' f; do
             ASSETS+=("$f")
           done < <(find . \( -name "*.AppImage" -o -name "*.deb" -o -name "*.dmg" -o -name "*.exe" -o -name "*.msi" \) -print0)
-          gh release create ${{ github.ref_name }} \
-            --title "Yleaf ${{ github.ref_name }}" \
-            --notes-file release_notes.txt \
-            "${ASSETS[@]}"
+          if gh release view ${{ github.ref_name }} &>/dev/null; then
+            gh release upload ${{ github.ref_name }} "${ASSETS[@]}" --clobber
+          else
+            gh release create ${{ github.ref_name }} \
+              --title "Yleaf ${{ github.ref_name }}" \
+              --notes-file release_notes.txt \
+              "${ASSETS[@]}"
+          fi
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
