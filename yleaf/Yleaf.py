@@ -2069,7 +2069,7 @@ def execute_mpileup(
 
     if reference is not None:
         cmd += f" -f {str(reference)}"
-    cmd += f" -ABQ{quality_thresh}q1 {str(bam_file)} > {str(pileupfile)}"
+    cmd += f" -ABQ{quality_thresh}q1 -B {str(bam_file)} > {str(pileupfile)}"
     call_command(cmd)
 
 
