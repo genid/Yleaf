@@ -18,6 +18,7 @@ import sys
 import logging
 import shutil
 import subprocess
+import tempfile
 import pandas as pd
 import numpy as np
 import multiprocessing
@@ -207,11 +208,10 @@ def run_vcf(
     sample_vcf_file_txt = sample_vcf_folder / (sample_vcf_file.name.replace(".vcf.gz", ".txt"))
 
     if has_ad:
-        cmd = f"bcftools query -f '%CHROM\t%POS\t%REF\t%ALT[\t%AD]\n' {sample_vcf_file} > {sample_vcf_file_txt}"
+        cmd = f"bcftools query -f '%CHROM\t%POS\t%REF\t%ALT[\t%AD]\n' \"{sample_vcf_file}\" > \"{sample_vcf_file_txt}\""
         call_command(cmd)
         pileupfile = pd.read_csv(sample_vcf_file_txt, dtype=str, header=None, sep="\t")
-        cmd = f"rm {sample_vcf_file_txt}"
-        call_command(cmd)
+        sample_vcf_file_txt.unlink(missing_ok=True)
 
         pileupfile.columns = ['chr', 'pos', 'refbase', 'altbase', 'reads']
         pileupfile['pos'] = pileupfile['pos'].astype(int)
@@ -249,11 +249,10 @@ def run_vcf(
     else:
         # GT-only VCF: derive called_base from genotype allele index; no read depth available.
         LOG.debug(f"GT-only VCF (no FORMAT/AD): using genotype calls for {sample_vcf_file.name}")
-        cmd = f"bcftools query -f '%CHROM\t%POS\t%REF\t%ALT[\t%GT]\n' {sample_vcf_file} > {sample_vcf_file_txt}"
+        cmd = f"bcftools query -f '%CHROM\t%POS\t%REF\t%ALT[\t%GT]\n' \"{sample_vcf_file}\" > \"{sample_vcf_file_txt}\""
         call_command(cmd)
         pileupfile = pd.read_csv(sample_vcf_file_txt, dtype=str, header=None, sep="\t")
-        cmd = f"rm {sample_vcf_file_txt}"
-        call_command(cmd)
+        sample_vcf_file_txt.unlink(missing_ok=True)
 
         pileupfile.columns = ['chr', 'pos', 'refbase', 'altbase', 'gt']
         pileupfile['pos'] = pileupfile['pos'].astype(int)
@@ -656,7 +655,7 @@ def main_vcf_split(
 ):
     # first sort the vcf file
     sorted_vcf_file = base_out_folder / (vcf_file.name.replace(".vcf.gz", ".sorted.vcf.gz"))
-    cmd = f"bcftools sort -O z -o {sorted_vcf_file} {vcf_file}"
+    cmd = f'bcftools sort -O z -o "{sorted_vcf_file}" "{vcf_file}"'
     try:
         call_command(cmd)
     except SystemExit:
@@ -669,17 +668,17 @@ def main_vcf_split(
         active_vcf = vcf_file
     else:
         active_vcf = sorted_vcf_file
-        cmd = f"bcftools index --threads {n_threads} -f {sorted_vcf_file}"
+        cmd = f'bcftools index --threads {n_threads} -f "{sorted_vcf_file}"'
         call_command(cmd)
 
     # get chromosome annotation from whichever file we are using
-    cmd = f"bcftools query -f '%CHROM\n' {active_vcf} | uniq"
+    cmd = f'bcftools query -f "%CHROM\n" "{active_vcf}"'
     process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
     stdout, stderr = process.communicate()
     if process.returncode != 0:
         LOG.error(f"Call: '{cmd}' failed. Reason given: '{stderr.decode('utf-8')}'")
         raise SystemExit("Failed command execution")
-    chromosomes = stdout.decode('utf-8').strip().split("\n")
+    chromosomes = list(dict.fromkeys(stdout.decode('utf-8').strip().split("\n")))
     chry = [x for x in chromosomes if "y" in x.lower()]
     if len(chry) == 0:
         LOG.error("Unable to find Y-chromosome in the vcf file. Exiting...")
@@ -699,34 +698,31 @@ def main_vcf_split(
     # filter the vcf file using the reference bed file
     stem = vcf_file.name.replace(".vcf.gz", "")
     filtered_vcf_file = base_out_folder / "filtered_vcf_files" / f"{stem}.filtered.vcf.gz"
-    cmd = f"bcftools view --threads {n_threads} -O z -R {new_position_bed_file} {active_vcf} > {filtered_vcf_file}"
+    cmd = f'bcftools view --threads {n_threads} -O z -R "{new_position_bed_file}" "{active_vcf}" > "{filtered_vcf_file}"'
     call_command(cmd)
 
-    # remover temp_position_bed.bed
-    cmd = f"rm {new_position_bed_file}"
-    call_command(cmd)
+    # remove temp_position_bed.bed
+    new_position_bed_file.unlink(missing_ok=True)
 
     # remove sorted.vcf.gz and sorted.vcf.gz.csi (only if we created them)
     if not already_sorted:
-        cmd = f"rm {sorted_vcf_file}"
-        call_command(cmd)
-        cmd = f"rm {sorted_vcf_file}.csi"
-        call_command(cmd)
+        sorted_vcf_file.unlink(missing_ok=True)
+        Path(str(sorted_vcf_file) + ".csi").unlink(missing_ok=True)
 
     # check number of samples in the vcf file
-    cmd = f"bcftools query -l {filtered_vcf_file} | wc -l"
+    cmd = f'bcftools query -l "{filtered_vcf_file}"'
     process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
     stdout, stderr = process.communicate()
     if process.returncode != 0:
         LOG.error(f"Call: '{cmd}' failed. Reason given: '{stderr.decode('utf-8')}'")
         raise SystemExit("Failed command execution")
-    num_samples = int(stdout.decode('utf-8').strip())
+    num_samples = len([s for s in stdout.decode('utf-8').strip().split("\n") if s])
 
     if num_samples > 1:
         # split the vcf file into separate files for each sample
         split_vcf_folder = base_out_folder / (vcf_file.name.replace(".vcf.gz", "_split"))
         safe_create_dir(split_vcf_folder, args.force)
-        cmd = f"bcftools +split {filtered_vcf_file} -Oz -o {split_vcf_folder}"
+        cmd = f'bcftools +split "{filtered_vcf_file}" -Oz -o "{split_vcf_folder}"'
         call_command(cmd)
         sample_vcf_files = get_files_with_extension(split_vcf_folder, '.vcf.gz')
     elif num_samples == 1:
@@ -1156,39 +1152,39 @@ def main_fastq(
             fastq_file2 = Path(str(fastq_file).replace("_R1", "_R2"))
             LOG.info(f"Starting with running for {fastq_file} and {fastq_file2}")
             sam_file = bam_folder / "temp_fastq_sam.sam"
-            fastq_cmd = f"minimap2 -ax sr -k14 -w7 -t {args.threads} {reference} {fastq_file} {fastq_file2} > {sam_file}"
+            fastq_cmd = f'minimap2 -ax sr -k14 -w7 -t {args.threads} "{reference}" "{fastq_file}" "{fastq_file2}" > "{sam_file}"'
             call_command(fastq_cmd)
             bam_file = bam_folder / (fastq_file.name.rsplit("_R1", 1)[0] + ".bam")
-            cmd = "samtools view -@ {} -bS {} | samtools sort -@ {} -m 2G -o {}".format(args.threads, sam_file,
-                                                                                        args.threads, bam_file)
+            cmd = 'samtools view -@ {} -bS "{}" | samtools sort -@ {} -m 2G -o "{}"'.format(args.threads, sam_file,
+                                                                                             args.threads, bam_file)
             call_command(cmd)
-            cmd = "samtools index -@ {} {}".format(args.threads, bam_file)
+            cmd = 'samtools index -@ {} "{}"'.format(args.threads, bam_file)
             call_command(cmd)
             os.remove(sam_file)
         elif "_R1" not in str(fastq_file) and "_R2" not in str(fastq_file) and ".gz" in str(fastq_file):
             LOG.info(f"Starting with running for {fastq_file}")
             sam_file = bam_folder / "temp_fastq_sam.sam"
 
-            fastq_cmd = f"minimap2 -ax sr -k14 -w7 -t {args.threads} {reference} {fastq_file} > {sam_file}"
+            fastq_cmd = f'minimap2 -ax sr -k14 -w7 -t {args.threads} "{reference}" "{fastq_file}" > "{sam_file}"'
             call_command(fastq_cmd)
             bam_file = bam_folder / (fastq_file.name.rsplit(".", 1)[0] + ".bam")
-            cmd = "samtools view -@ {} -bS {} | samtools sort -@ {} -m 2G -o {}".format(args.threads, sam_file,
-                                                                                        args.threads, bam_file)
+            cmd = 'samtools view -@ {} -bS "{}" | samtools sort -@ {} -m 2G -o "{}"'.format(args.threads, sam_file,
+                                                                                             args.threads, bam_file)
             call_command(cmd)
-            cmd = "samtools index -@ {} {}".format(args.threads, bam_file)
+            cmd = 'samtools index -@ {} "{}"'.format(args.threads, bam_file)
             call_command(cmd)
             os.remove(sam_file)
         else:
             # Plain single-end .fastq (no pair suffix, not gzipped)
             LOG.info(f"Starting with running for {fastq_file}")
             sam_file = bam_folder / "temp_fastq_sam.sam"
-            fastq_cmd = f"minimap2 -ax sr -k14 -w7 -t {args.threads} {reference} {fastq_file} > {sam_file}"
+            fastq_cmd = f'minimap2 -ax sr -k14 -w7 -t {args.threads} "{reference}" "{fastq_file}" > "{sam_file}"'
             call_command(fastq_cmd)
             bam_file = bam_folder / (fastq_file.stem + ".bam")
-            cmd = "samtools view -@ {} -bS {} | samtools sort -@ {} -m 2G -o {}".format(args.threads, sam_file,
-                                                                                        args.threads, bam_file)
+            cmd = 'samtools view -@ {} -bS "{}" | samtools sort -@ {} -m 2G -o "{}"'.format(args.threads, sam_file,
+                                                                                             args.threads, bam_file)
             call_command(cmd)
-            cmd = "samtools index -@ {} {}".format(args.threads, bam_file)
+            cmd = 'samtools index -@ {} "{}"'.format(args.threads, bam_file)
             call_command(cmd)
             os.remove(sam_file)
     args.bamfile = bam_folder
@@ -1259,7 +1255,7 @@ def _download_cram_reference(url: str, dest: Path) -> None:
             tmp.unlink()
         raise RuntimeError(f"Failed to download CRAM reference from {url}: {e}")
     LOG.info("Indexing downloaded reference with samtools faidx...")
-    call_command(f"samtools faidx {dest}")
+    call_command(f'samtools faidx "{dest}"')
 
 
 def resolve_cram_reference(args: argparse.Namespace, cram_files: List[Path]) -> None:
@@ -1277,7 +1273,7 @@ def resolve_cram_reference(args: argparse.Namespace, cram_files: List[Path]) -> 
         raise ValueError("No CRAM files found.")
 
     result = subprocess.run(
-        f"samtools view -H {cram_files[0]}",
+        f'samtools view -H "{cram_files[0]}"',
         shell=True, capture_output=True, text=True
     )
 
@@ -1462,11 +1458,11 @@ def _run_bam_cram_multi_tree_inner(
     if is_bam:
         if not any([Path(str(input_file) + ".bai").exists(),
                     Path(str(input_file).rstrip(".bam") + '.bai').exists()]):
-            call_command(f"samtools index -@ {args.threads} {input_file}")
+            call_command(f'samtools index -@ {args.threads} "{input_file}"')
     else:
         if not any([Path(str(input_file) + ".crai").exists(),
                     Path(str(input_file).rstrip(".cram") + '.crai').exists()]):
-            call_command(f"samtools index -@ {args.threads} {input_file}")
+            call_command(f'samtools index -@ {args.threads} "{input_file}"')
 
     header, mapped, unmapped = chromosome_table(input_file, output_dir, output_dir.name)
     general_info_list = [f"Total of mapped reads: {mapped}", f"Total of unmapped reads: {unmapped}"]
@@ -1483,10 +1479,10 @@ def _run_bam_cram_multi_tree_inner(
         reference = args.cram_reference if not is_bam else None
         tmp_chry_bam = None
         if not is_bam:
-            tmp_chry_bam = Path(f"/tmp/yleaf_chry_{output_dir.name}.bam")
+            tmp_chry_bam = Path(tempfile.gettempdir()) / f"yleaf_chry_{output_dir.name}.bam"
             LOG.info(f"Extracting chrY from CRAM to local BAM for faster pileup...")
-            call_command(f"samtools view -b -@ {args.threads} -T {reference} -o {tmp_chry_bam} {input_file} {header}")
-            call_command(f"samtools index -@ {args.threads} {tmp_chry_bam}")
+            call_command(f'samtools view -b -@ {args.threads} -T "{reference}" -o "{tmp_chry_bam}" "{input_file}" {header}')
+            call_command(f'samtools index -@ {args.threads} "{tmp_chry_bam}"')
             mpileup_input, mpileup_ref = tmp_chry_bam, None
         else:
             mpileup_input, mpileup_ref = input_file, None
@@ -1902,11 +1898,11 @@ def samtools(
 
     if is_bam_pathfile:
         if not any([Path(str(path_file) + ".bai").exists(), Path(str(path_file).rstrip(".bam") + '.bai').exists()]):
-            cmd = "samtools index -@{} {}".format(args.threads, path_file)
+            cmd = 'samtools index -@{} "{}"'.format(args.threads, path_file)
             call_command(cmd)
     else:
         if not any([Path(str(path_file) + ".crai").exists(), Path(str(path_file).rstrip(".cram") + '.crai').exists()]):
-            cmd = "samtools index -@{} {}".format(args.threads, path_file)
+            cmd = 'samtools index -@{} "{}"'.format(args.threads, path_file)
             call_command(cmd)
     header, mapped, unmapped = chromosome_table(path_file, output_folder, output_folder.name)
 
@@ -1916,11 +1912,11 @@ def samtools(
     # the entire genome against the reference on every read.
     tmp_chry_bam = None
     if not is_bam_pathfile:
-        tmp_chry_bam = Path(f"/tmp/yleaf_chry_{output_folder.name}.bam")
+        tmp_chry_bam = Path(tempfile.gettempdir()) / f"yleaf_chry_{output_folder.name}.bam"
         LOG.info(f"Extracting chrY from CRAM to local BAM for faster pileup...")
-        cmd = f"samtools view -b -@ {args.threads} -T {reference} -o {tmp_chry_bam} {path_file} {header}"
+        cmd = f'samtools view -b -@ {args.threads} -T "{reference}" -o "{tmp_chry_bam}" "{path_file}" {header}'
         call_command(cmd)
-        cmd = f"samtools index -@ {args.threads} {tmp_chry_bam}"
+        cmd = f'samtools index -@ {args.threads} "{tmp_chry_bam}"'
         call_command(cmd)
         mpileup_input = tmp_chry_bam
         mpileup_ref = None
@@ -2067,11 +2063,11 @@ def execute_mpileup(
 ):
     cmd = "samtools mpileup"
     if bed is not None:
-        cmd += f" -l {str(bed)}"
+        cmd += f' -l "{bed}"'
 
     if reference is not None:
-        cmd += f" -f {str(reference)}"
-    cmd += f" -ABQ{quality_thresh}q1 -B {str(bam_file)} > {str(pileupfile)}"
+        cmd += f' -f "{reference}"'
+    cmd += f' -ABQ{quality_thresh}q1 -B "{bam_file}" > "{pileupfile}"'
     call_command(cmd)
 
 
