@@ -1583,7 +1583,7 @@ def write_combined_prediction_table(
                           report_json=report_json)
         if draw_hg:
             draw_haplogroups(tree_hg_out, collapsed_draw_mode,
-                             outfile=base_out_folder / f"haplogroup_tree_{tree}",
+                             outfile=base_out_folder / f"{HAPLOGROUP_IMAGE_FILE_NAME}_{tree}",
                              tree_file=get_tree_path(tree))
         tree_results[tree] = _read_hg_file(tree_hg_out)
 
