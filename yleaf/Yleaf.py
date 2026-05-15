@@ -856,6 +856,7 @@ def main_vcf(
 
 
 def main():
+    multiprocessing.freeze_support()
     print("Erasmus MC Department of Genetic Identification\nYleaf: software tool for human Y-chromosomal "
           f"phylogenetic analysis and haplogroup inference v{__version__}")
     logo()
