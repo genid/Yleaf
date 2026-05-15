@@ -3,11 +3,11 @@ name: Build and Release
 on:
   push:
     tags:
+      - 'v*'
 
 concurrency:
   group: release-${{ github.ref_name }}
   cancel-in-progress: true
-      - 'v*'
 
 jobs:
   # ── CLI executables (PyInstaller --onedir, for command-line users) ──────────
