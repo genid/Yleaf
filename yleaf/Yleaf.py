@@ -1400,7 +1400,8 @@ def main_bam_cram_multi_tree(
             LOG.info(f"[PROGRESS] pileup {i}/{total}")
 
     # Flush all pending NFS/OS writes from worker processes before reading output files
-    os.sync()
+    if hasattr(os, 'sync'):
+        os.sync()
 
     # Verify all expected per-tree .out files are present and readable.
     # On CIFS mounts, reading content (not just stat) forces the page cache to be
@@ -1969,7 +1970,7 @@ def chromosome_table(
     output = path_folder / (file_name + '.chr')
     tmp_output = path_folder / "tmp.txt"
     f = open(tmp_output, "w")
-    cmd = f"samtools idxstats {path_file}"
+    cmd = f'samtools idxstats "{path_file}"'
     call_command(cmd, stdout_location=f)
     df_chromosome = pd.read_table(tmp_output, header=None)
 
