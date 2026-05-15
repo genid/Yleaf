@@ -6,8 +6,9 @@ on:
       - 'v*'
 
 jobs:
+  # ── CLI executables (PyInstaller --onedir, for command-line users) ──────────
   build:
-    name: Build on ${{ matrix.os }}
+    name: Build CLI on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -54,9 +55,6 @@ jobs:
         run: tar czf ${{ matrix.artifact }} -C dist yleaf
 
       # ── Windows ───────────────────────────────────────────────────────────
-      # samtools and bcftools are available in MSYS2 MINGW64.
-      # minimap2 is not in MSYS2; we try to download a Windows binary from
-      # the official releases and fall back gracefully if none is available.
       - name: Install samtools + bcftools via MSYS2 (Windows)
         if: runner.os == 'Windows'
         uses: msys2/setup-msys2@v2
@@ -84,7 +82,6 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          # Find the most recent minimap2 release that ships a Windows binary
           $releases = gh release list --repo lh3/minimap2 --json tagName --limit 10 | ConvertFrom-Json
           foreach ($rel in $releases) {
             $assets = gh release view $rel.tagName --repo lh3/minimap2 --json assets | ConvertFrom-Json
@@ -131,17 +128,199 @@ jobs:
         shell: pwsh
         run: Compress-Archive -Path dist\yleaf -DestinationPath ${{ matrix.artifact }}
 
-      # ── Upload ────────────────────────────────────────────────────────────
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
           path: ${{ matrix.artifact }}
 
+  # ── Dashboard (Tauri GUI, the default interface for end users) ──────────────
+  tauri-build:
+    name: Build Dashboard on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            tauri_target: x86_64-unknown-linux-gnu
+          - os: macos-latest
+            tauri_target: aarch64-apple-darwin
+          - os: windows-latest
+            tauri_target: x86_64-pc-windows-msvc
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # ── Linux system deps (required by Tauri / WebKitGTK) ─────────────────
+      - name: Install Linux system dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf
+
+      # ── Install bioinformatics tools ─────────────────────────────────────
+      - name: Set up Miniconda (Linux/macOS)
+        if: runner.os != 'Windows'
+        uses: conda-incubator/setup-miniconda@v3
+        with:
+          channels: conda-forge,bioconda,defaults
+          auto-activate: true
+          activate-environment: base
+          miniforge-version: latest
+
+      - name: Install tools (Linux/macOS)
+        if: runner.os != 'Windows'
+        shell: bash -el {0}
+        run: mamba install -y --strict-channel-priority samtools minimap2 bcftools
+
+      - name: Install Yleaf + PyInstaller (Linux/macOS)
+        if: runner.os != 'Windows'
+        shell: bash -el {0}
+        run: pip install -e . && pip install pyinstaller
+
+      - name: Install samtools + bcftools via MSYS2 (Windows)
+        if: runner.os == 'Windows'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: false
+          install: >-
+            mingw-w64-x86_64-samtools
+            mingw-w64-x86_64-bcftools
+
+      - name: Stage tools and DLLs (Windows)
+        if: runner.os == 'Windows'
+        shell: msys2 {0}
+        run: |
+          mkdir -p /c/yleaf-tools
+          for tool in samtools bcftools; do
+            cp /mingw64/bin/${tool}.exe /c/yleaf-tools/
+            ldd /mingw64/bin/${tool}.exe \
+              | grep '/mingw64' | awk '{print $3}' \
+              | while read f; do cp "$f" /c/yleaf-tools/ 2>/dev/null || true; done
+          done
+          echo "Staged $(ls /c/yleaf-tools | wc -l) files"
+
+      - name: Download minimap2 Windows binary (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $releases = gh release list --repo lh3/minimap2 --json tagName --limit 10 | ConvertFrom-Json
+          foreach ($rel in $releases) {
+            $assets = gh release view $rel.tagName --repo lh3/minimap2 --json assets | ConvertFrom-Json
+            $winAsset = $assets.assets | Where-Object { $_.name -match 'win' } | Select-Object -First 1
+            if ($winAsset) {
+              Invoke-WebRequest $winAsset.browserDownloadUrl -OutFile mm2-win.zip
+              Expand-Archive mm2-win.zip -DestinationPath C:/mm2-tmp
+              $exe = Get-ChildItem -Recurse C:/mm2-tmp -Filter "minimap2*.exe" | Select-Object -First 1
+              if ($exe) { Copy-Item $exe.FullName "C:/yleaf-tools/minimap2.exe" }
+              break
+            }
+          }
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set YLEAF_BUNDLED_TOOLS (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: echo "YLEAF_BUNDLED_TOOLS=C:/yleaf-tools" >> $env:GITHUB_ENV
+
+      - name: Set up Python (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Yleaf + PyInstaller (Windows)
+        if: runner.os == 'Windows'
+        run: pip install -e . && pip install pyinstaller
+
+      # ── Build the PyInstaller sidecar ─────────────────────────────────────
+      - name: Build sidecar (Linux/macOS)
+        if: runner.os != 'Windows'
+        shell: bash -el {0}
+        run: |
+          python -m PyInstaller \
+            --distpath /tmp/sidecar-dist \
+            --workpath /tmp/sidecar-build \
+            --noconfirm \
+            dashboard/pyinstaller_yleaf.spec
+          mkdir -p dashboard/src-tauri/binaries
+          cp /tmp/sidecar-dist/yleaf dashboard/src-tauri/binaries/yleaf-${{ matrix.tauri_target }}
+          chmod +x dashboard/src-tauri/binaries/yleaf-${{ matrix.tauri_target }}
+
+      - name: Build sidecar (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          python -m PyInstaller `
+            --distpath C:\sidecar-dist `
+            --workpath C:\sidecar-build `
+            --noconfirm `
+            dashboard\pyinstaller_yleaf.spec
+          New-Item -ItemType Directory -Force -Path dashboard\src-tauri\binaries
+          Copy-Item C:\sidecar-dist\yleaf.exe `
+            dashboard\src-tauri\binaries\yleaf-${{ matrix.tauri_target }}.exe
+
+      # ── Install Node.js + Rust, build Tauri app ───────────────────────────
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install npm dependencies
+        working-directory: dashboard
+        run: npm ci
+
+      - name: Build Tauri app (Linux/macOS)
+        if: runner.os != 'Windows'
+        working-directory: dashboard
+        shell: bash -el {0}
+        run: npm run tauri build
+
+      - name: Build Tauri app (Windows)
+        if: runner.os == 'Windows'
+        working-directory: dashboard
+        run: npm run tauri build
+
+      # ── Collect and upload installer artifacts ────────────────────────────
+      - name: Upload Linux installers
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: dashboard-linux
+          path: |
+            dashboard/src-tauri/target/release/bundle/appimage/*.AppImage
+            dashboard/src-tauri/target/release/bundle/deb/*.deb
+
+      - name: Upload macOS installer
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@v4
+        with:
+          name: dashboard-macos
+          path: dashboard/src-tauri/target/release/bundle/dmg/*.dmg
+
+      - name: Upload Windows installers
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: dashboard-windows
+          path: |
+            dashboard/src-tauri/target/release/bundle/nsis/*.exe
+            dashboard/src-tauri/target/release/bundle/msi/*.msi
+
+  # ── Create GitHub Release with all artifacts ───────────────────────────────
   release:
     name: Create GitHub Release
-    needs: build
-    # Run whenever at least one platform build completed (success or partial failure)
+    needs: [build, tauri-build]
     if: always()
     runs-on: ubuntu-latest
     permissions:
@@ -168,9 +347,14 @@ jobs:
       - name: Publish release
         run: |
           ASSETS=""
+          # CLI executables
           [ -f yleaf-linux.tar.gz ]  && ASSETS="$ASSETS yleaf-linux.tar.gz"
           [ -f yleaf-macos.tar.gz ]  && ASSETS="$ASSETS yleaf-macos.tar.gz"
           [ -f yleaf-windows.zip ]   && ASSETS="$ASSETS yleaf-windows.zip"
+          # Dashboard installers
+          for f in *.AppImage *.deb *.dmg *.exe *.msi; do
+            [ -f "$f" ] && ASSETS="$ASSETS $f"
+          done
           gh release create ${{ github.ref_name }} \
             --title "Yleaf ${{ github.ref_name }}" \
             --notes-file release_notes.txt \
