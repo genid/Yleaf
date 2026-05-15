@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 130">
+  <g stroke="#1a3a5c" stroke-linecap="round" stroke-linejoin="round" fill="none" stroke-width="13">
+    <polyline points="13,15 50,48 87,15"/>
+    <line x1="50" y1="48" x2="50" y2="122"/>
+  </g>
+  <path fill="#4caf73" stroke="#2d7a44" stroke-width="1.5" d="M 50,10 C 76,20 76,60 50,70 C 24,60 24,20 50,10 Z"/>
+  <line stroke="#1f5c30" stroke-linecap="round" x1="50" y1="11" x2="50" y2="69" stroke-width="1.3"/>
+  <g stroke-linecap="round" fill="none" stroke-width="0.9" stroke="rgb(38,88,58)">
+    <path d="M 50,26 C 45,32 41,38 39,46"/>
+    <path d="M 50,26 C 55,32 59,38 61,46"/>
+    <path d="M 50,45 C 46,51 43,57 41,63"/>
+    <path d="M 50,45 C 54,51 57,57 59,63"/>
+  </g>
+</svg>

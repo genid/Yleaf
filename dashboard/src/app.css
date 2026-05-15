@@ -1,0 +1,34 @@
+@import "tailwindcss";
+
+/* Class-based dark mode: add `.dark` to <html> to activate */
+@custom-variant dark (&:is(.dark *));
+
+@theme {
+  /* Brand / data colours — same in both modes */
+  --color-brand:  #e94560;
+  --color-teal:   #7ec8e3;
+  --color-lime:   #6bcb77;
+  --color-azure:  #4a9eff;
+
+  /* Dark-mode surface tokens */
+  --color-void:    #0d0d1a;
+  --color-ink:     #0f0f20;
+  --color-navy:    #1a1a2e;
+  --color-panel:   #16213e;
+  --color-raised:  #1a3a6a;
+  --color-well:    #0f3460;
+  --color-rim:     #1a4a8a;
+
+  /* Dark-mode text tokens */
+  --color-pale:   #e0e0e0;
+  --color-muted:  #888888;
+  --color-ghost:  #555555;
+
+  --font-mono: "JetBrains Mono", "Fira Code", monospace;
+}
+
+@layer base {
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { margin: 0; overflow: hidden; height: 100%; }
+  body { font-family: Inter, system-ui, sans-serif; font-size: 13px; }
+}
