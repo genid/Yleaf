@@ -30,13 +30,14 @@ jobs:
         with:
           python-version: "3.11"
           channels: conda-forge,bioconda,defaults
-          auto-activate-base: true
+          auto-activate: true
           activate-environment: ''
+          miniforge-version: latest
 
       - name: Install tools (Linux/macOS)
         if: runner.os != 'Windows'
         shell: bash -el {0}
-        run: conda install -y samtools minimap2 bcftools
+        run: mamba install -y --strict-channel-priority samtools minimap2 bcftools
 
       - name: Install Yleaf + PyInstaller (Linux/macOS)
         if: runner.os != 'Windows'
@@ -141,8 +142,8 @@ jobs:
   release:
     name: Create GitHub Release
     needs: build
-    # Run even if some build jobs failed (e.g. one platform); skip only if all failed
-    if: ${{ always() && contains(needs.build.result, 'success') }}
+    # Run whenever at least one platform build completed (success or partial failure)
+    if: always()
     runs-on: ubuntu-latest
     permissions:
       contents: write
