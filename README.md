@@ -1,3 +1,5 @@
+<img src="yleaf_logo.png" width="500" alt="Yleaf logo">
+
 # Yleaf: software for human Y-chromosomal haplogroup inference from next generation sequencing data
 
 #### Arwin Ralf, Diego Montiel Gonzalez, Kaiyin Zhong and Manfred Kayser
