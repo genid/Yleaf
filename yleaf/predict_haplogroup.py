@@ -12,6 +12,7 @@ Autor: Bram van Wersch
 """
 
 import argparse
+import json
 import multiprocessing
 from functools import partial
 from pathlib import Path
@@ -28,6 +29,7 @@ ACTIVE_TREE: str = "yfull"  # tracks which tree is active for QC routing
 _WORKER_TREE: 'Tree' = None  # cached per worker, set by _init_predict_worker
 
 DEFAULT_MIN_SCORE = 0.95
+JSON_REPORT_SCHEMA_VERSION = 1
 
 LOG = logging.getLogger("yleaf_logger")
 
@@ -146,8 +148,10 @@ def main(namespace: argparse.Namespace = None):
     tree_file = getattr(namespace, 'tree_file', None)
     out_file_suffix = getattr(namespace, 'out_file_suffix', '.out')
     info_file_suffix = getattr(namespace, 'info_file_suffix', '.info')
+    report_json = getattr(namespace, 'report_json', None)
     read_backbone_groups(tree_file)
     final_table = []
+    final_records = [] if report_json else None
 
     folders = list(read_input_folder(in_folder))
     total = len(folders)
@@ -165,9 +169,13 @@ def main(namespace: argparse.Namespace = None):
             haplotype_dict, best_haplotype_score, folder = result
             if haplotype_dict is not None:
                 add_to_final_table(final_table, haplotype_dict, best_haplotype_score, folder, info_file_suffix)
+                if final_records is not None:
+                    add_to_json_records(final_records, haplotype_dict, best_haplotype_score, folder, info_file_suffix)
             LOG.info(f"[PROGRESS] prediction {i}/{total}")
 
     write_final_table(final_table, output)
+    if final_records is not None:
+        write_json_report(final_records, report_json, tree_name=ACTIVE_TREE)
     LOG.debug("Finished haplogroup prediction")
 
 
@@ -525,6 +533,76 @@ def write_final_table(
         f.write(header)
         for line in final_table:
             f.write('\t'.join(map(str, line)) + "\n")
+
+
+def _maybe_int(val: Any) -> Union[int, None]:
+    try:
+        return int(val)
+    except (TypeError, ValueError):
+        return None
+
+
+def _maybe_float(val: Any) -> Union[float, None]:
+    try:
+        return float(val)
+    except (TypeError, ValueError):
+        return None
+
+
+def add_to_json_records(
+    records: List[Dict],
+    haplotype_dict: Dict[str, HgMarkersLinker],
+    best_haplotype_scores: Tuple,
+    folder: Path,
+    info_file_suffix: str = ".info"
+):
+    """Add a structured per-sample record for the JSON report."""
+    total_reads, valid_markers = process_info_file(folder / (folder.name + info_file_suffix))
+    hg, ancestral_children, qc1, qc2, qc3, total, _ = best_haplotype_scores
+
+    if hg == "NA":
+        full_hg = "NA"
+        hg_base = "NA"
+        markers = []
+    else:
+        markers = sorted(haplotype_dict[hg].get_derived_markers()) if hg in haplotype_dict else []
+        if ancestral_children:
+            ancestral_string = "x" + ','.join(ancestral_children)
+            full_hg = f"{hg}*({ancestral_string})"
+        else:
+            full_hg = hg
+        hg_base = hg
+
+    records.append({
+        "sample_id": folder.name,
+        "haplogroup": full_hg,
+        "haplogroup_base": hg_base,
+        "excluded_subclades": list(ancestral_children) if hg != "NA" else [],
+        "markers": markers,
+        "total_reads": _maybe_int(total_reads),
+        "valid_markers": _maybe_int(valid_markers),
+        "qc_score": _maybe_float(total),
+        "qc1": _maybe_float(qc1),
+        "qc2": _maybe_float(qc2),
+        "qc3": _maybe_float(qc3),
+    })
+
+
+def write_json_report(
+    records: List[Dict],
+    out_file: Union[Path, str],
+    tree_name: str = "yfull"
+):
+    """Write a schema-versioned JSON report alongside the TSV."""
+    from yleaf import __version__
+    report = {
+        "schema_version": JSON_REPORT_SCHEMA_VERSION,
+        "yleaf_version": __version__,
+        "tree": tree_name,
+        "samples": sorted(records, key=lambda r: r["sample_id"]),
+    }
+    with open(out_file, "w") as f:
+        json.dump(report, f, indent=2)
 
 
 def product(
