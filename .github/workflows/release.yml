@@ -28,10 +28,9 @@ jobs:
         if: runner.os != 'Windows'
         uses: conda-incubator/setup-miniconda@v3
         with:
-          python-version: "3.11"
           channels: conda-forge,bioconda,defaults
           auto-activate: true
-          activate-environment: ''
+          activate-environment: base
           miniforge-version: latest
 
       - name: Install tools (Linux/macOS)
