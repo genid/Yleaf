@@ -1,0 +1,7 @@
+include README.md
+include LICENSE.txt
+include requirements.txt
+include yleaf_manual.pdf
+include yleaf/config.txt
+include yleaf/chr_naming_convention.txt
+recursive-include yleaf/data *

@@ -33,6 +33,8 @@ setup(
         "Programming Language :: Python :: 3.7",
         "License :: OSI Approved :: MIT License",
         "Operating System :: POSIX :: Linux",
+        "Operating System :: MacOS",
+        "Operating System :: Microsoft :: Windows",
         "Intended Audience :: Science/Research",
         "Topic :: Scientific/Engineering :: Bio-Informatics",
     ],
@@ -45,5 +47,19 @@ setup(
         ],
     },
     include_package_data=True,
-    package_data={"yleaf": ["data/*", "config.txt"]}
+    package_data={
+        "yleaf": [
+            "config.txt",
+            "chr_naming_convention.txt",
+            "data/*",
+            "data/hg19/*",
+            "data/hg38/*",
+            "data/t2t/*",
+            "data/hg_prediction_tables/*",
+            "data/hg_prediction_tables/major_tables/*",
+            "data/hg_prediction_tables/ftdna_major_tables/*",
+            "data/hg_prediction_tables/isogg_major_tables/*",
+            "data/hg_prediction_tables/yfull_v10_major_tables/*",
+        ]
+    }
 )
