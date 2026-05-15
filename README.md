@@ -12,16 +12,16 @@
 The easiest way to use Yleaf is through the graphical dashboard. Download the installer for your platform from the [releases page](https://github.com/genid/Yleaf/releases):
 
 **Windows**
-- Download `Yleaf.4.0_..._x64-setup.exe` (or the `.msi`) and run the installer.
+- Download `Yleaf.4.0_4.0.0_x64-setup.exe` (or `Yleaf.4.0_4.0.0_x64_en-US.msi`) and run the installer.
 - Launch **Yleaf 4.0** from the Start menu.
 
-**macOS**
-- Download the `.dmg` file, open it, and drag **Yleaf 4.0** to your Applications folder.
+**macOS** (Apple Silicon)
+- Download `Yleaf.4.0_4.0.0_aarch64.dmg`, open it, and drag **Yleaf 4.0** to your Applications folder.
 - Open **Yleaf 4.0** from Applications.
 
 **Linux**
-- `.AppImage`: download, make executable (`chmod +x`), and double-click or run directly.
-- `.deb`: install with `sudo dpkg -i yleaf-dashboard_*.deb` and launch from your application menu.
+- `.AppImage`: download `Yleaf.4.0_4.0.0_amd64.AppImage`, make it executable (`chmod +x`), and run directly.
+- `.deb`: install with `sudo dpkg -i Yleaf.4.0_4.0.0_amd64.deb` and launch from your application menu.
 
 No Python, samtools, or other tools need to be installed separately — everything is bundled.
 
