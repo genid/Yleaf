@@ -346,18 +346,18 @@ jobs:
 
       - name: Publish release
         run: |
-          ASSETS=""
+          ASSETS=()
           # CLI executables
-          [ -f yleaf-linux.tar.gz ]  && ASSETS="$ASSETS yleaf-linux.tar.gz"
-          [ -f yleaf-macos.tar.gz ]  && ASSETS="$ASSETS yleaf-macos.tar.gz"
-          [ -f yleaf-windows.zip ]   && ASSETS="$ASSETS yleaf-windows.zip"
-          # Dashboard installers
+          [ -f yleaf-linux.tar.gz ]  && ASSETS+=("yleaf-linux.tar.gz")
+          [ -f yleaf-macos.tar.gz ]  && ASSETS+=("yleaf-macos.tar.gz")
+          [ -f yleaf-windows.zip ]   && ASSETS+=("yleaf-windows.zip")
+          # Dashboard installers (filenames may contain spaces from productName)
           for f in *.AppImage *.deb *.dmg *.exe *.msi; do
-            [ -f "$f" ] && ASSETS="$ASSETS $f"
+            [ -f "$f" ] && ASSETS+=("$f")
           done
           gh release create ${{ github.ref_name }} \
             --title "Yleaf ${{ github.ref_name }}" \
             --notes-file release_notes.txt \
-            $ASSETS
+            "${ASSETS[@]}"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
