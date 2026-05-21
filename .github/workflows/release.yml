@@ -80,22 +80,26 @@ jobs:
           git clone --depth 1 --branch v2.28 https://github.com/lh3/minimap2.git /tmp/minimap2
           cd /tmp/minimap2
           make
-          test -f minimap2.exe || { echo "minimap2.exe was not produced by make"; exit 1; }
+          # MinGW may or may not append .exe — normalise to minimap2.exe
+          if [ ! -f minimap2.exe ] && [ -f minimap2 ]; then mv minimap2 minimap2.exe; fi
+          ls -la minimap2.exe
 
       - name: Stage tools and DLLs (Windows)
         if: runner.os == 'Windows'
         shell: msys2 {0}
         run: |
+          set +e  # don't let a single missing dep kill the whole step
           mkdir -p /c/yleaf-tools
           cp /mingw64/bin/samtools.exe /c/yleaf-tools/
           cp /mingw64/bin/bcftools.exe /c/yleaf-tools/
           cp /tmp/minimap2/minimap2.exe /c/yleaf-tools/
           for exe in /c/yleaf-tools/samtools.exe /c/yleaf-tools/bcftools.exe /c/yleaf-tools/minimap2.exe; do
-            ldd "$exe" \
-              | grep '/mingw64' | awk '{print $3}' \
-              | while read f; do cp "$f" /c/yleaf-tools/ 2>/dev/null || true; done
+            for f in $(ldd "$exe" 2>/dev/null | grep '/mingw64' | awk '{print $3}'); do
+              cp "$f" /c/yleaf-tools/ 2>/dev/null
+            done
           done
-          echo "Staged $(ls /c/yleaf-tools | wc -l) files"
+          echo "Staged $(ls /c/yleaf-tools | wc -l) files:"
+          ls /c/yleaf-tools
 
       - name: Install Graphviz and stage binaries (Windows)
         if: runner.os == 'Windows'
@@ -221,22 +225,26 @@ jobs:
           git clone --depth 1 --branch v2.28 https://github.com/lh3/minimap2.git /tmp/minimap2
           cd /tmp/minimap2
           make
-          test -f minimap2.exe || { echo "minimap2.exe was not produced by make"; exit 1; }
+          # MinGW may or may not append .exe — normalise to minimap2.exe
+          if [ ! -f minimap2.exe ] && [ -f minimap2 ]; then mv minimap2 minimap2.exe; fi
+          ls -la minimap2.exe
 
       - name: Stage tools and DLLs (Windows)
         if: runner.os == 'Windows'
         shell: msys2 {0}
         run: |
+          set +e  # don't let a single missing dep kill the whole step
           mkdir -p /c/yleaf-tools
           cp /mingw64/bin/samtools.exe /c/yleaf-tools/
           cp /mingw64/bin/bcftools.exe /c/yleaf-tools/
           cp /tmp/minimap2/minimap2.exe /c/yleaf-tools/
           for exe in /c/yleaf-tools/samtools.exe /c/yleaf-tools/bcftools.exe /c/yleaf-tools/minimap2.exe; do
-            ldd "$exe" \
-              | grep '/mingw64' | awk '{print $3}' \
-              | while read f; do cp "$f" /c/yleaf-tools/ 2>/dev/null || true; done
+            for f in $(ldd "$exe" 2>/dev/null | grep '/mingw64' | awk '{print $3}'); do
+              cp "$f" /c/yleaf-tools/ 2>/dev/null
+            done
           done
-          echo "Staged $(ls /c/yleaf-tools | wc -l) files"
+          echo "Staged $(ls /c/yleaf-tools | wc -l) files:"
+          ls /c/yleaf-tools
 
       - name: Install Graphviz and stage binaries (Windows)
         if: runner.os == 'Windows'
