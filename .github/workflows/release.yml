@@ -59,7 +59,7 @@ jobs:
         run: tar czf ${{ matrix.artifact }} -C dist yleaf
 
       # ── Windows ───────────────────────────────────────────────────────────
-      - name: Install samtools + bcftools via MSYS2 (Windows)
+      - name: Install MSYS2 packages (Windows)
         if: runner.os == 'Windows'
         uses: msys2/setup-msys2@v2
         with:
@@ -68,15 +68,30 @@ jobs:
           install: >-
             mingw-w64-x86_64-samtools
             mingw-w64-x86_64-bcftools
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-zlib
+            make
+            git
+
+      - name: Build minimap2 from source (Windows)
+        if: runner.os == 'Windows'
+        shell: msys2 {0}
+        run: |
+          git clone --depth 1 --branch v2.28 https://github.com/lh3/minimap2.git /tmp/minimap2
+          cd /tmp/minimap2
+          make
+          test -f minimap2.exe || { echo "minimap2.exe was not produced by make"; exit 1; }
 
       - name: Stage tools and DLLs (Windows)
         if: runner.os == 'Windows'
         shell: msys2 {0}
         run: |
           mkdir -p /c/yleaf-tools
-          for tool in samtools bcftools; do
-            cp /mingw64/bin/${tool}.exe /c/yleaf-tools/
-            ldd /mingw64/bin/${tool}.exe \
+          cp /mingw64/bin/samtools.exe /c/yleaf-tools/
+          cp /mingw64/bin/bcftools.exe /c/yleaf-tools/
+          cp /tmp/minimap2/minimap2.exe /c/yleaf-tools/
+          for exe in /c/yleaf-tools/samtools.exe /c/yleaf-tools/bcftools.exe /c/yleaf-tools/minimap2.exe; do
+            ldd "$exe" \
               | grep '/mingw64' | awk '{print $3}' \
               | while read f; do cp "$f" /c/yleaf-tools/ 2>/dev/null || true; done
           done
@@ -91,31 +106,20 @@ jobs:
           Get-ChildItem "$gv_bin" | Copy-Item -Destination "C:\yleaf-tools\"
           Write-Host "Graphviz staged. Total files in C:\yleaf-tools: $((Get-ChildItem C:\yleaf-tools).Count)"
 
-      - name: Download minimap2 Windows binary (Windows)
+      - name: Verify bundled tools (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $releases = gh release list --repo lh3/minimap2 --json tagName --limit 10 | ConvertFrom-Json
-          foreach ($rel in $releases) {
-            $assets = gh release view $rel.tagName --repo lh3/minimap2 --json assets | ConvertFrom-Json
-            $winAsset = $assets.assets | Where-Object { $_.name -match 'win' } | Select-Object -First 1
-            if ($winAsset) {
-              Write-Host "Found Windows binary in $($rel.tagName): $($winAsset.name)"
-              Invoke-WebRequest $winAsset.browserDownloadUrl -OutFile mm2-win.zip
-              Expand-Archive mm2-win.zip -DestinationPath C:/mm2-tmp
-              $exe = Get-ChildItem -Recurse C:/mm2-tmp -Filter "minimap2*.exe" | Select-Object -First 1
-              if ($exe) {
-                Copy-Item $exe.FullName "C:/yleaf-tools/minimap2.exe"
-                Write-Host "minimap2.exe staged"
-              }
-              break
-            }
+          $required = @('samtools.exe', 'bcftools.exe', 'minimap2.exe', 'dot.exe')
+          $missing = @()
+          foreach ($exe in $required) {
+            if (-not (Test-Path "C:\yleaf-tools\$exe")) { $missing += $exe }
           }
-          if (-not (Test-Path "C:/yleaf-tools/minimap2.exe")) {
-            Write-Host "No Windows minimap2 binary found — FASTQ mode unavailable on Windows"
+          if ($missing.Count -gt 0) {
+            Write-Error "Missing required tools in C:\yleaf-tools: $($missing -join ', ')"
+            exit 1
           }
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          Write-Host "All required tools staged."
 
       - name: Set YLEAF_BUNDLED_TOOLS (Windows)
         if: runner.os == 'Windows'
@@ -196,7 +200,7 @@ jobs:
         shell: bash -el {0}
         run: pip install -e . && pip install pyinstaller
 
-      - name: Install samtools + bcftools via MSYS2 (Windows)
+      - name: Install MSYS2 packages (Windows)
         if: runner.os == 'Windows'
         uses: msys2/setup-msys2@v2
         with:
@@ -205,15 +209,30 @@ jobs:
           install: >-
             mingw-w64-x86_64-samtools
             mingw-w64-x86_64-bcftools
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-zlib
+            make
+            git
+
+      - name: Build minimap2 from source (Windows)
+        if: runner.os == 'Windows'
+        shell: msys2 {0}
+        run: |
+          git clone --depth 1 --branch v2.28 https://github.com/lh3/minimap2.git /tmp/minimap2
+          cd /tmp/minimap2
+          make
+          test -f minimap2.exe || { echo "minimap2.exe was not produced by make"; exit 1; }
 
       - name: Stage tools and DLLs (Windows)
         if: runner.os == 'Windows'
         shell: msys2 {0}
         run: |
           mkdir -p /c/yleaf-tools
-          for tool in samtools bcftools; do
-            cp /mingw64/bin/${tool}.exe /c/yleaf-tools/
-            ldd /mingw64/bin/${tool}.exe \
+          cp /mingw64/bin/samtools.exe /c/yleaf-tools/
+          cp /mingw64/bin/bcftools.exe /c/yleaf-tools/
+          cp /tmp/minimap2/minimap2.exe /c/yleaf-tools/
+          for exe in /c/yleaf-tools/samtools.exe /c/yleaf-tools/bcftools.exe /c/yleaf-tools/minimap2.exe; do
+            ldd "$exe" \
               | grep '/mingw64' | awk '{print $3}' \
               | while read f; do cp "$f" /c/yleaf-tools/ 2>/dev/null || true; done
           done
@@ -228,24 +247,20 @@ jobs:
           Get-ChildItem "$gv_bin" | Copy-Item -Destination "C:\yleaf-tools\"
           Write-Host "Graphviz staged. Total files in C:\yleaf-tools: $((Get-ChildItem C:\yleaf-tools).Count)"
 
-      - name: Download minimap2 Windows binary (Windows)
+      - name: Verify bundled tools (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $releases = gh release list --repo lh3/minimap2 --json tagName --limit 10 | ConvertFrom-Json
-          foreach ($rel in $releases) {
-            $assets = gh release view $rel.tagName --repo lh3/minimap2 --json assets | ConvertFrom-Json
-            $winAsset = $assets.assets | Where-Object { $_.name -match 'win' } | Select-Object -First 1
-            if ($winAsset) {
-              Invoke-WebRequest $winAsset.browserDownloadUrl -OutFile mm2-win.zip
-              Expand-Archive mm2-win.zip -DestinationPath C:/mm2-tmp
-              $exe = Get-ChildItem -Recurse C:/mm2-tmp -Filter "minimap2*.exe" | Select-Object -First 1
-              if ($exe) { Copy-Item $exe.FullName "C:/yleaf-tools/minimap2.exe" }
-              break
-            }
+          $required = @('samtools.exe', 'bcftools.exe', 'minimap2.exe', 'dot.exe')
+          $missing = @()
+          foreach ($exe in $required) {
+            if (-not (Test-Path "C:\yleaf-tools\$exe")) { $missing += $exe }
           }
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          if ($missing.Count -gt 0) {
+            Write-Error "Missing required tools in C:\yleaf-tools: $($missing -join ', ')"
+            exit 1
+          }
+          Write-Host "All required tools staged."
 
       - name: Set YLEAF_BUNDLED_TOOLS (Windows)
         if: runner.os == 'Windows'
