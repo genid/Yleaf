@@ -1,6 +1,6 @@
 [package]
 name = "yleaf-dashboard"
-version = "4.0.1"
+version = "4.0.2"
 description = "Yleaf Dashboard — Y-chromosomal haplogroup inference GUI"
 authors = ["Arwin Ralf"]
 edition = "2021"
