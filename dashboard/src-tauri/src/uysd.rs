@@ -58,6 +58,132 @@ pub fn upsert_sample_meta(db: State<DbState>, meta: SampleMeta) {
     let _ = crate::db::upsert_sample_meta(&conn, &meta);
 }
 
+// ── HTTP: login / submit / poll ──────────────────────────────────────────────
+
+const UYSD_BASE: &str = "https://ysnp.erasmusmc.nl";
+
+/// Log in to UYSD. Returns a session token string (sessionid=…;csrftoken=…)
+/// that the frontend passes back to submit/poll, or an error message.
+#[command]
+pub async fn uysd_login(username: String, password: String) -> Result<String, String> {
+    let client = reqwest::Client::builder()
+        .cookie_store(true)
+        .use_rustls_tls()
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    // GET /login/ — grab csrftoken from Set-Cookie and csrfmiddlewaretoken from form
+    let login_url = format!("{}/login/", UYSD_BASE);
+    let get_resp = client.get(&login_url).send().await.map_err(|e| e.to_string())?;
+    let csrf_cookie = get_resp
+        .cookies()
+        .find(|c| c.name() == "csrftoken")
+        .map(|c| c.value().to_string())
+        .unwrap_or_default();
+    let body = get_resp.text().await.map_err(|e| e.to_string())?;
+    let csrf_token = extract_csrf_token(&body).unwrap_or_else(|| csrf_cookie.clone());
+
+    // POST /login/
+    let post_resp = client
+        .post(&login_url)
+        .header("Referer", &login_url)
+        .form(&[
+            ("username", username.as_str()),
+            ("password", password.as_str()),
+            ("csrfmiddlewaretoken", csrf_token.as_str()),
+        ])
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    // Success = redirect to /account/
+    if post_resp.url().path().contains("account") || post_resp.status().is_success() {
+        // Collect session cookies into a compact token string for the frontend
+        let session = post_resp
+            .cookies()
+            .map(|c| format!("{}={}", c.name(), c.value()))
+            .collect::<Vec<_>>()
+            .join(";");
+        if session.contains("sessionid") {
+            return Ok(session);
+        }
+    }
+    Err("Invalid credentials or login failed".into())
+}
+
+/// Submit to UYSD. Returns the submission result key URL.
+#[command]
+pub async fn uysd_submit(
+    session_token: String,
+    country_csv_path: String,
+    yleaf_zip_path: String,
+) -> Result<String, String> {
+    let client = reqwest::Client::builder()
+        .cookie_store(true)
+        .use_rustls_tls()
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    // Parse session_token back into cookies, extract csrftoken
+    let mut csrf = String::new();
+    for part in session_token.split(';') {
+        let part = part.trim();
+        if let Some(v) = part.strip_prefix("csrftoken=") {
+            csrf = v.to_string();
+        }
+    }
+
+    let csv_bytes = std::fs::read(&country_csv_path).map_err(|e| e.to_string())?;
+    let zip_bytes = std::fs::read(&yleaf_zip_path).map_err(|e| e.to_string())?;
+
+    let submit_url = format!("{}/submission/", UYSD_BASE);
+    let form = reqwest::multipart::Form::new()
+        .part("country_file", reqwest::multipart::Part::bytes(csv_bytes).file_name("country_file.csv").mime_str("text/csv").map_err(|e| e.to_string())?)
+        .part("yleaf_zip", reqwest::multipart::Part::bytes(zip_bytes).file_name("yleaf.zip").mime_str("application/zip").map_err(|e| e.to_string())?)
+        .text("terms_conditions", "on")
+        .text("yleaf_submit", "1")
+        .text("csrfmiddlewaretoken", csrf.clone());
+
+    let resp = client
+        .post(&submit_url)
+        .header("Referer", &submit_url)
+        .header("Cookie", &session_token)
+        .header("X-CSRFToken", &csrf)
+        .multipart(form)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let final_url = resp.url().to_string();
+    if final_url.contains("submission_result") {
+        return Ok(final_url);
+    }
+    Err(format!("Submission failed — landed at: {final_url}"))
+}
+
+/// Poll a submission_result URL. Returns "pending", "ok:<html>", or "error:<msg>".
+#[command]
+pub async fn uysd_poll_result(result_url: String) -> Result<String, String> {
+    let client = reqwest::Client::builder()
+        .use_rustls_tls()
+        .build()
+        .map_err(|e| e.to_string())?;
+    let resp = client.get(&result_url).send().await.map_err(|e| e.to_string())?;
+    let body = resp.text().await.map_err(|e| e.to_string())?;
+    if body.contains("pending") || body.contains("Processing") {
+        return Ok("pending".into());
+    }
+    Ok(format!("ok:{body}"))
+}
+
+fn extract_csrf_token(html: &str) -> Option<String> {
+    // <input type="hidden" name="csrfmiddlewaretoken" value="...">
+    let needle = "name=\"csrfmiddlewaretoken\" value=\"";
+    let start = html.find(needle)? + needle.len();
+    let end = html[start..].find('"')? + start;
+    Some(html[start..end].to_string())
+}
+
 // ── CSV / ZIP builders ───────────────────────────────────────────────────────
 
 #[derive(serde::Deserialize)]
