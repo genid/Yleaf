@@ -2,7 +2,7 @@
   import { invoke } from "@tauri-apps/api/core";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
   import { open } from "@tauri-apps/plugin-dialog";
-  import { openPath } from "@tauri-apps/plugin-opener";
+  import { openPath, openUrl } from "@tauri-apps/plugin-opener";
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { onMount, onDestroy } from "svelte";
   import { SvelteMap, SvelteSet } from "svelte/reactivity";
@@ -907,6 +907,13 @@
                 <div class="text-[0.73rem] text-slate-400 dark:text-ghost">
                   {pred.total_reads.toLocaleString()} mapped reads &middot; {pred.valid_markers.toLocaleString()} markers
                 </div>
+                <button
+                  onclick={() => openUrl(`https://ysnp.erasmusmc.nl/haplogroup/${pred.hg_marker}`)}
+                  class="mt-2.5 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[0.73rem] font-medium
+                         bg-sky-50 text-sky-700 border border-sky-200 hover:bg-sky-100 transition-colors cursor-pointer
+                         dark:bg-teal/10 dark:text-teal dark:border-teal/30 dark:hover:bg-teal/20">
+                  🗺 View on UYSD
+                </button>
               </div>
 
               <!-- QC scores -->
