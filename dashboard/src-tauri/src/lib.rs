@@ -50,6 +50,8 @@ pub fn run() {
             uysd::set_uysd_embedded,
             uysd::get_sample_meta,
             uysd::upsert_sample_meta,
+            uysd::build_country_csv,
+            uysd::build_yleaf_zip,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
