@@ -18,7 +18,7 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self' tauri:; connect-src 'self' tauri: https://ysnp.erasmusmc.nl; img-src 'self' data: tauri: https://ysnp.erasmusmc.nl; style-src 'self' 'unsafe-inline'; font-src 'self' https://fonts.gstatic.com; script-src 'self'"
     }
   },
   "bundle": {
