@@ -110,6 +110,15 @@
   let sampleMetaMap = $state<Record<string, MetaRow>>({});
   let countryOpen = $state(false);
 
+  // UYSD submission state (in-memory only — no credentials persisted)
+  let uysdSession = $state<string | null>(null);
+  type SubmitPhase = "idle" | "login" | "logging_in" | "submitting" | "polling" | "done" | "error";
+  let submitPhase = $state<SubmitPhase>("idle");
+  let submitError = $state<string | null>(null);
+  let submitResultUrl = $state<string | null>(null);
+  let loginUser = $state("");
+  let loginPass = $state("");
+
   let ctxMenu = $state<{ x: number; y: number; job: Job } | null>(null);
   let selectedJobIds = $state(new Set<number>());
   let editingJobId = $state<number | null>(null);
@@ -284,6 +293,9 @@
     selectedSample = null;
     sampleMetaMap = {};
     countryOpen = false;
+    submitPhase = "idle";
+    submitError = null;
+    submitResultUrl = null;
     logJobId = job.id;
     view = "result";
     if (job.status === "done") {
@@ -339,6 +351,61 @@
     a.download = `${selectedJob?.sample_name ?? "yleaf"}_country_file.csv`;
     a.click();
     URL.revokeObjectURL(a.href);
+  }
+
+  async function startSubmit() {
+    if (!uysdSession) { submitPhase = "login"; return; }
+    await doSubmit(uysdSession);
+  }
+
+  async function doLogin() {
+    submitPhase = "logging_in";
+    submitError = null;
+    try {
+      uysdSession = await invoke<string>("uysd_login", { username: loginUser, password: loginPass });
+      loginPass = "";
+      await doSubmit(uysdSession);
+    } catch (e) {
+      submitError = String(e);
+      submitPhase = "login";
+    }
+  }
+
+  async function doSubmit(session: string) {
+    if (!selectedJob) return;
+    submitPhase = "submitting";
+    submitError = null;
+    try {
+      const metaRows = sampleNames.map(n => {
+        const m = sampleMetaMap[n] ?? { country: "", region: "", comment: "", publication: "" };
+        return { sample_name: n, country: m.country, region: m.region, comment: m.comment, publication: m.publication };
+      });
+      const csvPath = await invoke<string>("build_country_csv", { rows: metaRows });
+      const zipPath = await invoke<string>("build_yleaf_zip", { outputDir: selectedJob.output_dir });
+      const resultUrl = await invoke<string>("uysd_submit", {
+        sessionToken: session, countryCsvPath: csvPath, yleafZipPath: zipPath
+      });
+      submitResultUrl = resultUrl;
+      submitPhase = "polling";
+      pollResult(resultUrl);
+    } catch (e) {
+      submitError = String(e);
+      submitPhase = "error";
+    }
+  }
+
+  async function pollResult(url: string) {
+    let attempts = 0;
+    while (attempts < 60) {
+      await new Promise(r => setTimeout(r, 5000));
+      try {
+        const r = await invoke<string>("uysd_poll_result", { resultUrl: url });
+        if (r.startsWith("ok:")) { submitPhase = "done"; return; }
+      } catch { /* keep polling */ }
+      attempts++;
+    }
+    submitError = "Timed out waiting for UYSD result.";
+    submitPhase = "error";
   }
 
   // Fetch per-sample path data whenever the selected sample changes
@@ -1187,14 +1254,62 @@
                     {/if}
                   </div>
                 {/each}
-                <button
-                  onclick={exportCountryCsv}
-                  disabled={sampleNames.some(n => !(sampleMetaMap[n]?.pubValid ?? true))}
-                  class="self-start mt-1 px-3 py-1.5 rounded-md text-[0.75rem] font-medium cursor-pointer transition-colors
-                         bg-sky-600 text-white hover:bg-sky-700 disabled:opacity-40 disabled:cursor-not-allowed
-                         dark:bg-teal/80 dark:hover:bg-teal">
-                  Export country file
-                </button>
+                <div class="flex gap-2 flex-wrap mt-1">
+                  <button
+                    onclick={exportCountryCsv}
+                    disabled={sampleNames.some(n => !(sampleMetaMap[n]?.pubValid ?? true))}
+                    class="px-3 py-1.5 rounded-md text-[0.75rem] font-medium cursor-pointer transition-colors
+                           bg-sky-600 text-white hover:bg-sky-700 disabled:opacity-40 disabled:cursor-not-allowed
+                           dark:bg-teal/80 dark:hover:bg-teal">
+                    Export country file
+                  </button>
+                  <button
+                    onclick={startSubmit}
+                    disabled={submitPhase === "submitting" || submitPhase === "polling" || submitPhase === "logging_in" || sampleNames.some(n => !(sampleMetaMap[n]?.pubValid ?? true))}
+                    class="px-3 py-1.5 rounded-md text-[0.75rem] font-medium cursor-pointer transition-colors
+                           bg-green-600 text-white hover:bg-green-700 disabled:opacity-40 disabled:cursor-not-allowed
+                           dark:bg-green-700 dark:hover:bg-green-600">
+                    {submitPhase === "submitting" ? "Submitting…" : submitPhase === "polling" ? "Processing…" : submitPhase === "logging_in" ? "Logging in…" : "Submit to UYSD"}
+                  </button>
+                </div>
+
+                <!-- Login dialog -->
+                {#if submitPhase === "login" || submitPhase === "logging_in"}
+                  <div class="mt-2 rounded-lg border p-3 flex flex-col gap-2 bg-white border-slate-300 dark:bg-panel dark:border-rim">
+                    <span class="text-[0.72rem] font-semibold text-slate-700 dark:text-pale">UYSD login</span>
+                    <input type="text" placeholder="Username" bind:value={loginUser}
+                      class="rounded-md border px-2 py-1 text-[0.75rem] outline-none bg-white border-slate-300 text-slate-800 dark:bg-well dark:border-rim dark:text-pale" />
+                    <input type="password" placeholder="Password" bind:value={loginPass}
+                      onkeydown={(e) => { if (e.key === "Enter") doLogin(); }}
+                      class="rounded-md border px-2 py-1 text-[0.75rem] outline-none bg-white border-slate-300 text-slate-800 dark:bg-well dark:border-rim dark:text-pale" />
+                    <div class="flex gap-2">
+                      <button onclick={doLogin} disabled={submitPhase === "logging_in" || !loginUser || !loginPass}
+                        class="px-3 py-1 rounded-md text-[0.73rem] font-medium bg-green-600 text-white hover:bg-green-700 disabled:opacity-40 cursor-pointer transition-colors">
+                        {submitPhase === "logging_in" ? "Logging in…" : "Log in & submit"}
+                      </button>
+                      <button onclick={() => { submitPhase = "idle"; loginPass = ""; }}
+                        class="px-3 py-1 rounded-md text-[0.73rem] font-medium bg-slate-200 text-slate-700 hover:bg-slate-300 cursor-pointer dark:bg-well dark:text-pale dark:hover:bg-rim transition-colors">
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                {/if}
+
+                <!-- Submission result -->
+                {#if submitPhase === "done" && submitResultUrl}
+                  <div class="mt-2 rounded-lg border p-3 bg-green-50 border-green-300 dark:bg-green-900/20 dark:border-green-700">
+                    <span class="text-[0.72rem] font-semibold text-green-700 dark:text-green-400">Submission accepted!</span>
+                    <button onclick={() => openUrl(submitResultUrl!)}
+                      class="mt-1 block text-[0.7rem] text-sky-600 dark:text-teal underline cursor-pointer bg-transparent border-none p-0">
+                      {submitResultUrl}
+                    </button>
+                  </div>
+                {/if}
+                {#if (submitPhase === "error") && submitError}
+                  <div class="mt-2 rounded-lg border p-3 bg-red-50 border-red-300 dark:bg-red-900/20 dark:border-red-700">
+                    <span class="text-[0.72rem] text-red-600 dark:text-red-400">{submitError}</span>
+                  </div>
+                {/if}
               </div>
             {/if}
           </div>
