@@ -48,6 +48,8 @@ pub fn run() {
             uysd::open_uysd_window,
             uysd::get_uysd_embedded,
             uysd::set_uysd_embedded,
+            uysd::get_sample_meta,
+            uysd::upsert_sample_meta,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

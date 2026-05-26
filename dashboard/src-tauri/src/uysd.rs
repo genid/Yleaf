@@ -1,6 +1,6 @@
 use tauri::{command, AppHandle, Manager, State, WebviewUrl, WebviewWindowBuilder};
 
-use crate::DbState;
+use crate::{db::SampleMeta, DbState};
 
 #[command]
 pub fn open_uysd_window(app: AppHandle, url: String) {
@@ -40,4 +40,16 @@ pub fn set_uysd_embedded(db: State<DbState>, enabled: bool) {
          ON CONFLICT(key) DO UPDATE SET value=excluded.value",
         [enabled as i64],
     );
+}
+
+#[command]
+pub fn get_sample_meta(db: State<DbState>, job_id: i64) -> Vec<SampleMeta> {
+    let conn = db.0.lock().unwrap();
+    crate::db::get_sample_meta(&conn, job_id).unwrap_or_default()
+}
+
+#[command]
+pub fn upsert_sample_meta(db: State<DbState>, meta: SampleMeta) {
+    let conn = db.0.lock().unwrap();
+    let _ = crate::db::upsert_sample_meta(&conn, &meta);
 }

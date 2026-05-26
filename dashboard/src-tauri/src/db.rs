@@ -37,6 +37,16 @@ pub fn init_schema(conn: &Connection) -> SqlResult<()> {
             key   TEXT PRIMARY KEY,
             value INTEGER NOT NULL DEFAULT 0
         );
+        CREATE TABLE IF NOT EXISTS sample_meta (
+            job_id      INTEGER NOT NULL,
+            sample_name TEXT    NOT NULL,
+            country     TEXT    NOT NULL DEFAULT '',
+            region      TEXT    NOT NULL DEFAULT '',
+            comment     TEXT    NOT NULL DEFAULT '',
+            publication TEXT    NOT NULL DEFAULT '',
+            updated_ts  INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (job_id, sample_name)
+        );
         CREATE TABLE IF NOT EXISTS jobs (
             id                 INTEGER PRIMARY KEY AUTOINCREMENT,
             sample_name        TEXT    NOT NULL,
@@ -195,4 +205,49 @@ pub fn list_jobs(conn: &Connection) -> SqlResult<Vec<Job>> {
         })
     })?;
     rows.collect()
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
+pub struct SampleMeta {
+    pub job_id: i64,
+    pub sample_name: String,
+    pub country: String,
+    pub region: String,
+    pub comment: String,
+    pub publication: String,
+    pub updated_ts: i64,
+}
+
+pub fn get_sample_meta(conn: &Connection, job_id: i64) -> SqlResult<Vec<SampleMeta>> {
+    let mut stmt = conn.prepare(
+        "SELECT job_id, sample_name, country, region, comment, publication, updated_ts
+         FROM sample_meta WHERE job_id=?1 ORDER BY sample_name",
+    )?;
+    let rows = stmt.query_map([job_id], |row| {
+        Ok(SampleMeta {
+            job_id: row.get(0)?,
+            sample_name: row.get(1)?,
+            country: row.get(2)?,
+            region: row.get(3)?,
+            comment: row.get(4)?,
+            publication: row.get(5)?,
+            updated_ts: row.get(6)?,
+        })
+    })?;
+    rows.collect()
+}
+
+pub fn upsert_sample_meta(conn: &Connection, meta: &SampleMeta) -> SqlResult<()> {
+    conn.execute(
+        "INSERT INTO sample_meta (job_id, sample_name, country, region, comment, publication, updated_ts)
+         VALUES (?1,?2,?3,?4,?5,?6,?7)
+         ON CONFLICT(job_id, sample_name) DO UPDATE SET
+           country=excluded.country, region=excluded.region, comment=excluded.comment,
+           publication=excluded.publication, updated_ts=excluded.updated_ts",
+        params![
+            meta.job_id, meta.sample_name, meta.country, meta.region,
+            meta.comment, meta.publication, meta.updated_ts
+        ],
+    )?;
+    Ok(())
 }
