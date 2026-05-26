@@ -1,6 +1,7 @@
 mod db;
 mod jobs;
 mod results;
+mod uysd;
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -44,6 +45,9 @@ pub fn run() {
             results::get_haplogroup_path,
             results::delete_job,
             results::rename_job,
+            uysd::open_uysd_window,
+            uysd::get_uysd_embedded,
+            uysd::set_uysd_embedded,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

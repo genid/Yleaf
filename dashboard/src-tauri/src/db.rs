@@ -33,7 +33,11 @@ pub struct Job {
 
 pub fn init_schema(conn: &Connection) -> SqlResult<()> {
     conn.execute_batch(
-        "CREATE TABLE IF NOT EXISTS jobs (
+        "CREATE TABLE IF NOT EXISTS uysd_settings (
+            key   TEXT PRIMARY KEY,
+            value INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE TABLE IF NOT EXISTS jobs (
             id                 INTEGER PRIMARY KEY AUTOINCREMENT,
             sample_name        TEXT    NOT NULL,
             sample_path        TEXT    NOT NULL,

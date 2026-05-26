@@ -104,6 +104,7 @@
   let activeTreeTab = $state(0);
   let selectedSample = $state<string | null>(null);
   let resultsError = $state<string | null>(null);
+  let uysdEmbedded = $state(false);
 
   let ctxMenu = $state<{ x: number; y: number; job: Job } | null>(null);
   let selectedJobIds = $state(new Set<number>());
@@ -414,6 +415,7 @@
   let _onKeyDown: ((e: KeyboardEvent) => void) | null = null;
 
   onMount(async () => {
+    uysdEmbedded = await invoke<boolean>("get_uysd_embedded");
     await refreshJobs();
     _onKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Delete" && selectedJobIds.size > 0) deleteSelected();
@@ -907,13 +909,28 @@
                 <div class="text-[0.73rem] text-slate-400 dark:text-ghost">
                   {pred.total_reads.toLocaleString()} mapped reads &middot; {pred.valid_markers.toLocaleString()} markers
                 </div>
-                <button
-                  onclick={() => openUrl(`https://ysnp.erasmusmc.nl/haplogroup/${pred.hg_marker}`)}
-                  class="mt-2.5 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[0.73rem] font-medium
-                         bg-sky-50 text-sky-700 border border-sky-200 hover:bg-sky-100 transition-colors cursor-pointer
-                         dark:bg-teal/10 dark:text-teal dark:border-teal/30 dark:hover:bg-teal/20">
-                  🗺 View on UYSD
-                </button>
+                <div class="mt-2.5 flex items-center gap-2 flex-wrap">
+                  <button
+                    onclick={() => uysdEmbedded
+                      ? invoke("open_uysd_window", { url: `https://ysnp.erasmusmc.nl/haplogroup/${pred.hg_marker}` })
+                      : openUrl(`https://ysnp.erasmusmc.nl/haplogroup/${pred.hg_marker}`)}
+                    class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[0.73rem] font-medium
+                           bg-sky-50 text-sky-700 border border-sky-200 hover:bg-sky-100 transition-colors cursor-pointer
+                           dark:bg-teal/10 dark:text-teal dark:border-teal/30 dark:hover:bg-teal/20">
+                    🗺 View on UYSD
+                  </button>
+                  <label class="inline-flex items-center gap-1.5 cursor-pointer select-none text-[0.7rem] text-slate-400 dark:text-muted">
+                    <input
+                      type="checkbox"
+                      checked={uysdEmbedded}
+                      onchange={async (e) => {
+                        uysdEmbedded = (e.target as HTMLInputElement).checked;
+                        await invoke("set_uysd_embedded", { enabled: uysdEmbedded });
+                      }}
+                      class="w-3.5 h-3.5 accent-sky-500" />
+                    Open in app
+                  </label>
+                </div>
               </div>
 
               <!-- QC scores -->
