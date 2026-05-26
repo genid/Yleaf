@@ -106,6 +106,10 @@
   let resultsError = $state<string | null>(null);
   let uysdEmbedded = $state(false);
 
+  interface MetaRow { country: string; region: string; comment: string; publication: string; pubValid: boolean; }
+  let sampleMetaMap = $state<Record<string, MetaRow>>({});
+  let countryOpen = $state(false);
+
   let ctxMenu = $state<{ x: number; y: number; job: Job } | null>(null);
   let selectedJobIds = $state(new Set<number>());
   let editingJobId = $state<number | null>(null);
@@ -278,16 +282,63 @@
     resultsError = null;
     activeTreeTab = 0;
     selectedSample = null;
+    sampleMetaMap = {};
+    countryOpen = false;
     logJobId = job.id;
     view = "result";
     if (job.status === "done") {
       try {
         jobResults = await invoke<JobResults>("get_job_results", { outputDir: job.output_dir, trees: job.trees });
         selectedSample = jobResults?.predictions[0]?.sample_name ?? null;
+        await loadSampleMeta(job.id);
       } catch (e) {
         resultsError = String(e);
       }
     }
+  }
+
+  async function loadSampleMeta(jobId: number) {
+    const rows = await invoke<{job_id: number; sample_name: string; country: string; region: string; comment: string; publication: string}[]>(
+      "get_sample_meta", { jobId }
+    );
+    const byName: Record<string, MetaRow> = {};
+    for (const r of rows) {
+      byName[r.sample_name] = { country: r.country, region: r.region, comment: r.comment, publication: r.publication, pubValid: isPubValid(r.publication) };
+    }
+    // ensure every sample has a row
+    for (const name of sampleNames) {
+      if (!byName[name]) byName[name] = { country: "", region: "", comment: "", publication: "", pubValid: true };
+    }
+    sampleMetaMap = byName;
+  }
+
+  function isPubValid(v: string): boolean {
+    if (!v) return true;
+    try { new URL(v); return true; } catch { return false; }
+  }
+
+  async function saveMeta(name: string) {
+    if (!selectedJob) return;
+    const m = sampleMetaMap[name];
+    if (!m) return;
+    await invoke("upsert_sample_meta", {
+      meta: { job_id: selectedJob.id, sample_name: name, country: m.country, region: m.region, comment: m.comment, publication: m.publication, updated_ts: Math.floor(Date.now() / 1000) }
+    });
+  }
+
+  function exportCountryCsv() {
+    const lines = sampleNames.map(name => {
+      const m = sampleMetaMap[name] ?? { country: "", region: "", comment: "", publication: "" };
+      const esc = (s: string) => `"${s.replace(/"/g, '""')}"`;
+      return [name, m.country, m.region, m.comment, m.publication].map(esc).join(",");
+    });
+    const csv = lines.join("\r\n");
+    const blob = new Blob([csv], { type: "text/csv" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `${selectedJob?.sample_name ?? "yleaf"}_country_file.csv`;
+    a.click();
+    URL.revokeObjectURL(a.href);
   }
 
   // Fetch per-sample path data whenever the selected sample changes
@@ -1084,6 +1135,69 @@
               {/each}
             </div>
           {/if}
+
+          <!-- Country data for UYSD submission -->
+          <div class="border-t pt-4 border-slate-200 dark:border-well">
+            <button
+              onclick={() => { countryOpen = !countryOpen; if (countryOpen && sampleNames.length > 0 && !sampleMetaMap[sampleNames[0]]) loadSampleMeta(selectedJob!.id); }}
+              class="flex items-center gap-2 w-full text-left cursor-pointer">
+              <span class="text-[0.65rem] font-semibold uppercase tracking-widest text-slate-400 dark:text-muted">
+                Country data for UYSD
+              </span>
+              <span class="text-[0.65rem] text-slate-400 dark:text-muted">{countryOpen ? "▲" : "▼"}</span>
+            </button>
+            {#if countryOpen}
+              <div class="mt-3 flex flex-col gap-2">
+                {#each sampleNames as name}
+                  {@const m = sampleMetaMap[name] ?? { country: "", region: "", comment: "", publication: "", pubValid: true }}
+                  <div class="rounded-lg border p-3 flex flex-col gap-2 bg-slate-50 border-slate-200 dark:bg-void dark:border-well">
+                    <span class="text-[0.72rem] font-semibold text-slate-700 dark:text-pale">{name}</span>
+                    <div class="grid grid-cols-2 gap-2">
+                      <input
+                        type="text" placeholder="Country" value={m.country}
+                        oninput={(e) => { sampleMetaMap[name] = {...m, country: (e.target as HTMLInputElement).value}; }}
+                        onblur={() => saveMeta(name)}
+                        class="rounded-md border px-2 py-1 text-[0.75rem] outline-none
+                               bg-white border-slate-300 text-slate-800 dark:bg-panel dark:border-rim dark:text-pale" />
+                      <input
+                        type="text" placeholder="Region (optional)" value={m.region}
+                        oninput={(e) => { sampleMetaMap[name] = {...m, region: (e.target as HTMLInputElement).value}; }}
+                        onblur={() => saveMeta(name)}
+                        class="rounded-md border px-2 py-1 text-[0.75rem] outline-none
+                               bg-white border-slate-300 text-slate-800 dark:bg-panel dark:border-rim dark:text-pale" />
+                      <input
+                        type="text" placeholder="Comment (optional)" value={m.comment}
+                        oninput={(e) => { sampleMetaMap[name] = {...m, comment: (e.target as HTMLInputElement).value}; }}
+                        onblur={() => saveMeta(name)}
+                        class="rounded-md border px-2 py-1 text-[0.75rem] outline-none
+                               bg-white border-slate-300 text-slate-800 dark:bg-panel dark:border-rim dark:text-pale" />
+                      <input
+                        type="text" placeholder="Publication URL (optional)" value={m.publication}
+                        oninput={(e) => {
+                          const v = (e.target as HTMLInputElement).value;
+                          sampleMetaMap[name] = {...m, publication: v, pubValid: isPubValid(v)};
+                        }}
+                        onblur={() => saveMeta(name)}
+                        class="rounded-md border px-2 py-1 text-[0.75rem] outline-none
+                               {m.pubValid ? 'border-slate-300 dark:border-rim' : 'border-red-400 dark:border-red-600'}
+                               bg-white text-slate-800 dark:bg-panel dark:text-pale" />
+                    </div>
+                    {#if !m.pubValid}
+                      <span class="text-[0.68rem] text-red-500">Publication must be a valid URL (e.g. https://doi.org/…)</span>
+                    {/if}
+                  </div>
+                {/each}
+                <button
+                  onclick={exportCountryCsv}
+                  disabled={sampleNames.some(n => !(sampleMetaMap[n]?.pubValid ?? true))}
+                  class="self-start mt-1 px-3 py-1.5 rounded-md text-[0.75rem] font-medium cursor-pointer transition-colors
+                         bg-sky-600 text-white hover:bg-sky-700 disabled:opacity-40 disabled:cursor-not-allowed
+                         dark:bg-teal/80 dark:hover:bg-teal">
+                  Export country file
+                </button>
+              </div>
+            {/if}
+          </div>
 
           <!-- Run metadata -->
           <div class="flex flex-col gap-1 border-t pt-4 border-slate-200 dark:border-well">
