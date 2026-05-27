@@ -104,8 +104,6 @@
   let activeTreeTab = $state(0);
   let selectedSample = $state<string | null>(null);
   let resultsError = $state<string | null>(null);
-  let uysdEmbedded = $state(false);
-
   interface MetaRow { country: string; region: string; comment: string; publication: string; pubValid: boolean; }
   let sampleMetaMap = $state<Record<string, MetaRow>>({});
   let countryOpen = $state(false);
@@ -240,6 +238,12 @@
   let runningJobIds = new SvelteSet<number>();
   let jobLogs = new SvelteMap<number, string[]>();
   let jobProgress = new SvelteMap<number, ProgressBar[]>();
+
+  // Cache of resolved UYSD map URLs, keyed by full haplogroup string.
+  // Populated lazily for yfull predictions via uysd_resolve_map_url.
+  type UysdMapUrls = { embed_url: string; full_url: string };
+  let mapUrlCache = new SvelteMap<string, UysdMapUrls>();
+  let mapUrlPending = new SvelteSet<string>();
   let logJobId = $state<number | null>(null);
   let logEl: HTMLElement | null = null;
   let unlisteners: UnlistenFn[] = [];
@@ -263,6 +267,28 @@
   $effect(() => {
     displayLog.length;
     if (logEl) logEl.scrollTop = logEl.scrollHeight;
+  });
+
+  // Resolve UYSD map URL for any yfull prediction we haven't seen yet.
+  // UYSD's map only knows YFull haplogroups, so we skip the call entirely
+  // for other trees (they won't render an iframe at all).
+  $effect(() => {
+    for (const pred of samplePredictions) {
+      if (pred.tree !== "yfull") continue;
+      const hg = pred.haplogroup;
+      if (!hg || mapUrlCache.has(hg) || mapUrlPending.has(hg)) continue;
+      mapUrlPending.add(hg);
+      invoke<UysdMapUrls>("uysd_resolve_map_url", { haplogroup: hg })
+        .then((urls) => mapUrlCache.set(hg, urls))
+        .catch(() => {
+          const base = encodeURIComponent(hg.split("*")[0]);
+          mapUrlCache.set(hg, {
+            full_url: `https://ysnp.erasmusmc.nl/haplogroup/${base}`,
+            embed_url: `https://ysnp.erasmusmc.nl/haplogroup/${base}?embed=1`,
+          });
+        })
+        .finally(() => mapUrlPending.delete(hg));
+    }
   });
 
   function fmt_ts(ts: number): string {
@@ -533,7 +559,6 @@
   let _onKeyDown: ((e: KeyboardEvent) => void) | null = null;
 
   onMount(async () => {
-    uysdEmbedded = await invoke<boolean>("get_uysd_embedded");
     await refreshJobs();
     _onKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Delete" && selectedJobIds.size > 0) deleteSelected();
@@ -1027,28 +1052,38 @@
                 <div class="text-[0.73rem] text-slate-400 dark:text-ghost">
                   {pred.total_reads.toLocaleString()} mapped reads &middot; {pred.valid_markers.toLocaleString()} markers
                 </div>
-                <div class="mt-2.5 flex items-center gap-2 flex-wrap">
+                {#if pred.tree === "yfull" && mapUrlCache.has(pred.haplogroup)}
+                  {@const urls = mapUrlCache.get(pred.haplogroup)!}
                   <button
-                    onclick={() => uysdEmbedded
-                      ? invoke("open_uysd_window", { url: `https://ysnp.erasmusmc.nl/haplogroup/${pred.hg_marker}` })
-                      : openUrl(`https://ysnp.erasmusmc.nl/haplogroup/${pred.hg_marker}`)}
-                    class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[0.73rem] font-medium
-                           bg-sky-50 text-sky-700 border border-sky-200 hover:bg-sky-100 transition-colors cursor-pointer
-                           dark:bg-teal/10 dark:text-teal dark:border-teal/30 dark:hover:bg-teal/20">
-                    🗺 View on UYSD
+                    type="button"
+                    onclick={() => openUrl(urls.full_url)}
+                    title="Open in Y-SNP Database"
+                    class="mt-3 block w-full text-left rounded-lg overflow-hidden border
+                           border-slate-200 dark:border-well
+                           cursor-pointer hover:ring-2 hover:ring-sky-300 transition">
+                    <div class="flex items-center gap-2 px-3 py-2
+                                bg-slate-50 dark:bg-well
+                                border-b border-slate-200 dark:border-well">
+                      <img src="https://ysnp.erasmusmc.nl/static/ysnp/data/uysd_logo.png"
+                           alt="UYSD"
+                           class="h-6 w-auto dark:invert dark:hue-rotate-180" />
+                      <span class="text-sm font-medium text-slate-700 dark:text-pale">
+                        Open haplogroup map
+                      </span>
+                      <span class="ml-auto text-xs text-slate-500 dark:text-muted">↗</span>
+                    </div>
+                    <iframe
+                      src={urls.embed_url}
+                      title="UYSD map preview — {pred.haplogroup}"
+                      width="100%"
+                      height="360"
+                      tabindex="-1"
+                      scrolling="no"
+                      loading="lazy"
+                      style="display:block;border:none;pointer-events:none;"
+                    ></iframe>
                   </button>
-                  <label class="inline-flex items-center gap-1.5 cursor-pointer select-none text-[0.7rem] text-slate-400 dark:text-muted">
-                    <input
-                      type="checkbox"
-                      checked={uysdEmbedded}
-                      onchange={async (e) => {
-                        uysdEmbedded = (e.target as HTMLInputElement).checked;
-                        await invoke("set_uysd_embedded", { enabled: uysdEmbedded });
-                      }}
-                      class="w-3.5 h-3.5 accent-sky-500" />
-                    Open in app
-                  </label>
-                </div>
+                {/if}
               </div>
 
               <!-- QC scores -->

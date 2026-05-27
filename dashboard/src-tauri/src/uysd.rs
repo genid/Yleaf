@@ -176,6 +176,90 @@ pub async fn uysd_poll_result(result_url: String) -> Result<String, String> {
     Ok(format!("ok:{body}"))
 }
 
+fn base_haplogroup(hg: &str) -> &str {
+    // Strip "*(…)" wildcard suffix; "E-Z15929*(xE-Y25504)" -> "E-Z15929"
+    hg.split('*').next().unwrap_or(hg)
+}
+
+fn page_has_frequencies(html: &str) -> bool {
+    // The frequency-data array is inlined as:
+    //   var frequencies = JSON.parse("[{...");   (has data)
+    //   var frequencies = JSON.parse("[]");       (empty -- valid hg, no samples)
+    //   (line absent)                             (error page or unknown hg)
+    //
+    // Other JSON.parse calls in the same page (slug_map, small_tree, …) must
+    // NOT be matched -- match the literal variable assignment only.
+    html.contains(r#"var frequencies = JSON.parse("[{"#)
+}
+
+fn percent_encode_segment(s: &str) -> String {
+    // RFC 3986 unreserved set; everything else gets percent-encoded.
+    // Url::path_segments_mut().push() leaves sub-delims (`*`, `(`, `)`, `,`)
+    // unencoded, which WebKit then refuses to load in an iframe src.
+    let mut out = String::with_capacity(s.len() * 3);
+    for byte in s.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(byte as char);
+            }
+            _ => out.push_str(&format!("%{:02X}", byte)),
+        }
+    }
+    out
+}
+
+fn full_url_for(haplogroup: &str) -> String {
+    format!("{UYSD_BASE}/haplogroup/{}", percent_encode_segment(haplogroup))
+}
+
+fn embed_url_for(haplogroup: &str) -> String {
+    // ?embed=1 triggers UYSD's minimal layout (chrome hidden, map+tree-nav only)
+    format!("{}?embed=1", full_url_for(haplogroup))
+}
+
+#[derive(serde::Serialize)]
+pub struct UysdMapUrls {
+    /// Bare URL — opened externally when the user clicks the preview.
+    pub full_url: String,
+    /// Minimal-layout URL used as the iframe preview src.
+    pub embed_url: String,
+}
+
+/// Resolve which UYSD haplogroup-map URL to load.  Tries the full wildcard form
+/// first; if UYSD reports no frequency data, falls back to the base haplogroup.
+#[command]
+pub async fn uysd_resolve_map_url(haplogroup: String) -> UysdMapUrls {
+    let base_hg = base_haplogroup(&haplogroup);
+    let make = |hg: &str| UysdMapUrls {
+        full_url: full_url_for(hg),
+        embed_url: embed_url_for(hg),
+    };
+
+    if base_hg == haplogroup {
+        return make(&haplogroup); // nothing to disambiguate
+    }
+
+    let client = match reqwest::Client::builder().use_rustls_tls().build() {
+        Ok(c) => c,
+        Err(_) => return make(base_hg),
+    };
+    // Probe the full wildcard URL (without ?embed=1; the frequency JSON is the
+    // same either way and the bare URL keeps things simple).
+    let resp = match client.get(full_url_for(&haplogroup)).send().await {
+        Ok(r) => r,
+        Err(_) => return make(base_hg),
+    };
+    let body = match resp.text().await {
+        Ok(b) => b,
+        Err(_) => return make(base_hg),
+    };
+    if page_has_frequencies(&body) {
+        make(&haplogroup)
+    } else {
+        make(base_hg)
+    }
+}
+
 fn extract_csrf_token(html: &str) -> Option<String> {
     // <input type="hidden" name="csrfmiddlewaretoken" value="...">
     let needle = "name=\"csrfmiddlewaretoken\" value=\"";
