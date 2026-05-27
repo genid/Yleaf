@@ -692,7 +692,7 @@ def main_vcf_split(
         with open(position_bed_file, "r") as f:
             with open(new_position_bed_file, "w") as f2:
                 for line in f:
-                    line = line.replace("chrY", chry[0])
+                    line = line.replace("chry", chry[0]).replace("chrY", chry[0])
                     f2.write(line)
 
     # filter the vcf file using the reference bed file
