@@ -106,7 +106,36 @@
   let resultsError = $state<string | null>(null);
   interface MetaRow { country: string; region: string; comment: string; publication: string; pubValid: boolean; }
   let sampleMetaMap = $state<Record<string, MetaRow>>({});
-  let countryOpen = $state(false);
+
+  // UYSD submit panel — only opens when the user clicks "Submit to UYSD"
+  let submitPanelOpen = $state(false);
+  let selectedSamples = $state(new SvelteSet<string>());
+  let applyValues = $state({ country: "", region: "", comment: "", publication: "" });
+  let applyPubValid = $derived(isPubValid(applyValues.publication));
+
+  // UYSD-accepted country / region names — fetched once per session and cached.
+  let knownLocations = $state<{ countries: string[]; regions: string[] } | null>(null);
+  let knownCountriesSet = $derived(new Set(knownLocations?.countries ?? []));
+  let knownRegionsSet = $derived(new Set(knownLocations?.regions ?? []));
+  async function ensureKnownLocations() {
+    if (knownLocations !== null) return;
+    try {
+      knownLocations = await invoke<{ countries: string[]; regions: string[] }>("uysd_get_known_locations");
+    } catch (e) {
+      console.error("Failed to fetch UYSD known_locations:", e);
+      knownLocations = { countries: [], regions: [] }; // fall back: no validation
+    }
+  }
+  function isValidCountry(v: string): boolean {
+    if (!v) return true; // empty allowed
+    if (!knownLocations) return true; // not loaded yet — don't false-fail
+    return knownCountriesSet.has(v);
+  }
+  function isValidRegion(v: string): boolean {
+    if (!v) return true;
+    if (!knownLocations) return true;
+    return knownRegionsSet.has(v);
+  }
 
   // UYSD submission state (in-memory only — no credentials persisted)
   let uysdSession = $state<string | null>(null);
@@ -318,7 +347,9 @@
     activeTreeTab = 0;
     selectedSample = null;
     sampleMetaMap = {};
-    countryOpen = false;
+    submitPanelOpen = false;
+    selectedSamples = new SvelteSet();
+    applyValues = { country: "", region: "", comment: "", publication: "" };
     submitPhase = "idle";
     submitError = null;
     submitResultUrl = null;
@@ -362,6 +393,53 @@
     await invoke("upsert_sample_meta", {
       meta: { job_id: selectedJob.id, sample_name: name, country: m.country, region: m.region, comment: m.comment, publication: m.publication, updated_ts: Math.floor(Date.now() / 1000) }
     });
+  }
+
+  async function openSubmitPanel() {
+    if (!selectedJob) return;
+    if (sampleNames.length > 0 && !sampleMetaMap[sampleNames[0]]) {
+      await loadSampleMeta(selectedJob.id);
+    }
+    // Reset state, select all samples by default
+    submitPhase = "idle";
+    submitError = null;
+    submitResultUrl = null;
+    selectedSamples = new SvelteSet(sampleNames);
+    applyValues = { country: "", region: "", comment: "", publication: "" };
+    submitPanelOpen = true;
+    // Fetch UYSD's accepted name list (async; non-blocking — datalists populate when ready).
+    ensureKnownLocations();
+  }
+
+  function closeSubmitPanel() {
+    submitPanelOpen = false;
+    submitPhase = "idle";
+    submitError = null;
+    loginPass = "";
+  }
+
+  function toggleSelectAll() {
+    if (selectedSamples.size === sampleNames.length) {
+      selectedSamples = new SvelteSet();
+    } else {
+      selectedSamples = new SvelteSet(sampleNames);
+    }
+  }
+
+  async function applyToSelected() {
+    if (!applyPubValid) return;
+    for (const name of selectedSamples) {
+      const prev = sampleMetaMap[name] ?? { country: "", region: "", comment: "", publication: "", pubValid: true };
+      sampleMetaMap[name] = {
+        country: applyValues.country,
+        region: applyValues.region,
+        comment: applyValues.comment,
+        publication: applyValues.publication,
+        pubValid: isPubValid(applyValues.publication),
+      };
+      await saveMeta(name);
+      void prev;
+    }
   }
 
   function exportCountryCsv() {
@@ -1238,58 +1316,142 @@
             </div>
           {/if}
 
-          <!-- Country data for UYSD submission -->
+          <!-- Submit to UYSD -->
           <div class="border-t pt-4 border-slate-200 dark:border-well">
-            <button
-              onclick={() => { countryOpen = !countryOpen; if (countryOpen && sampleNames.length > 0 && !sampleMetaMap[sampleNames[0]]) loadSampleMeta(selectedJob!.id); }}
-              class="flex items-center gap-2 w-full text-left cursor-pointer">
-              <span class="text-[0.65rem] font-semibold uppercase tracking-widest text-slate-400 dark:text-muted">
-                Country data for UYSD
-              </span>
-              <span class="text-[0.65rem] text-slate-400 dark:text-muted">{countryOpen ? "▲" : "▼"}</span>
-            </button>
-            {#if countryOpen}
-              <div class="mt-3 flex flex-col gap-2">
-                {#each sampleNames as name}
-                  {@const m = sampleMetaMap[name] ?? { country: "", region: "", comment: "", publication: "", pubValid: true }}
-                  <div class="rounded-lg border p-3 flex flex-col gap-2 bg-slate-50 border-slate-200 dark:bg-void dark:border-well">
-                    <span class="text-[0.72rem] font-semibold text-slate-700 dark:text-pale">{name}</span>
-                    <div class="grid grid-cols-2 gap-2">
-                      <input
-                        type="text" placeholder="Country" value={m.country}
-                        oninput={(e) => { sampleMetaMap[name] = {...m, country: (e.target as HTMLInputElement).value}; }}
-                        onblur={() => saveMeta(name)}
-                        class="rounded-md border px-2 py-1 text-[0.75rem] outline-none
-                               bg-white border-slate-300 text-slate-800 dark:bg-panel dark:border-rim dark:text-pale" />
-                      <input
-                        type="text" placeholder="Region (optional)" value={m.region}
-                        oninput={(e) => { sampleMetaMap[name] = {...m, region: (e.target as HTMLInputElement).value}; }}
-                        onblur={() => saveMeta(name)}
-                        class="rounded-md border px-2 py-1 text-[0.75rem] outline-none
-                               bg-white border-slate-300 text-slate-800 dark:bg-panel dark:border-rim dark:text-pale" />
-                      <input
-                        type="text" placeholder="Comment (optional)" value={m.comment}
-                        oninput={(e) => { sampleMetaMap[name] = {...m, comment: (e.target as HTMLInputElement).value}; }}
-                        onblur={() => saveMeta(name)}
-                        class="rounded-md border px-2 py-1 text-[0.75rem] outline-none
-                               bg-white border-slate-300 text-slate-800 dark:bg-panel dark:border-rim dark:text-pale" />
-                      <input
-                        type="text" placeholder="Publication URL (optional)" value={m.publication}
-                        oninput={(e) => {
-                          const v = (e.target as HTMLInputElement).value;
-                          sampleMetaMap[name] = {...m, publication: v, pubValid: isPubValid(v)};
-                        }}
-                        onblur={() => saveMeta(name)}
-                        class="rounded-md border px-2 py-1 text-[0.75rem] outline-none
-                               {m.pubValid ? 'border-slate-300 dark:border-rim' : 'border-red-400 dark:border-red-600'}
-                               bg-white text-slate-800 dark:bg-panel dark:text-pale" />
-                    </div>
-                    {#if !m.pubValid}
-                      <span class="text-[0.68rem] text-red-500">Publication must be a valid URL (e.g. https://doi.org/…)</span>
-                    {/if}
+            {#if !submitPanelOpen}
+              <button
+                onclick={openSubmitPanel}
+                disabled={sampleNames.length === 0}
+                class="px-3 py-1.5 rounded-md text-[0.75rem] font-medium cursor-pointer transition-colors
+                       bg-green-600 text-white hover:bg-green-700 disabled:opacity-40 disabled:cursor-not-allowed
+                       dark:bg-green-700 dark:hover:bg-green-600">
+                Submit to UYSD ↗
+              </button>
+            {:else}
+              <div class="rounded-lg border p-3 flex flex-col gap-3
+                          bg-slate-50 border-slate-200 dark:bg-void dark:border-well">
+                <div class="flex items-center justify-between">
+                  <span class="text-[0.78rem] font-semibold text-slate-700 dark:text-pale">
+                    Submit {sampleNames.length} sample{sampleNames.length === 1 ? "" : "s"} to Y-SNP Database
+                  </span>
+                  <button onclick={closeSubmitPanel}
+                    title="Close"
+                    class="text-[0.7rem] text-slate-500 hover:text-slate-700 dark:text-muted dark:hover:text-pale cursor-pointer bg-transparent border-none px-1">
+                    ✕
+                  </button>
+                </div>
+
+                <!-- Apply common values to selected -->
+                <div class="rounded-md border p-2 bg-white border-slate-200 dark:bg-panel dark:border-rim flex flex-col gap-2">
+                  <span class="text-[0.68rem] uppercase tracking-widest text-slate-400 dark:text-muted">
+                    Apply common values to selected
+                  </span>
+                  <div class="grid grid-cols-2 gap-2">
+                    <input type="text" placeholder="Country" list="uysd-countries" bind:value={applyValues.country}
+                      class="rounded-md border px-2 py-1 text-[0.75rem] outline-none
+                             {isValidCountry(applyValues.country) ? 'border-slate-300 dark:border-rim' : 'border-red-400 dark:border-red-600'}
+                             bg-white text-slate-800 dark:bg-well dark:text-pale" />
+                    <input type="text" placeholder="Region (optional)" list="uysd-regions" bind:value={applyValues.region}
+                      class="rounded-md border px-2 py-1 text-[0.75rem] outline-none
+                             {isValidRegion(applyValues.region) ? 'border-slate-300 dark:border-rim' : 'border-red-400 dark:border-red-600'}
+                             bg-white text-slate-800 dark:bg-well dark:text-pale" />
+                    <input type="text" placeholder="Comment (optional)" bind:value={applyValues.comment}
+                      class="rounded-md border px-2 py-1 text-[0.75rem] outline-none
+                             bg-white border-slate-300 text-slate-800 dark:bg-well dark:border-rim dark:text-pale" />
+                    <input type="text" placeholder="Publication URL (optional)" bind:value={applyValues.publication}
+                      class="rounded-md border px-2 py-1 text-[0.75rem] outline-none
+                             {applyPubValid ? 'border-slate-300 dark:border-rim' : 'border-red-400 dark:border-red-600'}
+                             bg-white text-slate-800 dark:bg-well dark:text-pale" />
                   </div>
-                {/each}
-                <div class="flex gap-2 flex-wrap mt-1">
+                  {#if !applyPubValid}
+                    <span class="text-[0.68rem] text-red-500">Publication must be a valid URL (e.g. https://doi.org/…)</span>
+                  {/if}
+                  {#if applyValues.country && !isValidCountry(applyValues.country)}
+                    <span class="text-[0.68rem] text-red-500">Country not in UYSD's accepted list.</span>
+                  {/if}
+                  {#if applyValues.region && !isValidRegion(applyValues.region)}
+                    <span class="text-[0.68rem] text-red-500">Region not in UYSD's accepted list.</span>
+                  {/if}
+                  <button
+                    onclick={applyToSelected}
+                    disabled={!applyPubValid || selectedSamples.size === 0}
+                    class="self-start px-3 py-1 rounded-md text-[0.73rem] font-medium cursor-pointer transition-colors
+                           bg-sky-600 text-white hover:bg-sky-700 disabled:opacity-40 disabled:cursor-not-allowed
+                           dark:bg-teal/80 dark:hover:bg-teal">
+                    Apply to {selectedSamples.size} selected
+                  </button>
+                </div>
+
+                <!-- Per-sample rows -->
+                <div class="flex flex-col gap-2">
+                  <button
+                    onclick={toggleSelectAll}
+                    class="self-start text-[0.7rem] underline text-sky-600 dark:text-teal cursor-pointer bg-transparent border-none p-0">
+                    {selectedSamples.size === sampleNames.length ? "Deselect all" : "Select all"}
+                  </button>
+                  {#each sampleNames as name}
+                    {@const m = sampleMetaMap[name] ?? { country: "", region: "", comment: "", publication: "", pubValid: true }}
+                    {@const checked = selectedSamples.has(name)}
+                    <div class="rounded-md border p-2 flex flex-col gap-2
+                                {checked ? 'bg-white border-slate-300 dark:bg-panel dark:border-rim'
+                                         : 'bg-slate-100 border-slate-200 opacity-60 dark:bg-void dark:border-well'}">
+                      <label class="flex items-center gap-2 cursor-pointer">
+                        <input type="checkbox" checked={checked}
+                          onchange={(e) => {
+                            if ((e.target as HTMLInputElement).checked) selectedSamples.add(name);
+                            else selectedSamples.delete(name);
+                          }} />
+                        <span class="text-[0.72rem] font-semibold text-slate-700 dark:text-pale">{name}</span>
+                      </label>
+                      <div class="grid grid-cols-2 gap-2">
+                        <input type="text" placeholder="Country" list="uysd-countries" value={m.country}
+                          oninput={(e) => { sampleMetaMap[name] = {...m, country: (e.target as HTMLInputElement).value}; }}
+                          onblur={() => saveMeta(name)}
+                          class="rounded-md border px-2 py-1 text-[0.75rem] outline-none
+                                 {isValidCountry(m.country) ? 'border-slate-300 dark:border-rim' : 'border-red-400 dark:border-red-600'}
+                                 bg-white text-slate-800 dark:bg-well dark:text-pale" />
+                        <input type="text" placeholder="Region (optional)" list="uysd-regions" value={m.region}
+                          oninput={(e) => { sampleMetaMap[name] = {...m, region: (e.target as HTMLInputElement).value}; }}
+                          onblur={() => saveMeta(name)}
+                          class="rounded-md border px-2 py-1 text-[0.75rem] outline-none
+                                 {isValidRegion(m.region) ? 'border-slate-300 dark:border-rim' : 'border-red-400 dark:border-red-600'}
+                                 bg-white text-slate-800 dark:bg-well dark:text-pale" />
+                        <input type="text" placeholder="Comment (optional)" value={m.comment}
+                          oninput={(e) => { sampleMetaMap[name] = {...m, comment: (e.target as HTMLInputElement).value}; }}
+                          onblur={() => saveMeta(name)}
+                          class="rounded-md border px-2 py-1 text-[0.75rem] outline-none
+                                 bg-white border-slate-300 text-slate-800 dark:bg-well dark:border-rim dark:text-pale" />
+                        <input type="text" placeholder="Publication URL (optional)" value={m.publication}
+                          oninput={(e) => {
+                            const v = (e.target as HTMLInputElement).value;
+                            sampleMetaMap[name] = {...m, publication: v, pubValid: isPubValid(v)};
+                          }}
+                          onblur={() => saveMeta(name)}
+                          class="rounded-md border px-2 py-1 text-[0.75rem] outline-none
+                                 {m.pubValid ? 'border-slate-300 dark:border-rim' : 'border-red-400 dark:border-red-600'}
+                                 bg-white text-slate-800 dark:bg-well dark:text-pale" />
+                      </div>
+                      {#if !m.pubValid}
+                        <span class="text-[0.68rem] text-red-500">Publication must be a valid URL</span>
+                      {/if}
+                      {#if m.country && !isValidCountry(m.country)}
+                        <span class="text-[0.68rem] text-red-500">Country not in UYSD's accepted list.</span>
+                      {/if}
+                      {#if m.region && !isValidRegion(m.region)}
+                        <span class="text-[0.68rem] text-red-500">Region not in UYSD's accepted list.</span>
+                      {/if}
+                    </div>
+                  {/each}
+                </div>
+
+                <!-- Action buttons -->
+                <div class="flex gap-2 flex-wrap">
+                  <button onclick={closeSubmitPanel}
+                    class="px-3 py-1.5 rounded-md text-[0.75rem] font-medium cursor-pointer transition-colors
+                           bg-slate-200 text-slate-700 hover:bg-slate-300
+                           dark:bg-well dark:text-pale dark:hover:bg-rim">
+                    Cancel
+                  </button>
                   <button
                     onclick={exportCountryCsv}
                     disabled={sampleNames.some(n => !(sampleMetaMap[n]?.pubValid ?? true))}
@@ -1300,7 +1462,10 @@
                   </button>
                   <button
                     onclick={startSubmit}
-                    disabled={submitPhase === "submitting" || submitPhase === "polling" || submitPhase === "logging_in" || sampleNames.some(n => !(sampleMetaMap[n]?.pubValid ?? true))}
+                    disabled={submitPhase === "submitting" || submitPhase === "polling" || submitPhase === "logging_in"
+                              || sampleNames.some(n => !(sampleMetaMap[n]?.pubValid ?? true))
+                              || sampleNames.some(n => !isValidCountry(sampleMetaMap[n]?.country ?? ""))
+                              || sampleNames.some(n => !isValidRegion(sampleMetaMap[n]?.region ?? ""))}
                     class="px-3 py-1.5 rounded-md text-[0.75rem] font-medium cursor-pointer transition-colors
                            bg-green-600 text-white hover:bg-green-700 disabled:opacity-40 disabled:cursor-not-allowed
                            dark:bg-green-700 dark:hover:bg-green-600">
@@ -1308,10 +1473,27 @@
                   </button>
                 </div>
 
+                <!-- Datalists for browser-native autocomplete -->
+                <datalist id="uysd-countries">
+                  {#each (knownLocations?.countries ?? []) as c}
+                    <option value={c}></option>
+                  {/each}
+                </datalist>
+                <datalist id="uysd-regions">
+                  {#each (knownLocations?.regions ?? []) as r}
+                    <option value={r}></option>
+                  {/each}
+                </datalist>
+
                 <!-- Login dialog -->
                 {#if submitPhase === "login" || submitPhase === "logging_in"}
-                  <div class="mt-2 rounded-lg border p-3 flex flex-col gap-2 bg-white border-slate-300 dark:bg-panel dark:border-rim">
+                  <div class="rounded-lg border p-3 flex flex-col gap-2 bg-white border-slate-300 dark:bg-panel dark:border-rim">
                     <span class="text-[0.72rem] font-semibold text-slate-700 dark:text-pale">UYSD login</span>
+                    {#if submitError}
+                      <div class="rounded-md border px-2 py-1 bg-red-50 border-red-300 dark:bg-red-900/20 dark:border-red-700">
+                        <span class="text-[0.7rem] text-red-600 dark:text-red-400">{submitError}</span>
+                      </div>
+                    {/if}
                     <input type="text" placeholder="Username" bind:value={loginUser}
                       class="rounded-md border px-2 py-1 text-[0.75rem] outline-none bg-white border-slate-300 text-slate-800 dark:bg-well dark:border-rim dark:text-pale" />
                     <input type="password" placeholder="Password" bind:value={loginPass}
@@ -1322,7 +1504,7 @@
                         class="px-3 py-1 rounded-md text-[0.73rem] font-medium bg-green-600 text-white hover:bg-green-700 disabled:opacity-40 cursor-pointer transition-colors">
                         {submitPhase === "logging_in" ? "Logging in…" : "Log in & submit"}
                       </button>
-                      <button onclick={() => { submitPhase = "idle"; loginPass = ""; }}
+                      <button onclick={() => { submitPhase = "idle"; loginPass = ""; submitError = null; }}
                         class="px-3 py-1 rounded-md text-[0.73rem] font-medium bg-slate-200 text-slate-700 hover:bg-slate-300 cursor-pointer dark:bg-well dark:text-pale dark:hover:bg-rim transition-colors">
                         Cancel
                       </button>
@@ -1332,7 +1514,7 @@
 
                 <!-- Submission result -->
                 {#if submitPhase === "done" && submitResultUrl}
-                  <div class="mt-2 rounded-lg border p-3 bg-green-50 border-green-300 dark:bg-green-900/20 dark:border-green-700">
+                  <div class="rounded-lg border p-3 bg-green-50 border-green-300 dark:bg-green-900/20 dark:border-green-700">
                     <span class="text-[0.72rem] font-semibold text-green-700 dark:text-green-400">Submission accepted!</span>
                     <button onclick={() => openUrl(submitResultUrl!)}
                       class="mt-1 block text-[0.7rem] text-sky-600 dark:text-teal underline cursor-pointer bg-transparent border-none p-0">
@@ -1340,8 +1522,8 @@
                     </button>
                   </div>
                 {/if}
-                {#if (submitPhase === "error") && submitError}
-                  <div class="mt-2 rounded-lg border p-3 bg-red-50 border-red-300 dark:bg-red-900/20 dark:border-red-700">
+                {#if submitPhase === "error" && submitError}
+                  <div class="rounded-lg border p-3 bg-red-50 border-red-300 dark:bg-red-900/20 dark:border-red-700">
                     <span class="text-[0.72rem] text-red-600 dark:text-red-400">{submitError}</span>
                   </div>
                 {/if}

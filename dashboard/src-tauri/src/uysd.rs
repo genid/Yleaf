@@ -2,6 +2,7 @@ use std::fs::File;
 use std::io::Write;
 use std::path::PathBuf;
 
+use reqwest::cookie::CookieStore;
 use tauri::{command, AppHandle, Manager, State, WebviewUrl, WebviewWindowBuilder};
 
 use crate::{db::SampleMeta, DbState};
@@ -66,25 +67,28 @@ const UYSD_BASE: &str = "https://ysnp.erasmusmc.nl";
 /// that the frontend passes back to submit/poll, or an error message.
 #[command]
 pub async fn uysd_login(username: String, password: String) -> Result<String, String> {
+    // Explicit cookie jar so we can read cookies set during the redirect chain
+    // (sessionid is set on the 302 after login; reqwest::Response::cookies() on
+    // the final landing page returns nothing useful).
+    let jar = std::sync::Arc::new(reqwest::cookie::Jar::default());
     let client = reqwest::Client::builder()
-        .cookie_store(true)
+        .cookie_provider(jar.clone())
         .use_rustls_tls()
         .build()
         .map_err(|e| e.to_string())?;
 
-    // GET /login/ — grab csrftoken from Set-Cookie and csrfmiddlewaretoken from form
+    let base = reqwest::Url::parse(UYSD_BASE).map_err(|e| e.to_string())?;
     let login_url = format!("{}/login/", UYSD_BASE);
+
+    // GET /login/ — sets csrftoken cookie in the jar; we also need the form's
+    // csrfmiddlewaretoken value (Django checks both).
     let get_resp = client.get(&login_url).send().await.map_err(|e| e.to_string())?;
-    let csrf_cookie = get_resp
-        .cookies()
-        .find(|c| c.name() == "csrftoken")
-        .map(|c| c.value().to_string())
-        .unwrap_or_default();
     let body = get_resp.text().await.map_err(|e| e.to_string())?;
-    let csrf_token = extract_csrf_token(&body).unwrap_or_else(|| csrf_cookie.clone());
+    let csrf_token = extract_csrf_token(&body)
+        .ok_or_else(|| "Could not find csrfmiddlewaretoken on /login/ page".to_string())?;
 
     // POST /login/
-    let post_resp = client
+    let _post_resp = client
         .post(&login_url)
         .header("Referer", &login_url)
         .form(&[
@@ -96,17 +100,13 @@ pub async fn uysd_login(username: String, password: String) -> Result<String, St
         .await
         .map_err(|e| e.to_string())?;
 
-    // Success = redirect to /account/
-    if post_resp.url().path().contains("account") || post_resp.status().is_success() {
-        // Collect session cookies into a compact token string for the frontend
-        let session = post_resp
-            .cookies()
-            .map(|c| format!("{}={}", c.name(), c.value()))
-            .collect::<Vec<_>>()
-            .join(";");
-        if session.contains("sessionid") {
-            return Ok(session);
-        }
+    // Authoritative signal: sessionid present in the jar for this domain.
+    let session = jar
+        .cookies(&base)
+        .map(|h| h.to_str().unwrap_or("").to_string())
+        .unwrap_or_default();
+    if session.contains("sessionid") {
+        return Ok(session);
     }
     Err("Invalid credentials or login failed".into())
 }
@@ -223,6 +223,33 @@ pub struct UysdMapUrls {
     pub full_url: String,
     /// Minimal-layout URL used as the iframe preview src.
     pub embed_url: String,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct KnownLocations {
+    pub countries: Vec<String>,
+    pub regions: Vec<String>,
+}
+
+/// Fetch the list of country/region names UYSD accepts for submission.
+/// Caching is handled on the frontend (one fetch per session is enough; the
+/// list rarely changes and UYSD ships a `Cache-Control: max-age=86400` header).
+#[command]
+pub async fn uysd_get_known_locations() -> Result<KnownLocations, String> {
+    let client = reqwest::Client::builder()
+        .use_rustls_tls()
+        .build()
+        .map_err(|e| e.to_string())?;
+    let resp = client
+        .get(format!("{UYSD_BASE}/api/known_locations/"))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        return Err(format!("UYSD returned HTTP {} for /api/known_locations/", resp.status()));
+    }
+    let body = resp.text().await.map_err(|e| e.to_string())?;
+    serde_json::from_str::<KnownLocations>(&body).map_err(|e| e.to_string())
 }
 
 /// Resolve which UYSD haplogroup-map URL to load.  Tries the full wildcard form
