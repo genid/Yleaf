@@ -195,13 +195,22 @@ pub async fn uysd_poll_result(
     }
 
     // Explicit failure messages observed in UYSD's submission_result page.
-    if body.contains("Server failure")
-        || body.contains("Server encountered an error")
-        || body.contains("could not be processed")
-    {
-        // Try to extract the human message inside the result-card area.
+    // Includes both 500-class server failures and per-row validation errors
+    // (which UYSD renders on the same /submission_result/<id>/ page).
+    let failure_markers = [
+        "Server failure",
+        "Server encountered an error",
+        "could not be processed",
+        "Invalid publication",
+        "Missing country data",
+        "Missing region data",
+        "Issue at line",
+        "errorlist",
+        "alert-danger",
+    ];
+    if failure_markers.iter().any(|m| body.contains(m)) {
         let msg = extract_failure_message(&body)
-            .unwrap_or_else(|| "Server failure — UYSD reports the submission could not be processed.".to_string());
+            .unwrap_or_else(|| "UYSD reports the submission could not be processed.".to_string());
         return Err(msg);
     }
 

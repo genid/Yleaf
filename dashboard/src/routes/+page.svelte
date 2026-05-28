@@ -468,6 +468,14 @@
   }
 
   async function startSubmit() {
+    // If the "Apply" row has any non-empty field and samples are selected,
+    // treat that as an implicit apply — otherwise users who fill the apply
+    // row and click Submit straight away end up sending empty metadata.
+    const hasApplyData =
+      applyValues.country || applyValues.region || applyValues.comment || applyValues.publication;
+    if (hasApplyData && selectedSamples.size > 0 && applyPubValid) {
+      await applyToSelected();
+    }
     if (!uysdSession) { submitPhase = "login"; return; }
     await doSubmit(uysdSession);
   }
