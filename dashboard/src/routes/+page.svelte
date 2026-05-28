@@ -383,7 +383,17 @@
 
   function isPubValid(v: string): boolean {
     if (!v) return true;
-    try { new URL(v); return true; } catch { return false; }
+    try {
+      const u = new URL(v);
+      // Require http/https and a real hostname with a dot.  Catches half-typed
+      // URLs like "http:www.example.com" that `new URL` would otherwise accept
+      // (it treats `http:` as scheme + opaque path).
+      return (u.protocol === "http:" || u.protocol === "https:")
+        && !!u.hostname
+        && u.hostname.includes(".");
+    } catch {
+      return false;
+    }
   }
 
   async function saveMeta(name: string) {
@@ -499,13 +509,28 @@
   }
 
   async function pollResult(url: string) {
+    if (!uysdSession) {
+      submitError = "Lost UYSD session before polling result.";
+      submitPhase = "error";
+      return;
+    }
     let attempts = 0;
     while (attempts < 60) {
       await new Promise(r => setTimeout(r, 5000));
       try {
-        const r = await invoke<string>("uysd_poll_result", { resultUrl: url });
-        if (r.startsWith("ok:")) { submitPhase = "done"; return; }
-      } catch { /* keep polling */ }
+        const r = await invoke<string>("uysd_poll_result", {
+          resultUrl: url,
+          sessionToken: uysdSession,
+        });
+        if (r === "ok") { submitPhase = "done"; return; }
+        // Anything else (e.g. "pending") — keep polling.
+      } catch (e) {
+        // Rust returns Err(...) for auth failure, server failure, or other
+        // explicit rejection — surface the message and stop polling.
+        submitError = String(e);
+        submitPhase = "error";
+        return;
+      }
       attempts++;
     }
     submitError = "Timed out waiting for UYSD result.";

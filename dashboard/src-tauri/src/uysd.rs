@@ -161,19 +161,117 @@ pub async fn uysd_submit(
     Err(format!("Submission failed — landed at: {final_url}"))
 }
 
-/// Poll a submission_result URL. Returns "pending", "ok:<html>", or "error:<msg>".
+/// Poll a submission_result URL using the authenticated session.
+///
+/// Returns:
+///   Ok("pending")          — submission is still being processed.
+///   Ok("ok")               — submission succeeded and is in the database.
+///   Err("<message>")       — submission failed (auth, server, validation) — message is the reason.
+///
+/// Note: the result page requires authentication.  Without the session cookie
+/// UYSD redirects to its login page, which historically caused the poller to
+/// misclassify every submission as success.  Always pass the same session
+/// token that uysd_login returned.
 #[command]
-pub async fn uysd_poll_result(result_url: String) -> Result<String, String> {
+pub async fn uysd_poll_result(
+    result_url: String,
+    session_token: String,
+) -> Result<String, String> {
     let client = reqwest::Client::builder()
         .use_rustls_tls()
         .build()
         .map_err(|e| e.to_string())?;
-    let resp = client.get(&result_url).send().await.map_err(|e| e.to_string())?;
+    let resp = client
+        .get(&result_url)
+        .header("Cookie", &session_token)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
     let body = resp.text().await.map_err(|e| e.to_string())?;
+
+    // Authentication was rejected — UYSD redirected us to the login page.
+    if body.contains("<h1>Login</h1>") || body.contains("\"id_username\"") {
+        return Err("Session expired or not authenticated. Please log in again.".into());
+    }
+
+    // Explicit failure messages observed in UYSD's submission_result page.
+    if body.contains("Server failure")
+        || body.contains("Server encountered an error")
+        || body.contains("could not be processed")
+    {
+        // Try to extract the human message inside the result-card area.
+        let msg = extract_failure_message(&body)
+            .unwrap_or_else(|| "Server failure — UYSD reports the submission could not be processed.".to_string());
+        return Err(msg);
+    }
+
+    // Still processing.
     if body.contains("pending") || body.contains("Processing") {
         return Ok("pending".into());
     }
-    Ok(format!("ok:{body}"))
+
+    // Any other shape we treat as success.  TODO: once UYSD exposes a
+    // machine-readable `data-status` / status JSON, switch to that.
+    Ok("ok".into())
+}
+
+fn extract_failure_message(html: &str) -> Option<String> {
+    // Look for the first heading + paragraph in the content area.
+    // Typical shape: <h2>Server failure</h2><p>… message …</p>
+    let re_blocks = regex_lite_extract(html, "<h[1-6][^>]*>", "</h");
+    let title = re_blocks.first().cloned();
+    let para = regex_lite_extract(html, "<p[^>]*>", "</p>")
+        .into_iter()
+        .find(|p| {
+            let s = p.to_lowercase();
+            s.contains("server") || s.contains("error") || s.contains("could not") || s.contains("inconvenience")
+        });
+    match (title, para) {
+        (Some(t), Some(p)) => Some(format!("{t} — {p}")),
+        (Some(t), None) => Some(t),
+        (None, Some(p)) => Some(p),
+        _ => None,
+    }
+}
+
+/// Very small "extract text between known delimiters" helper — avoids pulling
+/// in a full regex crate for one-off content scraping.  Returns the texts
+/// between consecutive matches of `open` and `close`, with HTML tags stripped.
+fn regex_lite_extract(html: &str, open: &str, close: &str) -> Vec<String> {
+    // open is something like "<h2>" with a wildcard for attributes — we just
+    // anchor on the first 3 chars ("<h2", "<p")
+    let anchor = &open[..open.len().min(3)];
+    let mut out = Vec::new();
+    let mut cur = html;
+    while let Some(start) = cur.find(anchor) {
+        // skip until '>'
+        let after_tag = match cur[start..].find('>') {
+            Some(p) => start + p + 1,
+            None => break,
+        };
+        let end_close = match cur[after_tag..].find(close) {
+            Some(p) => after_tag + p,
+            None => break,
+        };
+        let raw = &cur[after_tag..end_close];
+        // strip nested tags
+        let mut text = String::new();
+        let mut in_tag = false;
+        for c in raw.chars() {
+            match c {
+                '<' => in_tag = true,
+                '>' => in_tag = false,
+                _ if !in_tag => text.push(c),
+                _ => {}
+            }
+        }
+        let text = text.trim().to_string();
+        if !text.is_empty() {
+            out.push(text);
+        }
+        cur = &cur[end_close + close.len()..];
+    }
+    out
 }
 
 fn base_haplogroup(hg: &str) -> &str {
@@ -331,6 +429,13 @@ pub fn build_country_csv(rows: Vec<CsvRow>) -> Result<String, String> {
 
 /// Zip every <sample>/<sample>.out and hg_prediction*.hg under output_dir.
 /// Returns the path to the created archive.
+/// Build the submission zip in the legacy single-database shape that UYSD's
+/// pipeline expects:  one `hg_prediction.hg` and one `<sample>/<sample>.out`.
+///
+/// Yleaf v4 multi-database runs produce per-tree files (`hg_prediction_<tree>.hg`,
+/// `<sample>.<tree>.out`) plus a combined `hg_prediction_combined.hg` with 13
+/// columns — none of which UYSD knows how to parse.  UYSD's haplogroup map
+/// is YFull-only anyway, so we pick yfull and rename to the legacy shape.
 #[command]
 pub fn build_yleaf_zip(output_dir: String) -> Result<String, String> {
     let base = PathBuf::from(&output_dir);
@@ -340,19 +445,31 @@ pub fn build_yleaf_zip(output_dir: String) -> Result<String, String> {
     let options = zip::write::SimpleFileOptions::default()
         .compression_method(zip::CompressionMethod::Deflated);
 
-    // hg_prediction*.hg files at root of output_dir
+    // Pick exactly one .hg file at the root: prefer hg_prediction_yfull.hg
+    // (v4 multi-tree), fall back to hg_prediction.hg (v3 / single-tree yfull),
+    // and rename either to `hg_prediction.hg` in the zip.
+    let mut chose_hg: Option<PathBuf> = None;
+    let mut fallback_hg: Option<PathBuf> = None;
     for entry in std::fs::read_dir(&base).map_err(|e| e.to_string())? {
         let entry = entry.map_err(|e| e.to_string())?;
         let name = entry.file_name();
-        let name_str = name.to_string_lossy();
-        if name_str.starts_with("hg_prediction") && name_str.ends_with(".hg") {
-            zip.start_file(name_str.as_ref(), options).map_err(|e| e.to_string())?;
-            let data = std::fs::read(entry.path()).map_err(|e| e.to_string())?;
-            zip.write_all(&data).map_err(|e| e.to_string())?;
+        let n = name.to_string_lossy();
+        if n == "hg_prediction_yfull.hg" {
+            chose_hg = Some(entry.path());
+            break;
+        }
+        if n == "hg_prediction.hg" {
+            fallback_hg = Some(entry.path());
         }
     }
+    let hg_src = chose_hg.or(fallback_hg)
+        .ok_or_else(|| "No yfull hg_prediction file found in output dir".to_string())?;
+    zip.start_file("hg_prediction.hg", options).map_err(|e| e.to_string())?;
+    let data = std::fs::read(&hg_src).map_err(|e| e.to_string())?;
+    zip.write_all(&data).map_err(|e| e.to_string())?;
 
-    // <sample>/<sample>.out files in subdirs
+    // For each sample subdir, pick one .out: prefer <sample>.yfull.out,
+    // fall back to <sample>.out, and store it as `<sample>/<sample>.out`.
     for entry in std::fs::read_dir(&base).map_err(|e| e.to_string())? {
         let entry = entry.map_err(|e| e.to_string())?;
         if !entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
@@ -360,18 +477,22 @@ pub fn build_yleaf_zip(output_dir: String) -> Result<String, String> {
         }
         let sample_dir = entry.path();
         let sample_name = entry.file_name();
-        let sample_str = sample_name.to_string_lossy();
-        for inner in std::fs::read_dir(&sample_dir).map_err(|e| e.to_string())? {
-            let inner = inner.map_err(|e| e.to_string())?;
-            let iname = inner.file_name();
-            let istr = iname.to_string_lossy();
-            if istr.ends_with(".out") {
-                let zip_entry = format!("{}/{}", sample_str, istr);
-                zip.start_file(&zip_entry, options).map_err(|e| e.to_string())?;
-                let data = std::fs::read(inner.path()).map_err(|e| e.to_string())?;
-                zip.write_all(&data).map_err(|e| e.to_string())?;
-            }
-        }
+        let sample_str = sample_name.to_string_lossy().into_owned();
+
+        let yfull_out = sample_dir.join(format!("{sample_str}.yfull.out"));
+        let plain_out = sample_dir.join(format!("{sample_str}.out"));
+        let src = if yfull_out.exists() {
+            yfull_out
+        } else if plain_out.exists() {
+            plain_out
+        } else {
+            continue; // sample without a usable yfull/plain .out — skip
+        };
+
+        let zip_entry = format!("{sample_str}/{sample_str}.out");
+        zip.start_file(&zip_entry, options).map_err(|e| e.to_string())?;
+        let data = std::fs::read(&src).map_err(|e| e.to_string())?;
+        zip.write_all(&data).map_err(|e| e.to_string())?;
     }
 
     zip.finish().map_err(|e| e.to_string())?;
