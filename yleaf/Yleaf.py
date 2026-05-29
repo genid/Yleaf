@@ -215,6 +215,10 @@ def run_vcf(
 
         pileupfile.columns = ['chr', 'pos', 'refbase', 'altbase', 'reads']
         pileupfile['pos'] = pileupfile['pos'].astype(int)
+        # Defensively dedupe by position: if the input VCF (or the BED used to
+        # filter it) has duplicates, every downstream count gets inflated and
+        # the QC score collapses to NA.  Keep the first occurrence per pos.
+        pileupfile = pileupfile.drop_duplicates(subset='pos', keep='first').reset_index(drop=True)
         pileupfile['altbase'] = pileupfile['altbase'].str.split(',')
         pileupfile['reads'] = pileupfile['reads'].str.split(',')
         pileupfile['ref_reads'] = pileupfile['reads'].apply(lambda x: x[0])
@@ -256,6 +260,8 @@ def run_vcf(
 
         pileupfile.columns = ['chr', 'pos', 'refbase', 'altbase', 'gt']
         pileupfile['pos'] = pileupfile['pos'].astype(int)
+        # Same defensive dedup as the AD branch — see comment above.
+        pileupfile = pileupfile.drop_duplicates(subset='pos', keep='first').reset_index(drop=True)
         pileupfile['altbase'] = pileupfile['altbase'].str.split(',')
 
         def _gt_to_base(row):
@@ -343,6 +349,16 @@ def run_vcf(
     df_out = df_out[['chr', 'pos', 'marker_name', 'haplogroup', 'mutation', 'anc', 'der', 'reads',
                      'called_perc', 'called_base', 'state']]
 
+    # Reference-based ancestral inference (issue #39 fix).  VCFs normally only
+    # contain variant positions; for the other ~99% of YFull markers the
+    # sample matches the reference allele, so we can infer the state from
+    # chrY.fa without needing reads at that position.  Without this the
+    # prediction sees only the variant-position markers (a few hundred to a
+    # few thousand) and the QC score collapses to NA for real WGS inputs.
+    df_out, inferred_count = _infer_from_reference(
+        df_out, full_markerfile, intersect_pos, _WORKER_CHRY_SEQ
+    )
+
     general_info_list.append("Markers with zero reads: " + str(len(df_belowzero)))
     general_info_list.append(
         "Markers below the read threshold {" + str(reads_thresh) + "}: " + str(len(df_readsthreshold)))
@@ -351,6 +367,8 @@ def run_vcf(
     general_info_list.append("Markers with discordant genotype: " + str(len(df_discordantgenotype)))
     general_info_list.append("Markers without haplogroup information: " + str(len(df_fmf)))
     general_info_list.append("Markers with haplogroup information: " + str(len(df_out)))
+    if inferred_count:
+        general_info_list.append(f"  ↳ of which inferred from reference: {inferred_count}")
 
     write_info_file(sample_vcf_folder, general_info_list, suffix=f"{out_suffix}.info" if out_suffix else ".info")
 
@@ -701,12 +719,26 @@ def main_vcf_split(
         LOG.error("Multiple Y-chromosome annotations found in the vcf file. Exiting...")
         raise SystemExit("Multiple Y-chromosome annotations found in the vcf file.")
     else:
-        # make new position_bed_file with correct chrY annotation
+        # Make a per-job position BED with the VCF's chrY annotation, deduped
+        # by (chr, start, end).  The shipped marker BED lists multiple rows per
+        # position — one per haplogroup the SNP discriminates — which is fine
+        # for samtools mpileup but causes `bcftools view -R` to emit one VCF
+        # record *per matching BED interval*.  Position 12029066 (6 rows in
+        # the hg38 BED) ended up as 6 identical records in the filtered VCF
+        # and inflated the marker counts 6× in the .out file, breaking the
+        # QC math and producing NA predictions for high-coverage WGS inputs.
         new_position_bed_file = base_out_folder / f"{stem}_temp_position_bed.bed"
+        seen = set()
         with open(position_bed_file, "r") as f:
             with open(new_position_bed_file, "w") as f2:
                 for line in f:
                     line = line.replace("chry", chry[0]).replace("chrY", chry[0])
+                    parts = line.rstrip("\n").split("\t")
+                    if len(parts) >= 3:
+                        key = (parts[0], parts[1], parts[2])
+                        if key in seen:
+                            continue
+                        seen.add(key)
                     f2.write(line)
 
     # filter the vcf file using the reference bed file
