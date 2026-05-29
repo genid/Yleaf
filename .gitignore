@@ -13,3 +13,6 @@ yleaf/data/hg38/chrY.fa
 yleaf/data/hg19/chrY.fa
 male_pedigree_toolbox.egg-info/
 /venv/
+yleaf/data/t2t/full_reference.fa.gz
+yleaf/data/t2t/full_reference.fa
+yleaf/data/t2t/chrY.fa

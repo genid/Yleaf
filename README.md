@@ -12,26 +12,38 @@
 The easiest way to use Yleaf is through the graphical dashboard. Download the installer for your platform from the [releases page](https://github.com/genid/Yleaf/releases):
 
 **Windows**
-- Download `Yleaf.4.0_4.0.2_x64-setup.exe` (or `Yleaf.4.0_4.0.2_x64_en-US.msi`) and run the installer.
-- Launch **Yleaf 4.0** from the Start menu.
+- Download `Yleaf.4.1_4.1.0_x64-setup.exe` (or `Yleaf.4.1_4.1.0_x64_en-US.msi`) and run the installer.
+- Launch **Yleaf 4.1** from the Start menu.
 
 **macOS** (Apple Silicon)
-- Download `Yleaf.4.0_4.0.2_aarch64.dmg`, open it, and drag **Yleaf 4.0** to your Applications folder.
-- Open **Yleaf 4.0** from Applications.
+- Download `Yleaf.4.1_4.1.0_aarch64.dmg`, open it, and drag **Yleaf 4.1** to your Applications folder.
+- Open **Yleaf 4.1** from Applications.
 
-> **"Yleaf 4.0 is damaged and can't be opened" (Gatekeeper warning)**
+> **"Yleaf 4.1 is damaged and can't be opened" (Gatekeeper warning)**
 > macOS blocks apps that are not code-signed with a paid Apple Developer ID certificate.
 > To bypass this, run the following command in Terminal **before** opening the DMG:
 > ```bash
-> xattr -cr ~/Downloads/Yleaf.4.0_4.0.2_aarch64.dmg
+> xattr -cr ~/Downloads/Yleaf.4.1_4.1.0_aarch64.dmg
 > ```
 > Then open the DMG and drag the app to Applications. On the first launch you may need to right-click the app → **Open** instead of double-clicking.
 
 **Linux**
-- `.AppImage`: download `Yleaf.4.0_4.0.2_amd64.AppImage`, make it executable (`chmod +x`), and run directly.
-- `.deb`: install with `sudo dpkg -i Yleaf.4.0_4.0.2_amd64.deb` and launch from your application menu.
+- `.AppImage`: download `Yleaf.4.1_4.1.0_amd64.AppImage`, make it executable (`chmod +x`), and run directly.
+- `.deb`: install with `sudo dpkg -i Yleaf.4.1_4.1.0_amd64.deb` and launch from your application menu.
 
 No Python, samtools, or other tools need to be installed separately — everything is bundled.
+
+### UYSD (Y-SNP Database) integration
+
+Each yfull prediction in the result pane shows an embedded haplogroup-frequency
+world map sourced from the [Y-SNP Database](https://ysnp.erasmusmc.nl/).
+Click the preview to open the full map in your system browser.
+
+You can also contribute your own samples back to UYSD without leaving the
+dashboard: the **Submit to UYSD ↗** button opens a panel where you fill in
+country / region / publication metadata per sample (with autocompletion against
+UYSD's accepted name list and a CSV import/export for bulk editing), then
+submit directly.  Requires a UYSD account.
 
 ---
 
@@ -120,6 +132,15 @@ For BAM and CRAM files `-rg` is optional — Yleaf auto-detects the reference bu
 ### VCF input
 
     Yleaf -vcf variants.vcf.gz -o vcf_output --reference_genome hg38
+    Yleaf -vcf variants.vcf    -o vcf_output --reference_genome hg38  # plain .vcf also accepted (auto-bgzipped on intake)
+
+Yleaf accepts both bgzipped (`.vcf.gz`) and plain (`.vcf`) input.  Because a
+typical VCF only contains variant positions, the state of every other YFull
+marker is inferred from the reference genome's chrY sequence so the
+prediction quality matches BAM-mode runs.  VCFs from callers that include
+`FORMAT/AD` (DeepVariant, GATK HaplotypeCaller, `bcftools mpileup -a AD`)
+are preferred; GT-only VCFs are also supported with reduced read-depth
+information.
 
 ### PLINK / SNP-array
 
