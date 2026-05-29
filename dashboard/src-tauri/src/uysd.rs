@@ -365,35 +365,83 @@ pub async fn uysd_get_known_locations() -> Result<KnownLocations, String> {
     serde_json::from_str::<KnownLocations>(&body).map_err(|e| e.to_string())
 }
 
+// Cache TTL: UYSD's frequency data changes rarely.  30 days keeps the cache
+// fresh enough that genuinely new haplogroups get picked up reasonably soon
+// while making repeat clicks across sessions effectively instant.
+const MAP_CACHE_TTL_SECS: i64 = 30 * 24 * 60 * 60;
+
+fn map_cache_lookup(db: &State<DbState>, haplogroup: &str) -> Option<UysdMapUrls> {
+    let conn = db.0.lock().ok()?;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    conn.query_row(
+        "SELECT full_url, embed_url FROM uysd_map_cache
+         WHERE haplogroup = ?1 AND ?2 - ts < ?3",
+        rusqlite::params![haplogroup, now, MAP_CACHE_TTL_SECS],
+        |row| {
+            Ok(UysdMapUrls {
+                full_url: row.get(0)?,
+                embed_url: row.get(1)?,
+            })
+        },
+    )
+    .ok()
+}
+
+fn map_cache_store(db: &State<DbState>, haplogroup: &str, urls: &UysdMapUrls) {
+    let Ok(conn) = db.0.lock() else { return };
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let _ = conn.execute(
+        "INSERT INTO uysd_map_cache (haplogroup, full_url, embed_url, ts)
+         VALUES (?1, ?2, ?3, ?4)
+         ON CONFLICT(haplogroup) DO UPDATE SET
+            full_url=excluded.full_url,
+            embed_url=excluded.embed_url,
+            ts=excluded.ts",
+        rusqlite::params![haplogroup, urls.full_url, urls.embed_url, now],
+    );
+}
+
 /// Resolve which UYSD haplogroup-map URL to load.  Tries the full wildcard form
 /// first; if UYSD reports no frequency data, falls back to the base haplogroup.
+/// Result is cached in SQLite for ~30 days so repeat lookups (same session or
+/// across restarts) return instantly without an HTTP round-trip.
 #[command]
-pub async fn uysd_resolve_map_url(haplogroup: String) -> UysdMapUrls {
+pub async fn uysd_resolve_map_url(
+    db: State<'_, DbState>,
+    haplogroup: String,
+) -> Result<UysdMapUrls, String> {
+    if let Some(hit) = map_cache_lookup(&db, &haplogroup) {
+        return Ok(hit);
+    }
+
     let base_hg = base_haplogroup(&haplogroup);
     let make = |hg: &str| UysdMapUrls {
         full_url: full_url_for(hg),
         embed_url: embed_url_for(hg),
     };
 
-    if base_hg == haplogroup {
-        return make(&haplogroup); // nothing to disambiguate
-    }
-
-    // Probe the full wildcard URL (without ?embed=1; the frequency JSON is the
-    // same either way and the bare URL keeps things simple).
-    let resp = match shared_client().get(full_url_for(&haplogroup)).send().await {
-        Ok(r) => r,
-        Err(_) => return make(base_hg),
-    };
-    let body = match resp.text().await {
-        Ok(b) => b,
-        Err(_) => return make(base_hg),
-    };
-    if page_has_frequencies(&body) {
-        make(&haplogroup)
+    let resolved = if base_hg == haplogroup {
+        make(&haplogroup) // nothing to disambiguate
     } else {
-        make(base_hg)
-    }
+        // Probe the full wildcard URL (without ?embed=1; the frequency JSON is
+        // the same either way and the bare URL keeps things simple).
+        match shared_client().get(full_url_for(&haplogroup)).send().await {
+            Ok(resp) => match resp.text().await {
+                Ok(body) if page_has_frequencies(&body) => make(&haplogroup),
+                _ => make(base_hg),
+            },
+            Err(_) => make(base_hg),
+        }
+    };
+
+    map_cache_store(&db, &haplogroup, &resolved);
+    Ok(resolved)
 }
 
 fn extract_csrf_token(html: &str) -> Option<String> {

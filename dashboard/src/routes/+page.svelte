@@ -308,7 +308,8 @@
     for (const pred of samplePredictions) {
       if (pred.tree !== "yfull") continue;
       const hg = pred.haplogroup;
-      if (!hg || mapUrlCache.has(hg) || mapUrlPending.has(hg)) continue;
+      // Skip resolver if there's no usable haplogroup (NA / empty).
+      if (!hg || hg === "NA" || mapUrlCache.has(hg) || mapUrlPending.has(hg)) continue;
       mapUrlPending.add(hg);
       invoke<UysdMapUrls>("uysd_resolve_map_url", { haplogroup: hg })
         .then((urls) => mapUrlCache.set(hg, urls))
@@ -325,6 +326,20 @@
 
   function fmt_ts(ts: number): string {
     return new Date(ts * 1000).toLocaleString();
+  }
+
+  // Pick a sample's haplogroup call for display next to its name in the
+  // dropdown.  Prefer the yfull prediction (UYSD's tree); fall back to the
+  // first available.  Strip wildcard exclusions from the trailing *(x…) part
+  // so the dropdown stays short — e.g. "E-Z15929*(xE-Y25504)" → "E-Z15929*".
+  function sampleHgLabel(sampleName: string): string {
+    const preds = jobResults?.predictions ?? [];
+    const pred = preds.find(p => p.sample_name === sampleName && p.tree === "yfull")
+              ?? preds.find(p => p.sample_name === sampleName);
+    if (!pred?.haplogroup || pred.haplogroup === "NA") return "";
+    const hg = pred.haplogroup;
+    const idx = hg.indexOf("*(");
+    return idx > 0 ? hg.slice(0, idx + 1) : hg;
   }
 
   function qc_color(v: number): string {
@@ -1220,7 +1235,8 @@
                        bg-white border-slate-300 text-slate-800
                        dark:bg-[#0f1a2e] dark:border-[#1e3a6e] dark:text-pale">
                 {#each sampleNames as name}
-                  <option value={name}>{name}</option>
+                  {@const hg = sampleHgLabel(name)}
+                  <option value={name}>{name}{hg ? ` (${hg})` : ""}</option>
                 {/each}
               </select>
             </div>
@@ -1262,7 +1278,10 @@
                 <div class="text-[0.73rem] text-slate-400 dark:text-ghost">
                   {pred.total_reads.toLocaleString()} mapped reads &middot; {pred.valid_markers.toLocaleString()} markers
                 </div>
-                {#if pred.tree === "yfull" && mapUrlCache.has(pred.haplogroup)}
+                {#if pred.tree === "yfull"
+                     && pred.haplogroup
+                     && pred.haplogroup !== "NA"
+                     && mapUrlCache.has(pred.haplogroup)}
                   {@const urls = mapUrlCache.get(pred.haplogroup)!}
                   <button
                     type="button"
@@ -1271,21 +1290,20 @@
                     class="mt-3 block w-full text-left rounded-lg overflow-hidden border
                            border-slate-200 dark:border-well
                            cursor-pointer hover:ring-2 hover:ring-sky-300 transition">
-                    <div class="flex items-center gap-2 px-3 py-2
-                                bg-slate-50 dark:bg-well
-                                border-b border-slate-200 dark:border-well">
-                      <!-- translateZ(0) + will-change pins the image to its own
-                           compositing layer up-front, so the dark-mode filter
-                           chain isn't re-rasterised at lower quality when the
-                           sibling iframe gets promoted to a GPU layer on load. -->
+                    <!-- Header bar is always light-themed and the image has no
+                         CSS filter applied.  Earlier attempts to invert the
+                         logo for dark mode (`dark:invert dark:hue-rotate-180`)
+                         caused WebKitGTK to re-rasterise the image at reduced
+                         quality once the sibling iframe was promoted to its
+                         own compositing layer.  No filter = no blurring. -->
+                    <div class="flex items-center gap-2 px-3 py-2 bg-white border-b border-slate-200">
                       <img src="https://ysnp.erasmusmc.nl/static/ysnp/data/uysd_logo.png"
                            alt="UYSD"
-                           class="h-6 w-auto dark:invert dark:hue-rotate-180"
-                           style="transform: translateZ(0); will-change: filter; image-rendering: auto;" />
-                      <span class="text-sm font-medium text-slate-700 dark:text-pale">
+                           class="h-6 w-auto" />
+                      <span class="text-sm font-medium text-slate-700">
                         Open haplogroup map
                       </span>
-                      <span class="ml-auto text-xs text-slate-500 dark:text-muted">↗</span>
+                      <span class="ml-auto text-xs text-slate-500">↗</span>
                     </div>
                     <iframe
                       src={urls.embed_url}

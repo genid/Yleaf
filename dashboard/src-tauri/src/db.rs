@@ -37,6 +37,12 @@ pub fn init_schema(conn: &Connection) -> SqlResult<()> {
             key   TEXT PRIMARY KEY,
             value INTEGER NOT NULL DEFAULT 0
         );
+        CREATE TABLE IF NOT EXISTS uysd_map_cache (
+            haplogroup TEXT PRIMARY KEY,
+            full_url   TEXT NOT NULL,
+            embed_url  TEXT NOT NULL,
+            ts         INTEGER NOT NULL DEFAULT 0
+        );
         CREATE TABLE IF NOT EXISTS sample_meta (
             job_id      INTEGER NOT NULL,
             sample_name TEXT    NOT NULL,
