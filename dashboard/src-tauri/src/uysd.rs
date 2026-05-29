@@ -63,6 +63,20 @@ pub fn upsert_sample_meta(db: State<DbState>, meta: SampleMeta) {
 
 const UYSD_BASE: &str = "https://ysnp.erasmusmc.nl";
 
+/// Shared cookieless HTTP client, kept alive across calls so TLS handshakes
+/// to ysnp.erasmusmc.nl are reused (saves ~200–400 ms per request).
+fn shared_client() -> &'static reqwest::Client {
+    use std::sync::OnceLock;
+    static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+    CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .use_rustls_tls()
+            .pool_idle_timeout(std::time::Duration::from_secs(90))
+            .build()
+            .expect("failed to build shared HTTP client")
+    })
+}
+
 /// Log in to UYSD. Returns a session token string (sessionid=…;csrftoken=…)
 /// that the frontend passes back to submit/poll, or an error message.
 #[command]
@@ -177,11 +191,7 @@ pub async fn uysd_poll_result(
     result_url: String,
     session_token: String,
 ) -> Result<String, String> {
-    let client = reqwest::Client::builder()
-        .use_rustls_tls()
-        .build()
-        .map_err(|e| e.to_string())?;
-    let resp = client
+    let resp = shared_client()
         .get(&result_url)
         .header("Cookie", &session_token)
         .send()
@@ -343,11 +353,7 @@ pub struct KnownLocations {
 /// list rarely changes and UYSD ships a `Cache-Control: max-age=86400` header).
 #[command]
 pub async fn uysd_get_known_locations() -> Result<KnownLocations, String> {
-    let client = reqwest::Client::builder()
-        .use_rustls_tls()
-        .build()
-        .map_err(|e| e.to_string())?;
-    let resp = client
+    let resp = shared_client()
         .get(format!("{UYSD_BASE}/api/known_locations/"))
         .send()
         .await
@@ -373,13 +379,9 @@ pub async fn uysd_resolve_map_url(haplogroup: String) -> UysdMapUrls {
         return make(&haplogroup); // nothing to disambiguate
     }
 
-    let client = match reqwest::Client::builder().use_rustls_tls().build() {
-        Ok(c) => c,
-        Err(_) => return make(base_hg),
-    };
     // Probe the full wildcard URL (without ?embed=1; the frequency JSON is the
     // same either way and the bare URL keeps things simple).
-    let resp = match client.get(full_url_for(&haplogroup)).send().await {
+    let resp = match shared_client().get(full_url_for(&haplogroup)).send().await {
         Ok(r) => r,
         Err(_) => return make(base_hg),
     };

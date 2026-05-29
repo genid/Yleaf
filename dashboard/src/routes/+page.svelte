@@ -112,6 +112,9 @@
   let selectedSamples = $state(new SvelteSet<string>());
   let applyValues = $state({ country: "", region: "", comment: "", publication: "" });
   let applyPubValid = $derived(isPubValid(applyValues.publication));
+  // Per-sample row collapse state. Default: collapsed when >5 samples (so big
+  // batches don't force endless scrolling); expanded otherwise.
+  let expandedSamples = $state(new SvelteSet<string>());
 
   // UYSD-accepted country / region names — fetched once per session and cached.
   let knownLocations = $state<{ countries: string[]; regions: string[] } | null>(null);
@@ -382,7 +385,8 @@
   }
 
   function isPubValid(v: string): boolean {
-    if (!v) return true;
+    // UYSD requires a publication URL — empty is not acceptable.
+    if (!v) return false;
     try {
       const u = new URL(v);
       // Require http/https and a real hostname with a dot.  Catches half-typed
@@ -416,6 +420,10 @@
     submitResultUrl = null;
     selectedSamples = new SvelteSet(sampleNames);
     applyValues = { country: "", region: "", comment: "", publication: "" };
+    // Auto-collapse when >5 samples so the submit affordance is reachable.
+    expandedSamples = sampleNames.length > 5
+      ? new SvelteSet()
+      : new SvelteSet(sampleNames);
     submitPanelOpen = true;
     // Fetch UYSD's accepted name list (async; non-blocking — datalists populate when ready).
     ensureKnownLocations();
@@ -426,6 +434,19 @@
     submitPhase = "idle";
     submitError = null;
     loginPass = "";
+  }
+
+  function toggleExpandAll() {
+    if (expandedSamples.size === sampleNames.length) {
+      expandedSamples = new SvelteSet();
+    } else {
+      expandedSamples = new SvelteSet(sampleNames);
+    }
+  }
+
+  function toggleSampleExpanded(name: string) {
+    if (expandedSamples.has(name)) expandedSamples.delete(name);
+    else expandedSamples.add(name);
   }
 
   function toggleSelectAll() {
@@ -465,6 +486,76 @@
     a.download = `${selectedJob?.sample_name ?? "yleaf"}_country_file.csv`;
     a.click();
     URL.revokeObjectURL(a.href);
+  }
+
+  // Tiny RFC-4180-ish CSV parser: handles quoted fields with embedded commas
+  // and "" escapes, plus CRLF/LF line endings.
+  function parseCsv(text: string): string[][] {
+    const rows: string[][] = [];
+    let cur: string[] = [];
+    let field = "";
+    let inQuote = false;
+    let i = 0;
+    while (i < text.length) {
+      const c = text[i];
+      if (inQuote) {
+        if (c === '"') {
+          if (text[i + 1] === '"') { field += '"'; i += 2; continue; }
+          inQuote = false; i++; continue;
+        }
+        field += c; i++; continue;
+      }
+      if (c === '"') { inQuote = true; i++; continue; }
+      if (c === ",") { cur.push(field); field = ""; i++; continue; }
+      if (c === "\n" || c === "\r") {
+        cur.push(field); field = "";
+        if (cur.length > 1 || cur[0] !== "") rows.push(cur);
+        cur = [];
+        if (c === "\r" && text[i + 1] === "\n") i += 2; else i++;
+        continue;
+      }
+      field += c; i++;
+    }
+    if (field !== "" || cur.length > 0) {
+      cur.push(field);
+      if (cur.length > 1 || cur[0] !== "") rows.push(cur);
+    }
+    return rows;
+  }
+
+  let csvInputEl = $state<HTMLInputElement | null>(null);
+  let importStatus = $state<string | null>(null);
+
+  async function onCsvSelected(e: Event) {
+    const input = e.target as HTMLInputElement;
+    const file = input.files?.[0];
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const rows = parseCsv(text);
+      // Skip an optional header row (sample_name in field 0).
+      const startIdx = rows.length > 0 && rows[0][0]?.toLowerCase() === "sample_name" ? 1 : 0;
+      let imported = 0, skipped = 0;
+      for (let i = startIdx; i < rows.length; i++) {
+        const r = rows[i];
+        if (r.length < 1) continue;
+        const [name, country = "", region = "", comment = "", publication = ""] = r;
+        if (!sampleNames.includes(name)) { skipped++; continue; }
+        sampleMetaMap[name] = {
+          country, region, comment, publication,
+          pubValid: isPubValid(publication),
+        };
+        await saveMeta(name);
+        imported++;
+      }
+      importStatus = `Imported ${imported}/${rows.length - startIdx} row(s)`
+        + (skipped ? `, skipped ${skipped} (sample name not in this job)` : "")
+        + ".";
+    } catch (err) {
+      importStatus = `Failed to read CSV: ${String(err)}`;
+    } finally {
+      input.value = ""; // allow re-selecting the same file
+    }
   }
 
   async function startSubmit() {
@@ -522,9 +613,16 @@
       submitPhase = "error";
       return;
     }
-    let attempts = 0;
-    while (attempts < 60) {
-      await new Promise(r => setTimeout(r, 5000));
+    // Exponential backoff: most submissions finish in 1–10 s, so polling
+    // every 5 s buries the result.  Start at 1 s, double up to 10 s, cap
+    // total wall-clock at ~5 min like before.
+    let delay = 1000;
+    const maxDelay = 10000;
+    let elapsed = 0;
+    const budgetMs = 5 * 60 * 1000;
+    while (elapsed < budgetMs) {
+      await new Promise(r => setTimeout(r, delay));
+      elapsed += delay;
       try {
         const r = await invoke<string>("uysd_poll_result", {
           resultUrl: url,
@@ -533,13 +631,11 @@
         if (r === "ok") { submitPhase = "done"; return; }
         // Anything else (e.g. "pending") — keep polling.
       } catch (e) {
-        // Rust returns Err(...) for auth failure, server failure, or other
-        // explicit rejection — surface the message and stop polling.
         submitError = String(e);
         submitPhase = "error";
         return;
       }
-      attempts++;
+      delay = Math.min(maxDelay, Math.floor(delay * 1.7));
     }
     submitError = "Timed out waiting for UYSD result.";
     submitPhase = "error";
@@ -675,6 +771,9 @@
       if (e.key === "Delete" && selectedJobIds.size > 0) deleteSelected();
     };
     window.addEventListener("keydown", _onKeyDown);
+    // Pre-warm the UYSD known-locations cache so the submit panel's datalists
+    // are populated by the time the user opens it (saves a visible ~500 ms).
+    ensureKnownLocations();
     unlisteners = await Promise.all([
       listen<{ job_id: number; line: string }>("yleaf-progress", (e) => {
         const { job_id, line } = e.payload;
@@ -1175,9 +1274,14 @@
                     <div class="flex items-center gap-2 px-3 py-2
                                 bg-slate-50 dark:bg-well
                                 border-b border-slate-200 dark:border-well">
+                      <!-- translateZ(0) + will-change pins the image to its own
+                           compositing layer up-front, so the dark-mode filter
+                           chain isn't re-rasterised at lower quality when the
+                           sibling iframe gets promoted to a GPU layer on load. -->
                       <img src="https://ysnp.erasmusmc.nl/static/ysnp/data/uysd_logo.png"
                            alt="UYSD"
-                           class="h-6 w-auto dark:invert dark:hue-rotate-180" />
+                           class="h-6 w-auto dark:invert dark:hue-rotate-180"
+                           style="transform: translateZ(0); will-change: filter; image-rendering: auto;" />
                       <span class="text-sm font-medium text-slate-700 dark:text-pale">
                         Open haplogroup map
                       </span>
@@ -1391,13 +1495,13 @@
                     <input type="text" placeholder="Comment (optional)" bind:value={applyValues.comment}
                       class="rounded-md border px-2 py-1 text-[0.75rem] outline-none
                              bg-white border-slate-300 text-slate-800 dark:bg-well dark:border-rim dark:text-pale" />
-                    <input type="text" placeholder="Publication URL (optional)" bind:value={applyValues.publication}
+                    <input type="text" placeholder="Publication URL (required)" bind:value={applyValues.publication}
                       class="rounded-md border px-2 py-1 text-[0.75rem] outline-none
                              {applyPubValid ? 'border-slate-300 dark:border-rim' : 'border-red-400 dark:border-red-600'}
                              bg-white text-slate-800 dark:bg-well dark:text-pale" />
                   </div>
                   {#if !applyPubValid}
-                    <span class="text-[0.68rem] text-red-500">Publication must be a valid URL (e.g. https://doi.org/…)</span>
+                    <span class="text-[0.68rem] text-red-500">Publication URL is required (e.g. https://doi.org/…)</span>
                   {/if}
                   {#if applyValues.country && !isValidCountry(applyValues.country)}
                     <span class="text-[0.68rem] text-red-500">Country not in UYSD's accepted list.</span>
@@ -1417,61 +1521,87 @@
 
                 <!-- Per-sample rows -->
                 <div class="flex flex-col gap-2">
-                  <button
-                    onclick={toggleSelectAll}
-                    class="self-start text-[0.7rem] underline text-sky-600 dark:text-teal cursor-pointer bg-transparent border-none p-0">
-                    {selectedSamples.size === sampleNames.length ? "Deselect all" : "Select all"}
-                  </button>
+                  <div class="flex items-center gap-3">
+                    <button
+                      onclick={toggleSelectAll}
+                      class="text-[0.7rem] underline text-sky-600 dark:text-teal cursor-pointer bg-transparent border-none p-0">
+                      {selectedSamples.size === sampleNames.length ? "Deselect all" : "Select all"}
+                    </button>
+                    <span class="text-slate-300 dark:text-muted">|</span>
+                    <button
+                      onclick={toggleExpandAll}
+                      class="text-[0.7rem] underline text-sky-600 dark:text-teal cursor-pointer bg-transparent border-none p-0">
+                      {expandedSamples.size === sampleNames.length ? "Collapse all" : "Expand all"}
+                    </button>
+                  </div>
                   {#each sampleNames as name}
                     {@const m = sampleMetaMap[name] ?? { country: "", region: "", comment: "", publication: "", pubValid: true }}
                     {@const checked = selectedSamples.has(name)}
+                    {@const expanded = expandedSamples.has(name)}
+                    {@const hasIssue = !m.pubValid || (!!m.country && !isValidCountry(m.country)) || (!!m.region && !isValidRegion(m.region))}
                     <div class="rounded-md border p-2 flex flex-col gap-2
                                 {checked ? 'bg-white border-slate-300 dark:bg-panel dark:border-rim'
-                                         : 'bg-slate-100 border-slate-200 opacity-60 dark:bg-void dark:border-well'}">
-                      <label class="flex items-center gap-2 cursor-pointer">
+                                         : 'bg-slate-100 border-slate-200 opacity-60 dark:bg-void dark:border-well'}
+                                {hasIssue ? 'ring-1 ring-red-300 dark:ring-red-700' : ''}">
+                      <div class="flex items-center gap-2">
                         <input type="checkbox" checked={checked}
                           onchange={(e) => {
                             if ((e.target as HTMLInputElement).checked) selectedSamples.add(name);
                             else selectedSamples.delete(name);
                           }} />
                         <span class="text-[0.72rem] font-semibold text-slate-700 dark:text-pale">{name}</span>
-                      </label>
-                      <div class="grid grid-cols-2 gap-2">
-                        <input type="text" placeholder="Country" list="uysd-countries" value={m.country}
-                          oninput={(e) => { sampleMetaMap[name] = {...m, country: (e.target as HTMLInputElement).value}; }}
-                          onblur={() => saveMeta(name)}
-                          class="rounded-md border px-2 py-1 text-[0.75rem] outline-none
-                                 {isValidCountry(m.country) ? 'border-slate-300 dark:border-rim' : 'border-red-400 dark:border-red-600'}
-                                 bg-white text-slate-800 dark:bg-well dark:text-pale" />
-                        <input type="text" placeholder="Region (optional)" list="uysd-regions" value={m.region}
-                          oninput={(e) => { sampleMetaMap[name] = {...m, region: (e.target as HTMLInputElement).value}; }}
-                          onblur={() => saveMeta(name)}
-                          class="rounded-md border px-2 py-1 text-[0.75rem] outline-none
-                                 {isValidRegion(m.region) ? 'border-slate-300 dark:border-rim' : 'border-red-400 dark:border-red-600'}
-                                 bg-white text-slate-800 dark:bg-well dark:text-pale" />
-                        <input type="text" placeholder="Comment (optional)" value={m.comment}
-                          oninput={(e) => { sampleMetaMap[name] = {...m, comment: (e.target as HTMLInputElement).value}; }}
-                          onblur={() => saveMeta(name)}
-                          class="rounded-md border px-2 py-1 text-[0.75rem] outline-none
-                                 bg-white border-slate-300 text-slate-800 dark:bg-well dark:border-rim dark:text-pale" />
-                        <input type="text" placeholder="Publication URL (optional)" value={m.publication}
-                          oninput={(e) => {
-                            const v = (e.target as HTMLInputElement).value;
-                            sampleMetaMap[name] = {...m, publication: v, pubValid: isPubValid(v)};
-                          }}
-                          onblur={() => saveMeta(name)}
-                          class="rounded-md border px-2 py-1 text-[0.75rem] outline-none
-                                 {m.pubValid ? 'border-slate-300 dark:border-rim' : 'border-red-400 dark:border-red-600'}
-                                 bg-white text-slate-800 dark:bg-well dark:text-pale" />
+                        {#if !expanded}
+                          <span class="text-[0.66rem] text-slate-500 dark:text-muted truncate flex-1 min-w-0">
+                            {[m.country, m.region].filter(Boolean).join(" · ") || "(no metadata)"}
+                          </span>
+                          {#if hasIssue}
+                            <span class="text-[0.66rem] text-red-500 whitespace-nowrap">⚠</span>
+                          {/if}
+                        {/if}
+                        <button type="button"
+                          onclick={() => toggleSampleExpanded(name)}
+                          class="ml-auto text-[0.65rem] text-slate-500 dark:text-muted bg-transparent border-none cursor-pointer px-1">
+                          {expanded ? "▲" : "▼"}
+                        </button>
                       </div>
-                      {#if !m.pubValid}
-                        <span class="text-[0.68rem] text-red-500">Publication must be a valid URL</span>
-                      {/if}
-                      {#if m.country && !isValidCountry(m.country)}
-                        <span class="text-[0.68rem] text-red-500">Country not in UYSD's accepted list.</span>
-                      {/if}
-                      {#if m.region && !isValidRegion(m.region)}
-                        <span class="text-[0.68rem] text-red-500">Region not in UYSD's accepted list.</span>
+                      {#if expanded}
+                        <div class="grid grid-cols-2 gap-2">
+                          <input type="text" placeholder="Country" list="uysd-countries" value={m.country}
+                            oninput={(e) => { sampleMetaMap[name] = {...m, country: (e.target as HTMLInputElement).value}; }}
+                            onblur={() => saveMeta(name)}
+                            class="rounded-md border px-2 py-1 text-[0.75rem] outline-none
+                                   {isValidCountry(m.country) ? 'border-slate-300 dark:border-rim' : 'border-red-400 dark:border-red-600'}
+                                   bg-white text-slate-800 dark:bg-well dark:text-pale" />
+                          <input type="text" placeholder="Region (optional)" list="uysd-regions" value={m.region}
+                            oninput={(e) => { sampleMetaMap[name] = {...m, region: (e.target as HTMLInputElement).value}; }}
+                            onblur={() => saveMeta(name)}
+                            class="rounded-md border px-2 py-1 text-[0.75rem] outline-none
+                                   {isValidRegion(m.region) ? 'border-slate-300 dark:border-rim' : 'border-red-400 dark:border-red-600'}
+                                   bg-white text-slate-800 dark:bg-well dark:text-pale" />
+                          <input type="text" placeholder="Comment (optional)" value={m.comment}
+                            oninput={(e) => { sampleMetaMap[name] = {...m, comment: (e.target as HTMLInputElement).value}; }}
+                            onblur={() => saveMeta(name)}
+                            class="rounded-md border px-2 py-1 text-[0.75rem] outline-none
+                                   bg-white border-slate-300 text-slate-800 dark:bg-well dark:border-rim dark:text-pale" />
+                          <input type="text" placeholder="Publication URL (required)" value={m.publication}
+                            oninput={(e) => {
+                              const v = (e.target as HTMLInputElement).value;
+                              sampleMetaMap[name] = {...m, publication: v, pubValid: isPubValid(v)};
+                            }}
+                            onblur={() => saveMeta(name)}
+                            class="rounded-md border px-2 py-1 text-[0.75rem] outline-none
+                                   {m.pubValid ? 'border-slate-300 dark:border-rim' : 'border-red-400 dark:border-red-600'}
+                                   bg-white text-slate-800 dark:bg-well dark:text-pale" />
+                        </div>
+                        {#if !m.pubValid}
+                          <span class="text-[0.68rem] text-red-500">Publication URL is required</span>
+                        {/if}
+                        {#if m.country && !isValidCountry(m.country)}
+                          <span class="text-[0.68rem] text-red-500">Country not in UYSD's accepted list.</span>
+                        {/if}
+                        {#if m.region && !isValidRegion(m.region)}
+                          <span class="text-[0.68rem] text-red-500">Region not in UYSD's accepted list.</span>
+                        {/if}
                       {/if}
                     </div>
                   {/each}
@@ -1494,6 +1624,16 @@
                     Export country file
                   </button>
                   <button
+                    onclick={() => csvInputEl?.click()}
+                    class="px-3 py-1.5 rounded-md text-[0.75rem] font-medium cursor-pointer transition-colors
+                           bg-slate-200 text-slate-700 hover:bg-slate-300
+                           dark:bg-well dark:text-pale dark:hover:bg-rim">
+                    Upload country file
+                  </button>
+                  <input type="file" accept=".csv,text/csv" bind:this={csvInputEl}
+                         onchange={onCsvSelected}
+                         style="display:none" />
+                  <button
                     onclick={startSubmit}
                     disabled={submitPhase === "submitting" || submitPhase === "polling" || submitPhase === "logging_in"
                               || sampleNames.some(n => !(sampleMetaMap[n]?.pubValid ?? true))
@@ -1505,6 +1645,9 @@
                     {submitPhase === "submitting" ? "Submitting…" : submitPhase === "polling" ? "Processing…" : submitPhase === "logging_in" ? "Logging in…" : "Submit to UYSD"}
                   </button>
                 </div>
+                {#if importStatus}
+                  <div class="text-[0.68rem] text-slate-500 dark:text-muted">{importStatus}</div>
+                {/if}
 
                 <!-- Datalists for browser-native autocomplete -->
                 <datalist id="uysd-countries">
