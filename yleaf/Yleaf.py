@@ -188,7 +188,7 @@ def run_vcf(
         ).drop_duplicates(subset='pos', keep='first', inplace=False)
         _WORKER_MARKERFILE_CACHE[_mf_key] = markerfile
 
-    sample_vcf_folder = base_out_folder / (sample_vcf_file.name.replace(".vcf.gz", ""))
+    sample_vcf_folder = base_out_folder / _vcf_stem(sample_vcf_file)
     safe_create_dir(sample_vcf_folder, args.force if not out_suffix else False, reuse_pileup=bool(out_suffix))
 
     # Detect FORMAT/AD by scanning the gzip header directly — avoids spawning bcftools per sample.
@@ -205,13 +205,13 @@ def run_vcf(
     except Exception:
         pass
 
-    sample_vcf_file_txt = sample_vcf_folder / (sample_vcf_file.name.replace(".vcf.gz", ".txt"))
+    sample_vcf_file_txt = sample_vcf_folder / (_vcf_stem(sample_vcf_file) + ".txt")
 
     if has_ad:
         cmd = f"bcftools query -f '%CHROM\t%POS\t%REF\t%ALT[\t%AD]\n' \"{sample_vcf_file}\" > \"{sample_vcf_file_txt}\""
         call_command(cmd)
         pileupfile = pd.read_csv(sample_vcf_file_txt, dtype=str, header=None, sep="\t")
-        sample_vcf_file_txt.unlink(missing_ok=True)
+        _unlink_safe(sample_vcf_file_txt)
 
         pileupfile.columns = ['chr', 'pos', 'refbase', 'altbase', 'reads']
         pileupfile['pos'] = pileupfile['pos'].astype(int)
@@ -252,7 +252,7 @@ def run_vcf(
         cmd = f"bcftools query -f '%CHROM\t%POS\t%REF\t%ALT[\t%GT]\n' \"{sample_vcf_file}\" > \"{sample_vcf_file_txt}\""
         call_command(cmd)
         pileupfile = pd.read_csv(sample_vcf_file_txt, dtype=str, header=None, sep="\t")
-        sample_vcf_file_txt.unlink(missing_ok=True)
+        _unlink_safe(sample_vcf_file_txt)
 
         pileupfile.columns = ['chr', 'pos', 'refbase', 'altbase', 'gt']
         pileupfile['pos'] = pileupfile['pos'].astype(int)
@@ -354,8 +354,8 @@ def run_vcf(
 
     write_info_file(sample_vcf_folder, general_info_list, suffix=f"{out_suffix}.info" if out_suffix else ".info")
 
-    outputfile = sample_vcf_folder / (sample_vcf_file.name.replace(".vcf.gz", f"{out_suffix}.out"))
-    fmf_output = sample_vcf_folder / (sample_vcf_file.name.replace(".vcf.gz", f"{out_suffix}.fmf"))
+    outputfile = sample_vcf_folder / (_vcf_stem(sample_vcf_file) + f"{out_suffix}.out")
+    fmf_output = sample_vcf_folder / (_vcf_stem(sample_vcf_file) + f"{out_suffix}.fmf")
 
     df_out = df_out[
         ["chr", "pos", "marker_name", "haplogroup", "mutation", "anc", "der", "reads", "called_perc", "called_base",
@@ -390,7 +390,7 @@ def run_vcf(
                 f.write('\t'.join(map(str, lst)) + f"\t{depth}\n")
 
     if getattr(args, 'mixture', False) and has_ad:
-        mix_output = sample_vcf_folder / (sample_vcf_file.name.replace(".vcf.gz", f"{out_suffix}.mix"))
+        mix_output = sample_vcf_folder / (_vcf_stem(sample_vcf_file) + f"{out_suffix}.mix")
         effective_tree = tree_name if tree_name else args.tree
         _run_mixture_analysis(outputfile, fmf_output, effective_tree, args.reads_treshold, mix_output)
 
@@ -653,8 +653,22 @@ def main_vcf_split(
         n_threads: int,
         vcf_file: Path
 ):
+    # Accept plain .vcf input: bgzip once at intake — all downstream logic
+    # assumes an indexable .vcf.gz.  (Without this the sort below produces an
+    # output file whose name collides with derived paths and Yleaf silently
+    # processes zero positions — the symptom users see as "No haplogroups
+    # found" on a fresh WGS VCF.)
+    if vcf_file.name.endswith(".vcf") and not vcf_file.name.endswith(".vcf.gz"):
+        try:
+            vcf_file = _ensure_bgzipped(vcf_file, base_out_folder)
+        except Exception as e:
+            LOG.error(f"Failed to bgzip plain VCF {vcf_file.name}: {e}. Skipping...")
+            return None
+
+    stem = _vcf_stem(vcf_file)
+
     # first sort the vcf file
-    sorted_vcf_file = base_out_folder / (vcf_file.name.replace(".vcf.gz", ".sorted.vcf.gz"))
+    sorted_vcf_file = base_out_folder / f"{stem}.sorted.vcf.gz"
     cmd = f'bcftools sort -O z -o "{sorted_vcf_file}" "{vcf_file}"'
     try:
         call_command(cmd)
@@ -688,7 +702,7 @@ def main_vcf_split(
         raise SystemExit("Multiple Y-chromosome annotations found in the vcf file.")
     else:
         # make new position_bed_file with correct chrY annotation
-        new_position_bed_file = base_out_folder / (vcf_file.name.replace(".vcf.gz", "temp_position_bed.bed"))
+        new_position_bed_file = base_out_folder / f"{stem}_temp_position_bed.bed"
         with open(position_bed_file, "r") as f:
             with open(new_position_bed_file, "w") as f2:
                 for line in f:
@@ -696,18 +710,17 @@ def main_vcf_split(
                     f2.write(line)
 
     # filter the vcf file using the reference bed file
-    stem = vcf_file.name.replace(".vcf.gz", "")
     filtered_vcf_file = base_out_folder / "filtered_vcf_files" / f"{stem}.filtered.vcf.gz"
     cmd = f'bcftools view --threads {n_threads} -O z -R "{new_position_bed_file}" "{active_vcf}" > "{filtered_vcf_file}"'
     call_command(cmd)
 
     # remove temp_position_bed.bed
-    new_position_bed_file.unlink(missing_ok=True)
+    _unlink_safe(new_position_bed_file)
 
     # remove sorted.vcf.gz and sorted.vcf.gz.csi (only if we created them)
     if not already_sorted:
-        sorted_vcf_file.unlink(missing_ok=True)
-        Path(str(sorted_vcf_file) + ".csi").unlink(missing_ok=True)
+        _unlink_safe(sorted_vcf_file)
+        _unlink_safe(Path(str(sorted_vcf_file) + ".csi"))
 
     # check number of samples in the vcf file
     cmd = f'bcftools query -l "{filtered_vcf_file}"'
@@ -720,7 +733,7 @@ def main_vcf_split(
 
     if num_samples > 1:
         # split the vcf file into separate files for each sample
-        split_vcf_folder = base_out_folder / (vcf_file.name.replace(".vcf.gz", "_split"))
+        split_vcf_folder = base_out_folder / f"{stem}_split"
         safe_create_dir(split_vcf_folder, args.force)
         cmd = f'bcftools +split "{filtered_vcf_file}" -Oz -o "{split_vcf_folder}"'
         call_command(cmd)
@@ -766,7 +779,7 @@ def main_vcf_multi_tree(
     _write_merged_vcf_bed(merged_bed, trees, args.reference_genome, args.ancient_DNA)
 
     safe_create_dir(base_out_folder / "filtered_vcf_files", args.force)
-    files = get_files_with_extension(args.vcffile, '.vcf.gz')
+    files = get_vcf_files(args.vcffile)
     n_bcf_threads = max(1, args.threads // max(1, len(files)))
 
     if not args.reanalyze:
@@ -816,7 +829,7 @@ def main_vcf(
 
     safe_create_dir(base_out_folder / "filtered_vcf_files", args.force)
 
-    files = get_files_with_extension(args.vcffile, '.vcf.gz')
+    files = get_vcf_files(args.vcffile)
     n_bcf_threads = max(1, args.threads // max(1, len(files)))
 
     if not args.reanalyze:
@@ -1801,6 +1814,115 @@ def get_files_with_extension(
         return [path] if str(path).endswith(ext) else []
 
 
+# ── VCF helpers (handle .vcf and .vcf.gz uniformly) ──────────────────────────
+
+def _vcf_stem(path: Path) -> str:
+    """Strip a .vcf.gz or .vcf suffix to get a base name suitable for derived paths.
+
+    Yleaf historically did `path.name.replace(".vcf.gz", "")` which silently
+    no-ops on plain .vcf input and produces wrong filenames.  Centralise the
+    logic so all derived names are correct regardless of input shape.
+    """
+    name = path.name
+    if name.endswith(".vcf.gz"):
+        return name[: -len(".vcf.gz")]
+    if name.endswith(".vcf"):
+        return name[: -len(".vcf")]
+    return name  # fallback: leave alone
+
+
+def _unlink_safe(path: Path) -> None:
+    """`Path.unlink` with missing_ok semantics, compatible with Python 3.7.
+
+    `Path.unlink(missing_ok=True)` was only added in Python 3.8 — using it on
+    the PyInstaller sidecar (built with the project's py3.7 conda env) raises
+    `TypeError: unlink() got an unexpected keyword argument 'missing_ok'`."""
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        pass
+
+
+def get_vcf_files(path: Union[str, Path]) -> List[Path]:
+    """Return all VCF inputs at `path` (or `path` itself if it's a file).
+    Accepts both .vcf and .vcf.gz; .vcf.gz comes first so deterministic order
+    matches the historic behaviour for multi-sample directories."""
+    return get_files_with_extension(path, ".vcf.gz") + get_files_with_extension(path, ".vcf")
+
+
+def _ensure_bgzipped(vcf_file: Path, work_dir: Path) -> Path:
+    """If the input is a plain .vcf, bgzip it once at intake so all downstream
+    code (which expects indexable .vcf.gz) keeps working.  Returns the path
+    to use from here on."""
+    name = vcf_file.name
+    if name.endswith(".vcf.gz"):
+        return vcf_file
+    if not name.endswith(".vcf"):
+        raise ValueError(f"Unsupported VCF extension: {name} (expected .vcf or .vcf.gz)")
+    work_dir.mkdir(parents=True, exist_ok=True)
+    bgz_target = work_dir / (name + ".gz")
+    cmd = f'bcftools view -O z -o "{bgz_target}" "{vcf_file}"'
+    call_command(cmd)
+    return bgz_target
+
+
+# Expected chrY contig lengths for each supported reference build.  Used to
+# detect a --ref-fasta / --reference_genome mismatch (e.g. user supplies an
+# hg38 FASTA but asks for t2t prediction → silently produces nothing useful).
+EXPECTED_CHRY_LENGTH = {
+    "hg19": 59373566,
+    "hg38": 57227415,
+    "t2t":  62460029,
+}
+
+
+def _validate_ref_fasta_build(path: Path, expected_build: str) -> None:
+    """Verify the FASTA's chrY contig length matches the expected reference
+    build.  Builds the .fai index on demand if missing.  Raises ValueError on
+    mismatch.  No-op if the FASTA has no recognisable Y contig (silently
+    permitted since not all unusual references have chrY)."""
+    fai = Path(str(path) + ".fai")
+    if not fai.exists():
+        try:
+            call_command(f'samtools faidx "{path}"')
+        except Exception as e:
+            LOG.warning(f"Could not index --ref-fasta {path} ({e}); skipping build validation.")
+            return
+    if not fai.exists():
+        LOG.warning(f"--ref-fasta {path}: .fai missing after indexing; skipping build validation.")
+        return
+    chry_len = None
+    try:
+        with fai.open() as f:
+            for line in f:
+                parts = line.rstrip("\n").split("\t")
+                if not parts:
+                    continue
+                if parts[0].lower() in ("chry", "y") and len(parts) >= 2:
+                    try:
+                        chry_len = int(parts[1])
+                    except ValueError:
+                        continue
+                    break
+    except Exception as e:
+        LOG.warning(f"Could not read .fai for {path} ({e}); skipping build validation.")
+        return
+    if chry_len is None:
+        LOG.warning(f"--ref-fasta {path}: no chrY/Y contig found in .fai; skipping build validation.")
+        return
+    expected = EXPECTED_CHRY_LENGTH.get(expected_build)
+    if expected is None:
+        return
+    if chry_len != expected:
+        raise ValueError(
+            f"--ref-fasta {path} has chrY length {chry_len:,}, but "
+            f"--reference_genome {expected_build} expects {expected:,}.  "
+            f"This is a reference-build mismatch — supply the correct FASTA "
+            f"or change --reference_genome to match the FASTA."
+        )
+    LOG.info(f"--ref-fasta build matches: chrY length {chry_len:,} == {expected_build}")
+
+
 def _apply_ref_fasta_override(reference_genome: str, ref_fasta: str) -> None:
     """Mutate yleaf_constants so the given FASTA is used instead of downloading."""
     path = Path(ref_fasta)
@@ -1813,6 +1935,11 @@ def _apply_ref_fasta_override(reference_genome: str, ref_fasta: str) -> None:
         raise ValueError(
             f"--ref-fasta file not found or too small (expected a FASTA ≥100 bytes): {path}"
         )
+    # Verify the FASTA's chrY length matches the requested build.  Catches the
+    # common mistake of passing an hg38 FASTA with --reference_genome t2t (or
+    # vice versa), which Yleaf used to silently accept and then produce empty
+    # output with no error message.
+    _validate_ref_fasta_build(path, reference_genome)
     if reference_genome == yleaf_constants.HG19:
         yleaf_constants.HG19_FULL_GENOME = path
     elif reference_genome == yleaf_constants.T2T:
@@ -1832,6 +1959,7 @@ def _apply_ref_dir_override(reference_genome: str) -> bool:
     for ext in (".fa", ".fasta", ".fna"):
         candidate = ref_dir_path / f"{reference_genome}{ext}"
         if candidate.exists() and candidate.stat().st_size >= 100:
+            _validate_ref_fasta_build(candidate, reference_genome)
             if reference_genome == yleaf_constants.HG19:
                 yleaf_constants.HG19_FULL_GENOME = candidate
             elif reference_genome == yleaf_constants.T2T:
