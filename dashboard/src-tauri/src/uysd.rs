@@ -299,14 +299,42 @@ fn base_haplogroup(hg: &str) -> &str {
 }
 
 fn page_has_frequencies(html: &str) -> bool {
-    // The frequency-data array is inlined as:
-    //   var frequencies = JSON.parse("[{...");   (has data)
-    //   var frequencies = JSON.parse("[]");       (empty -- valid hg, no samples)
-    //   (line absent)                             (error page or unknown hg)
+    // The frequency-data array is inlined inside an HTML <script> tag as:
+    //   var frequencies = JSON.parse("[{"key": 10168,
+    //       "val": 55.73, "inter": "false",
+    //       "nr_derived": 107, "nr_ancestral": 85}, …]");
     //
-    // Other JSON.parse calls in the same page (slug_map, small_tree, …) must
-    // NOT be matched -- match the literal variable assignment only.
-    html.contains(r#"var frequencies = JSON.parse("[{"#)
+    // A page can have:
+    //   (a) no `var frequencies` line at all      → error / unknown haplogroup
+    //   (b) `JSON.parse("[]")`                    → valid hg, no samples at all
+    //   (c) populated array, every nr_derived = 0 → valid hg, samples exist
+    //                                               but none derived for this
+    //                                               (sub-)query — the map
+    //                                               renders blank everywhere
+    //   (d) populated array, at least one nr_derived > 0 → real data, render
+    //
+    // Only (d) is worth showing the user; (a)/(b)/(c) should all trigger the
+    // fallback to the base haplogroup, which usually has data when the
+    // wildcard sub-query doesn't.
+    //
+    // Scan for `"nr_derived": <digits>` (quotes are unicode-escaped
+    // because the JSON is the value of a JS string literal) and return true
+    // on the first non-zero value.  Other JSON.parse calls in the page
+    // (slug_map, small_tree, …) don't carry an nr_derived field, so we don't
+    // need to scope the scan to the `var frequencies` line specifically.
+    let marker = r#"\u0022nr_derived\u0022: "#;
+    for (idx, _) in html.match_indices(marker) {
+        let rest = &html[idx + marker.len()..];
+        let digit_end = rest.find(|c: char| !c.is_ascii_digit()).unwrap_or(rest.len());
+        if digit_end == 0 {
+            continue;
+        }
+        // "0" is zero; anything else parses to a positive integer.
+        if &rest[..digit_end] != "0" {
+            return true;
+        }
+    }
+    false
 }
 
 fn percent_encode_segment(s: &str) -> String {

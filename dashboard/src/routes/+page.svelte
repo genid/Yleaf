@@ -112,9 +112,10 @@
   let selectedSamples = $state(new SvelteSet<string>());
   let applyValues = $state({ country: "", region: "", comment: "", publication: "" });
   let applyPubValid = $derived(isPubValid(applyValues.publication));
-  // Per-sample row collapse state. Default: collapsed when >5 samples (so big
-  // batches don't force endless scrolling); expanded otherwise.
-  let expandedSamples = $state(new SvelteSet<string>());
+  // Whole per-sample list collapsed by default — most users fill in metadata
+  // via "Apply to selected" above and never need to open the per-sample table.
+  let sampleListOpen = $state(false);
+  // invalidSampleCount derived defined after sampleNames is declared (below).
 
   // UYSD-accepted country / region names — fetched once per session and cached.
   let knownLocations = $state<{ countries: string[]; regions: string[] } | null>(null);
@@ -243,6 +244,12 @@
   }
 
   let sampleNames = $derived([...new Set(jobResults?.predictions.map(p => p.sample_name) ?? [])]);
+  let invalidSampleCount = $derived(sampleNames.filter(n => {
+    const mm = sampleMetaMap[n];
+    return !!mm && (!mm.pubValid
+      || (!!mm.country && !isValidCountry(mm.country))
+      || (!!mm.region && !isValidRegion(mm.region)));
+  }).length);
   let samplePredictions = $derived(
     jobResults?.predictions.filter(p => p.sample_name === selectedSample) ?? []
   );
@@ -435,10 +442,7 @@
     submitResultUrl = null;
     selectedSamples = new SvelteSet(sampleNames);
     applyValues = { country: "", region: "", comment: "", publication: "" };
-    // Auto-collapse when >5 samples so the submit affordance is reachable.
-    expandedSamples = sampleNames.length > 5
-      ? new SvelteSet()
-      : new SvelteSet(sampleNames);
+    sampleListOpen = false;
     submitPanelOpen = true;
     // Fetch UYSD's accepted name list (async; non-blocking — datalists populate when ready).
     ensureKnownLocations();
@@ -449,19 +453,6 @@
     submitPhase = "idle";
     submitError = null;
     loginPass = "";
-  }
-
-  function toggleExpandAll() {
-    if (expandedSamples.size === sampleNames.length) {
-      expandedSamples = new SvelteSet();
-    } else {
-      expandedSamples = new SvelteSet(sampleNames);
-    }
-  }
-
-  function toggleSampleExpanded(name: string) {
-    if (expandedSamples.has(name)) expandedSamples.delete(name);
-    else expandedSamples.add(name);
   }
 
   function toggleSelectAll() {
@@ -1538,51 +1529,47 @@
                 </div>
 
                 <!-- Per-sample rows -->
+                <!-- Per-sample metadata — single collapsible section so the
+                     Submit button is always reachable. Most users only need
+                     "Apply to selected" above; opening this section is
+                     opt-in for fine-grained per-sample editing. -->
                 <div class="flex flex-col gap-2">
-                  <div class="flex items-center gap-3">
+                  <div class="flex items-center gap-3 flex-wrap">
+                    <button
+                      type="button"
+                      onclick={() => (sampleListOpen = !sampleListOpen)}
+                      class="flex items-center gap-1 text-[0.7rem] font-medium text-slate-700 dark:text-pale
+                             cursor-pointer bg-transparent border-none p-0">
+                      <span>{sampleListOpen ? "▼" : "▶"}</span>
+                      <span>Per-sample metadata · {sampleNames.length} sample{sampleNames.length === 1 ? "" : "s"}</span>
+                      {#if invalidSampleCount > 0}
+                        <span class="ml-1 text-[0.65rem] text-red-500">⚠ {invalidSampleCount}</span>
+                      {/if}
+                    </button>
+                    <span class="text-slate-300 dark:text-muted">|</span>
                     <button
                       onclick={toggleSelectAll}
                       class="text-[0.7rem] underline text-sky-600 dark:text-teal cursor-pointer bg-transparent border-none p-0">
                       {selectedSamples.size === sampleNames.length ? "Deselect all" : "Select all"}
                     </button>
-                    <span class="text-slate-300 dark:text-muted">|</span>
-                    <button
-                      onclick={toggleExpandAll}
-                      class="text-[0.7rem] underline text-sky-600 dark:text-teal cursor-pointer bg-transparent border-none p-0">
-                      {expandedSamples.size === sampleNames.length ? "Collapse all" : "Expand all"}
-                    </button>
                   </div>
-                  {#each sampleNames as name}
-                    {@const m = sampleMetaMap[name] ?? { country: "", region: "", comment: "", publication: "", pubValid: true }}
-                    {@const checked = selectedSamples.has(name)}
-                    {@const expanded = expandedSamples.has(name)}
-                    {@const hasIssue = !m.pubValid || (!!m.country && !isValidCountry(m.country)) || (!!m.region && !isValidRegion(m.region))}
-                    <div class="rounded-md border p-2 flex flex-col gap-2
-                                {checked ? 'bg-white border-slate-300 dark:bg-panel dark:border-rim'
-                                         : 'bg-slate-100 border-slate-200 opacity-60 dark:bg-void dark:border-well'}
-                                {hasIssue ? 'ring-1 ring-red-300 dark:ring-red-700' : ''}">
-                      <div class="flex items-center gap-2">
-                        <input type="checkbox" checked={checked}
-                          onchange={(e) => {
-                            if ((e.target as HTMLInputElement).checked) selectedSamples.add(name);
-                            else selectedSamples.delete(name);
-                          }} />
-                        <span class="text-[0.72rem] font-semibold text-slate-700 dark:text-pale">{name}</span>
-                        {#if !expanded}
-                          <span class="text-[0.66rem] text-slate-500 dark:text-muted truncate flex-1 min-w-0">
-                            {[m.country, m.region].filter(Boolean).join(" · ") || "(no metadata)"}
-                          </span>
-                          {#if hasIssue}
-                            <span class="text-[0.66rem] text-red-500 whitespace-nowrap">⚠</span>
-                          {/if}
-                        {/if}
-                        <button type="button"
-                          onclick={() => toggleSampleExpanded(name)}
-                          class="ml-auto text-[0.65rem] text-slate-500 dark:text-muted bg-transparent border-none cursor-pointer px-1">
-                          {expanded ? "▲" : "▼"}
-                        </button>
-                      </div>
-                      {#if expanded}
+                  {#if sampleListOpen}
+                    {#each sampleNames as name}
+                      {@const m = sampleMetaMap[name] ?? { country: "", region: "", comment: "", publication: "", pubValid: true }}
+                      {@const checked = selectedSamples.has(name)}
+                      {@const hasIssue = !m.pubValid || (!!m.country && !isValidCountry(m.country)) || (!!m.region && !isValidRegion(m.region))}
+                      <div class="rounded-md border p-2 flex flex-col gap-2
+                                  {checked ? 'bg-white border-slate-300 dark:bg-panel dark:border-rim'
+                                           : 'bg-slate-100 border-slate-200 opacity-60 dark:bg-void dark:border-well'}
+                                  {hasIssue ? 'ring-1 ring-red-300 dark:ring-red-700' : ''}">
+                        <div class="flex items-center gap-2">
+                          <input type="checkbox" checked={checked}
+                            onchange={(e) => {
+                              if ((e.target as HTMLInputElement).checked) selectedSamples.add(name);
+                              else selectedSamples.delete(name);
+                            }} />
+                          <span class="text-[0.72rem] font-semibold text-slate-700 dark:text-pale">{name}</span>
+                        </div>
                         <div class="grid grid-cols-2 gap-2">
                           <input type="text" placeholder="Country" list="uysd-countries" value={m.country}
                             oninput={(e) => { sampleMetaMap[name] = {...m, country: (e.target as HTMLInputElement).value}; }}
@@ -1620,9 +1607,9 @@
                         {#if m.region && !isValidRegion(m.region)}
                           <span class="text-[0.68rem] text-red-500">Region not in UYSD's accepted list.</span>
                         {/if}
-                      {/if}
-                    </div>
-                  {/each}
+                      </div>
+                    {/each}
+                  {/if}
                 </div>
 
                 <!-- Action buttons -->

@@ -96,6 +96,33 @@ pub fn init_schema(conn: &Connection) -> SqlResult<()> {
     ] {
         let _ = conn.execute_batch(col);
     }
+
+    // One-time migrations keyed off `uysd_settings.schema_version`.  Bump
+    // SCHEMA_VERSION whenever a migration step is added below; older clients
+    // re-run the steps once and we never lose user data (jobs / sample_meta
+    // are preserved; only regenerable caches get cleared).
+    const SCHEMA_VERSION: i64 = 1;
+    let current: i64 = conn
+        .query_row(
+            "SELECT value FROM uysd_settings WHERE key='schema_version'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap_or(0);
+    if current < 1 {
+        // The pre-v4.1.0 resolver had a looser frequency check that didn't
+        // fall back when an embed page contained only zero-derived entries
+        // (e.g. `G-L13*(xG-…)`).  Stored URLs from those resolutions are
+        // wrong; drop the cache so resolve_map_url re-fetches with the new
+        // logic.  Cache is fully regenerable.
+        let _ = conn.execute_batch("DELETE FROM uysd_map_cache;");
+    }
+    let _ = conn.execute(
+        "INSERT INTO uysd_settings (key, value) VALUES ('schema_version', ?1)
+         ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+        rusqlite::params![SCHEMA_VERSION],
+    );
+
     Ok(())
 }
 
