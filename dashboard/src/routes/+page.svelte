@@ -953,7 +953,7 @@
         <div class="flex items-center gap-4 pb-5 border-b border-slate-200 dark:border-well">
           <img src="/yleaf_logo.png" alt="Yleaf" class="h-40 w-auto" />
           <div class="flex-1">
-            <h1 class="m-0 text-2xl font-bold text-brand tracking-[0.12em]">Yleaf 4.0</h1>
+            <h1 class="m-0 text-2xl font-bold text-brand tracking-[0.12em]">Yleaf 4.1</h1>
             <p class="m-0 mt-1 text-xs text-slate-500 dark:text-muted">
               Y-chromosome haplogroup inference
             </p>
