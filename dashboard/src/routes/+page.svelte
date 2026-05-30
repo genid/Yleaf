@@ -675,6 +675,21 @@
   }
 
   function newRun() {
+    bamPath = "";
+    outputDir = "";
+    referenceGenome = "hg38";
+    selectedTrees = ["yfull"];
+    threads = 4;
+    readsThreshold = 10;
+    qualityThresh = 20;
+    baseMajority = 90;
+    predictionQuality = 0.95;
+    drawHaplogroups = false;
+    collapsedDrawMode = false;
+    ancientDna = false;
+    privateMutations = false;
+    mixtureMode = false;
+
     selectedJob = null;
     jobResults = null;
     view = "submit";
