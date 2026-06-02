@@ -263,6 +263,13 @@ def read_yleaf_out_file(
         f.readline()
         for line in f:
             _, _, marker, haplogroup, _, _, _, _, _, _, state, _ = line.strip().split("\t")
+            # ISOGG marks SNPs whose haplogroup placement is approximate with a
+            # trailing "~". Such markers must not feed any QC score — they would
+            # otherwise penalise the non-~ parent (e.g. R1b1a1b1a1a1~ markers
+            # showing ancestral would drag down R1b1a1b1a1a1's QC2). They stay
+            # visible in the .out/.fmf for manual inspection.
+            if haplogroup.endswith("~"):
+                continue
             if haplogroup not in haplotype_dict:
                 haplotype_dict[haplogroup] = HgMarkersLinker()
             haplotype_dict[haplogroup].add(marker, state)
