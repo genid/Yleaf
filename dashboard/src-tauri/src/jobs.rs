@@ -35,85 +35,97 @@ fn now_secs() -> i64 {
         .as_secs() as i64
 }
 
-/// Detect input type from a file or directory path.
-/// Returns (cli_flag, resolved_file_path).
-/// Priority for directories: plink > bam > cram > vcf > fastq.
-fn resolve_input(input: &str) -> Result<(&'static str, String), String> {
-    let p = std::path::Path::new(input);
-
-    if p.is_dir() {
-        let mut entries: Vec<std::path::PathBuf> = std::fs::read_dir(p)
-            .map_err(|e| e.to_string())?
-            .filter_map(|e| e.ok().map(|e| e.path()))
-            .collect();
-        entries.sort();
-
-        // PLINK text (.ped)
-        if let Some(f) = entries.iter().find(|f| {
-            f.extension().and_then(|s| s.to_str()) == Some("ped")
-        }) {
-            return Ok(("-plink", f.to_string_lossy().into_owned()));
-        }
-        // PLINK binary (.bed + sibling .bim)
-        if let Some(f) = entries.iter().find(|f| {
-            f.extension().and_then(|s| s.to_str()) == Some("bed")
-                && f.with_extension("bim").exists()
-        }) {
-            return Ok(("-plink", f.to_string_lossy().into_owned()));
-        }
-        // BAM — pass the directory; Yleaf processes all BAMs inside it
-        if entries.iter().any(|f| {
-            f.extension().and_then(|s| s.to_str()) == Some("bam")
-        }) {
-            return Ok(("-bam", input.to_string()));
-        }
-        // CRAM — same: pass the directory
-        if entries.iter().any(|f| {
-            f.extension().and_then(|s| s.to_str()) == Some("cram")
-        }) {
-            return Ok(("-cram", input.to_string()));
-        }
-        // VCF / VCF.GZ
-        if let Some(f) = entries.iter().find(|f| {
-            let name = f.file_name().unwrap_or_default().to_string_lossy();
-            name.ends_with(".vcf") || name.ends_with(".vcf.gz")
-        }) {
-            return Ok(("-vcf", f.to_string_lossy().into_owned()));
-        }
-        // FASTQ — pass the directory; Yleaf processes all FASTQs inside it
-        if entries.iter().any(|f| {
-            let name = f.file_name().unwrap_or_default().to_string_lossy();
-            name.ends_with(".fastq") || name.ends_with(".fastq.gz")
-                || name.ends_with(".fq") || name.ends_with(".fq.gz")
-        }) {
-            return Ok(("-fastq", input.to_string()));
-        }
-
-        Err(format!("No recognized input files found in: {input}"))
-    } else {
-        let name = p.file_name().unwrap_or_default().to_string_lossy();
-        if name.ends_with(".ped")
-            || (name.ends_with(".bed") && p.with_extension("bim").exists())
-        {
-            Ok(("-plink", input.to_string()))
-        } else if name.ends_with(".vcf") || name.ends_with(".vcf.gz") {
-            Ok(("-vcf", input.to_string()))
-        } else if name.ends_with(".cram") {
-            Ok(("-cram", input.to_string()))
-        } else if name.ends_with(".fastq") || name.ends_with(".fastq.gz")
-            || name.ends_with(".fq") || name.ends_with(".fq.gz")
-        {
-            Ok(("-fastq", input.to_string()))
-        } else {
-            Ok(("-bam", input.to_string()))
-        }
+/// Classify a single file by extension into its Yleaf CLI flag.
+fn flag_for_file(p: &std::path::Path) -> Option<&'static str> {
+    let name = p.file_name().unwrap_or_default().to_string_lossy();
+    if name.ends_with(".ped") {
+        return Some("-plink");
     }
+    if name.ends_with(".bed") && p.with_extension("bim").exists() {
+        return Some("-plink");
+    }
+    if name.ends_with(".vcf") || name.ends_with(".vcf.gz") {
+        return Some("-vcf");
+    }
+    if name.ends_with(".cram") {
+        return Some("-cram");
+    }
+    if name.ends_with(".fastq")
+        || name.ends_with(".fastq.gz")
+        || name.ends_with(".fq")
+        || name.ends_with(".fq.gz")
+    {
+        return Some("-fastq");
+    }
+    if name.ends_with(".bam") {
+        return Some("-bam");
+    }
+    None
 }
 
-/// Spawn the Yleaf sidecar with the given arguments.
+/// Detect ALL eligible input types for a file or directory path.
+/// File: returns one element. Directory: returns one element per type found
+/// (BAM, CRAM, VCF, FASTQ, PLINK). For per-file flags (-vcf, -plink) the
+/// resolved_path is the first matching file in the dir; for directory-aware
+/// flags (-bam, -cram, -fastq) it is the directory itself.
+fn resolve_inputs_all(input: &str) -> Result<Vec<(&'static str, String)>, String> {
+    let p = std::path::Path::new(input);
+
+    if !p.is_dir() {
+        // Single file. Unknown extension still falls back to -bam for back-compat.
+        let flag = flag_for_file(p).unwrap_or("-bam");
+        return Ok(vec![(flag, input.to_string())]);
+    }
+
+    let mut entries: Vec<std::path::PathBuf> = std::fs::read_dir(p)
+        .map_err(|e| e.to_string())?
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .collect();
+    entries.sort();
+
+    // Stable order: plink > bam > cram > vcf > fastq (same as old single-pick priority).
+    let mut out: Vec<(&'static str, String)> = Vec::new();
+    let mut seen: std::collections::BTreeSet<&'static str> = std::collections::BTreeSet::new();
+    let push = |flag: &'static str, path: String, seen: &mut std::collections::BTreeSet<&'static str>, out: &mut Vec<(&'static str, String)>| {
+        if seen.insert(flag) {
+            out.push((flag, path));
+        }
+    };
+
+    for f in &entries {
+        let Some(flag) = flag_for_file(f) else { continue };
+        let path = match flag {
+            // Per-file flags: pass the matching file path.
+            "-plink" | "-vcf" => f.to_string_lossy().into_owned(),
+            // Directory-aware flags: pass the parent directory once.
+            _ => input.to_string(),
+        };
+        push(flag, path, &mut seen, &mut out);
+    }
+
+    if out.is_empty() {
+        return Err(format!("No recognized input files found in: {input}"));
+    }
+    // Preserve the historical priority order for predictability.
+    let rank = |f: &&'static str| match *f {
+        "-plink" => 0,
+        "-bam" => 1,
+        "-cram" => 2,
+        "-vcf" => 3,
+        "-fastq" => 4,
+        _ => 99,
+    };
+    out.sort_by_key(|(flag, _)| rank(flag));
+    Ok(out)
+}
+
+/// Spawn the Yleaf sidecar — possibly more than once when the user-selected
+/// directory contains several eligible input types (e.g. BAM + VCF). Each
+/// type becomes its own job row with its own output subdirectory so the
+/// per-type `hg_prediction.hg` / `report.json` outputs don't collide.
 ///
-/// Returns immediately with the new job ID. Progress is streamed via
-/// "yleaf-progress" events; completion via "yleaf-done"; errors via "yleaf-error".
+/// Returns the list of newly-created job IDs (one element in the common
+/// single-type case, multiple when the directory had mixed types).
 #[tauri::command]
 pub async fn run_yleaf(
     app: AppHandle,
@@ -133,75 +145,19 @@ pub async fn run_yleaf(
     private_mutations: bool,
     collapsed_draw_mode: bool,
     mixture_mode: bool,
-) -> Result<i64, String> {
-    let (input_flag, resolved_path) = resolve_input(&bam_path)?;
+) -> Result<Vec<i64>, String> {
+    let inputs = resolve_inputs_all(&bam_path)?;
+    let multi = inputs.len() > 1;
 
-    // Build CLI args
-    let mut args: Vec<String> = vec![
-        input_flag.into(),
-        resolved_path.clone(),
-        "-o".into(),
-        output_dir.clone(),
-        "-rg".into(),
-        reference_genome.clone(),
-        "-t".into(),
-        threads.to_string(),
-        "-r".into(),
-        reads_threshold.to_string(),
-        "-q".into(),
-        quality_thresh.to_string(),
-        "-b".into(),
-        base_majority.to_string(),
-        "-pq".into(),
-        prediction_quality.to_string(),
-        "-tree".into(),
-    ];
-    args.extend(tree.clone());
-    if draw_haplogroups {
-        args.push("-dh".into());
-    }
-    if draw_haplogroups && collapsed_draw_mode {
-        args.push("-hc".into());
-    }
-    if ancient_dna {
-        args.push("-aDNA".into());
-    }
-    if private_mutations {
-        args.push("-p".into());
-    }
-    if mixture_mode {
-        args.push("-mix".into());
-    }
-    args.push("--report-json".into());
-    args.push(format!("{}/report.json", output_dir));
-    args.push("-force".into());
-
-    // Derive a display name from the input filename
-    let sample_name = std::path::Path::new(&resolved_path)
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("unknown")
-        .to_string();
-    let trees_str = tree.join(",");
-
-    // Insert job record
-    let db_arc = Arc::clone(&db.0);
-    let job_id = {
-        let conn = db_arc.lock().map_err(|e| e.to_string())?;
-        db::insert_job(
-            &conn, &sample_name, &resolved_path, &output_dir, &trees_str, now_secs(),
-            &reference_genome, threads as i64, reads_threshold as i64,
-            quality_thresh as i64, base_majority as i64, prediction_quality,
-            draw_haplogroups, ancient_dna, private_mutations, collapsed_draw_mode,
-        ).map_err(|e| e.to_string())?
-    };
-
-    // Kill any existing process targeting the same output directory (zombie from a previous session)
+    // Kill any zombie that targeted the base output_dir (previous-session leftover).
+    // Do this ONCE up front so it doesn't clobber siblings we're about to spawn.
     {
         let mut map = active_child.0.lock().unwrap();
         let to_kill: Vec<i64> = map
             .iter()
-            .filter(|(_, (dir, _))| dir == &output_dir)
+            .filter(|(_, (dir, _))| {
+                dir == &output_dir || std::path::Path::new(dir).starts_with(&output_dir)
+            })
             .map(|(id, _)| *id)
             .collect();
         for id in to_kill {
@@ -211,29 +167,113 @@ pub async fn run_yleaf(
         }
     }
 
-    // Spawn sidecar — pass persistent data dir so downloaded references survive restarts
+    let mut spawned_ids: Vec<i64> = Vec::with_capacity(inputs.len());
+    let trees_str = tree.join(",");
     let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    let sidecar = app
-        .shell()
-        .sidecar("yleaf")
-        .map_err(|e| e.to_string())?
-        .env("YLEAF_DATA_DIR", app_data_dir.to_string_lossy().as_ref())
-        .env("PYTHONUNBUFFERED", "1")
-        .args(&args);
 
-    app.emit("yleaf-progress", ProgressPayload {
-        job_id,
-        line: "Starting Yleaf (first run may take a few minutes while the reference genome is prepared)...".to_string(),
-    }).ok();
-    let (mut rx, child) = sidecar.spawn().map_err(|e| e.to_string())?;
-    active_child.0.lock().unwrap().insert(job_id, (output_dir.clone(), child));
+    for (input_flag, resolved_path) in inputs {
+        // Per-type output subdir when multiple types were detected; otherwise
+        // keep the user-chosen output_dir unchanged (back-compat).
+        let job_output_dir = if multi {
+            let sub = input_flag.trim_start_matches('-');
+            format!("{}/{}", output_dir.trim_end_matches('/'), sub)
+        } else {
+            output_dir.clone()
+        };
+        if multi {
+            std::fs::create_dir_all(&job_output_dir)
+                .map_err(|e| format!("create {job_output_dir}: {e}"))?;
+        }
 
-    // Background task: stream events + update DB on completion
-    let app_clone = app.clone();
-    let active_child_arc = active_child.0.clone();
-    let output_dir_clone = output_dir.clone();
-    let trees_clone = tree.clone();
-    tauri::async_runtime::spawn(async move {
+        // Build CLI args for this type
+        let mut args: Vec<String> = vec![
+            input_flag.into(),
+            resolved_path.clone(),
+            "-o".into(),
+            job_output_dir.clone(),
+            "-rg".into(),
+            reference_genome.clone(),
+            "-t".into(),
+            threads.to_string(),
+            "-r".into(),
+            reads_threshold.to_string(),
+            "-q".into(),
+            quality_thresh.to_string(),
+            "-b".into(),
+            base_majority.to_string(),
+            "-pq".into(),
+            prediction_quality.to_string(),
+            "-tree".into(),
+        ];
+        args.extend(tree.clone());
+        if draw_haplogroups {
+            args.push("-dh".into());
+        }
+        if draw_haplogroups && collapsed_draw_mode {
+            args.push("-hc".into());
+        }
+        if ancient_dna {
+            args.push("-aDNA".into());
+        }
+        if private_mutations {
+            args.push("-p".into());
+        }
+        if mixture_mode {
+            args.push("-mix".into());
+        }
+        args.push("--report-json".into());
+        args.push(format!("{}/report.json", job_output_dir));
+        args.push("-force".into());
+
+        // Display name: file stem; for mixed dirs annotate with the type tag
+        // so the job list distinguishes "<dir>" entries.
+        let base_name = std::path::Path::new(&resolved_path)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("unknown")
+            .to_string();
+        let sample_name = if multi {
+            format!("{} [{}]", base_name, input_flag.trim_start_matches('-'))
+        } else {
+            base_name
+        };
+
+        // Insert job record
+        let db_arc = Arc::clone(&db.0);
+        let job_id = {
+            let conn = db_arc.lock().map_err(|e| e.to_string())?;
+            db::insert_job(
+                &conn, &sample_name, &resolved_path, &job_output_dir, &trees_str, now_secs(),
+                &reference_genome, threads as i64, reads_threshold as i64,
+                quality_thresh as i64, base_majority as i64, prediction_quality,
+                draw_haplogroups, ancient_dna, private_mutations, collapsed_draw_mode,
+            ).map_err(|e| e.to_string())?
+        };
+
+        // Spawn sidecar — pass persistent data dir so downloaded references survive restarts
+        let sidecar = app
+            .shell()
+            .sidecar("yleaf")
+            .map_err(|e| e.to_string())?
+            .env("YLEAF_DATA_DIR", app_data_dir.to_string_lossy().as_ref())
+            .env("PYTHONUNBUFFERED", "1")
+            .args(&args);
+
+        app.emit("yleaf-progress", ProgressPayload {
+            job_id,
+            line: "Starting Yleaf (first run may take a few minutes while the reference genome is prepared)...".to_string(),
+        }).ok();
+        let (mut rx, child) = sidecar.spawn().map_err(|e| e.to_string())?;
+        active_child.0.lock().unwrap().insert(job_id, (job_output_dir.clone(), child));
+
+        // Background task: stream events + update DB on completion
+        let app_clone = app.clone();
+        let active_child_arc = active_child.0.clone();
+        let output_dir_clone = job_output_dir.clone();
+        let trees_clone = tree.clone();
+        let db_arc_for_task = Arc::clone(&db.0);
+        tauri::async_runtime::spawn(async move {
+            let db_arc = db_arc_for_task;
         while let Some(event) = rx.recv().await {
             match event {
                 CommandEvent::Stdout(bytes) | CommandEvent::Stderr(bytes) => {
@@ -314,7 +354,10 @@ pub async fn run_yleaf(
         }
     });
 
-    Ok(job_id)
+        spawned_ids.push(job_id);
+    }
+
+    Ok(spawned_ids)
 }
 
 #[tauri::command]

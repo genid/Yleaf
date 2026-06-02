@@ -772,7 +772,7 @@
     if (isLaunching) return;
     isLaunching = true;
     try {
-      const jobId = await invoke<number>("run_yleaf", {
+      const jobIds = await invoke<number[]>("run_yleaf", {
         bamPath: bamPath.trim(),
         outputDir: outputDir.trim(),
         referenceGenome,
@@ -788,9 +788,12 @@
         privateMutations,
         mixtureMode,
       });
-      runningJobIds.add(jobId);
-      jobLogs.set(jobId, []);
-      logJobId = jobId;
+      for (const jobId of jobIds) {
+        runningJobIds.add(jobId);
+        jobLogs.set(jobId, []);
+      }
+      // Show the first job's log; the user can click others in the job list.
+      if (jobIds.length > 0) logJobId = jobIds[0];
       await refreshJobs();
     } catch (e) {
       jobLogs.set(-1, [`Failed to start: ${String(e)}`]);
