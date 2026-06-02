@@ -270,6 +270,11 @@
   let privateMutations = $state(false);
   let mixtureMode = $state(false);
 
+  // Set to the temp dir path when the user multi-selected files via Browse
+  // file; cleaned up on newRun(). Empty when bamPath points at a real file
+  // or a user-picked directory.
+  let batchStageDir = $state("");
+
   interface ProgressBar { stage: string; current: number; total: number; }
   interface ProgressBarPayload { job_id: number; stage: string; current: number; total: number; }
 
@@ -675,6 +680,13 @@
   }
 
   function newRun() {
+    if (batchStageDir) {
+      const dir = batchStageDir;
+      invoke("cleanup_batch_dir", { dir }).catch((e) =>
+        console.error("cleanup_batch_dir failed:", e),
+      );
+      batchStageDir = "";
+    }
     bamPath = "";
     outputDir = "";
     referenceGenome = "hg38";
@@ -707,8 +719,32 @@
 
   async function browseInputFile() {
     try { await getCurrentWindow().maximize(); } catch (_) {}
-    const result = await open({ multiple: false, directory: false, filters: INPUT_FILTERS });
-    if (result) bamPath = result as string;
+    const result = await open({ multiple: true, directory: false, filters: INPUT_FILTERS });
+    if (!result) return;
+    const picked = (Array.isArray(result) ? result : [result]) as string[];
+    if (picked.length === 0) return;
+
+    // Drop any stale batch staging from a previous selection.
+    if (batchStageDir) {
+      try { await invoke("cleanup_batch_dir", { dir: batchStageDir }); } catch (_) {}
+      batchStageDir = "";
+    }
+
+    if (picked.length === 1) {
+      bamPath = picked[0];
+      return;
+    }
+    // Multiple files: stage them in a temp dir and point bamPath at it so
+    // Yleaf's directory-mode pipeline processes them all in parallel.
+    try {
+      const staged = await invoke<string>("stage_batch_files", { paths: picked });
+      batchStageDir = staged;
+      bamPath = staged;
+    } catch (e) {
+      console.error("stage_batch_files failed:", e);
+      // Fall back to the first file so the user isn't stuck.
+      bamPath = picked[0];
+    }
   }
 
   async function browseInputDir() {

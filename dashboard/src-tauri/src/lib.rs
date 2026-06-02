@@ -1,3 +1,4 @@
+mod batch;
 mod db;
 mod jobs;
 mod results;
@@ -57,6 +58,8 @@ pub fn run() {
             uysd::uysd_poll_result,
             uysd::uysd_resolve_map_url,
             uysd::uysd_get_known_locations,
+            batch::stage_batch_files,
+            batch::cleanup_batch_dir,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
