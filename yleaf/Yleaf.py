@@ -904,6 +904,7 @@ def main():
 
     args = get_arguments()
     out_folder = Path(args.output)
+    _check_output_not_input(args, out_folder)
     safe_create_dir(out_folder, args.force, reuse_pileup=getattr(args, 'reuse_pileup', False))
     setup_logger(out_folder)
 
@@ -1145,6 +1146,29 @@ def setup_logger(
     LOG.addHandler(file_handler)
 
     LOG.debug("Logger created")
+
+
+def _check_output_not_input(args: argparse.Namespace, out_folder: Path):
+    """Abort if the output folder is the same as, or an ancestor of, the input.
+
+    safe_create_dir() deletes a pre-existing output folder with shutil.rmtree().
+    If the user points the output at their input folder (or a parent of it), that
+    deletion destroys the input data (e.g. the source BAMs). Refuse early so no
+    deletion ever happens in that case."""
+    input_path = (args.bamfile or args.cramfile or args.fastq
+                  or args.vcffile or args.plinkfile)
+    if input_path is None:
+        return
+    out = Path(out_folder).resolve()
+    inp = Path(input_path).resolve()
+    # If the input is a file, deleting its parent folder destroys it too.
+    inp_dir = inp if inp.is_dir() else inp.parent
+    if out == inp or out == inp_dir or out in inp_dir.parents:
+        LOG.error(
+            f"Output folder '{out}' is the same as (or contains) the input "
+            f"'{inp}'. Yleaf clears the output folder before running, which would "
+            f"delete your input data. Choose a separate output directory.")
+        sys.exit(1)
 
 
 def safe_create_dir(
