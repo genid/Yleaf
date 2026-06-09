@@ -6137,7 +6137,7 @@ dependencies = [
 
 [[package]]
 name = "yleaf-dashboard"
-version = "4.1.2"
+version = "4.1.3"
 dependencies = [
  "reqwest 0.12.28",
  "rusqlite",
