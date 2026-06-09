@@ -12,26 +12,52 @@
 The easiest way to use Yleaf is through the graphical dashboard. Download the installer for your platform from the [releases page](https://github.com/genid/Yleaf/releases):
 
 **Windows**
-- Download `Yleaf.4.1_4.1.0_x64-setup.exe` (or `Yleaf.4.1_4.1.0_x64_en-US.msi`) and run the installer.
+- Download `Yleaf.4.1_4.1.3_x64-setup.exe` (or `Yleaf.4.1_4.1.3_x64_en-US.msi`) and run the installer.
 - Launch **Yleaf 4.1** from the Start menu.
 
 **macOS** (Apple Silicon)
-- Download `Yleaf.4.1_4.1.0_aarch64.dmg`, open it, and drag **Yleaf 4.1** to your Applications folder.
+- Download `Yleaf.4.1_4.1.3_aarch64.dmg`, open it, and drag **Yleaf 4.1** to your Applications folder.
 - Open **Yleaf 4.1** from Applications.
 
 > **"Yleaf 4.1 is damaged and can't be opened" (Gatekeeper warning)**
 > macOS blocks apps that are not code-signed with a paid Apple Developer ID certificate.
 > To bypass this, run the following command in Terminal **before** opening the DMG:
 > ```bash
-> xattr -cr ~/Downloads/Yleaf.4.1_4.1.0_aarch64.dmg
+> xattr -cr ~/Downloads/Yleaf.4.1_4.1.3_aarch64.dmg
 > ```
 > Then open the DMG and drag the app to Applications. On the first launch you may need to right-click the app → **Open** instead of double-clicking.
 
 **Linux**
-- `.AppImage`: download `Yleaf.4.1_4.1.0_amd64.AppImage`, make it executable (`chmod +x`), and run directly.
-- `.deb`: install with `sudo dpkg -i Yleaf.4.1_4.1.0_amd64.deb` and launch from your application menu.
+- `.AppImage`: download `Yleaf.4.1_4.1.3_amd64.AppImage`, make it executable (`chmod +x`), and run directly.
+- `.deb`: install with `sudo dpkg -i Yleaf.4.1_4.1.3_amd64.deb` and launch from your application menu.
 
 No Python, samtools, or other tools need to be installed separately — everything is bundled.
+
+### Portable dashboard (no installation)
+
+If you cannot (or prefer not to) run an installer, download the portable zip for
+your platform from the [releases page](https://github.com/genid/Yleaf/releases),
+unzip it anywhere (e.g. a USB stick), and run the app directly — no admin rights
+and no installation required. Like the installers, everything (Python, samtools,
+minimap2, bcftools) is bundled.
+
+**Windows** — `yleaf-dashboard-windows-portable.zip`
+- Unzip and double-click `yleaf-dashboard.exe`. Keep `yleaf.exe` next to it (the
+  analysis engine the app launches).
+- Requires the **Microsoft Edge WebView2 runtime**, which is preinstalled on
+  Windows 10/11. On older systems install it once from
+  [Microsoft](https://developer.microsoft.com/microsoft-edge/webview2/).
+- The app is unsigned, so SmartScreen may show a warning on first launch —
+  choose **More info → Run anyway**.
+
+**macOS** (Apple Silicon) — `yleaf-dashboard-macos-portable.zip`
+- Unzip and double-click **Yleaf 4.1** to run (no need to move it to Applications).
+- The same Gatekeeper note as above applies; if it reports the app is "damaged",
+  run `xattr -cr` on the unzipped `.app` first.
+
+**Linux** — `yleaf-dashboard-linux-portable.zip`
+- Unzip to get the `.AppImage`, make it executable (`chmod +x`), and run it
+  directly.
 
 ### UYSD (Y-SNP Database) integration
 
