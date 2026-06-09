@@ -336,6 +336,41 @@ jobs:
         working-directory: dashboard
         run: npm run tauri build
 
+      # ── Package portable (no-install) dashboard zips ──────────────────────
+      # Linux: the AppImage already bundles WebKitGTK, so it is the portable
+      # unit — just zip it.
+      - name: Package portable dashboard (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          zip -j yleaf-dashboard-linux-portable.zip \
+            dashboard/src-tauri/target/release/bundle/appimage/*.AppImage
+          ls -la yleaf-dashboard-linux-portable.zip
+
+      # macOS: the .app bundle is self-contained (sidecar lives in
+      # Contents/MacOS) and runs by double-click — zip it with ditto so the
+      # bundle structure, symlinks and exec bits are preserved.
+      - name: Package portable dashboard (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          APP=$(ls -d dashboard/src-tauri/target/release/bundle/macos/*.app | head -1)
+          ditto -c -k --sequesterRsrc --keepParent "$APP" yleaf-dashboard-macos-portable.zip
+          ls -la yleaf-dashboard-macos-portable.zip
+
+      # Windows: assemble the raw GUI exe next to the sidecar, renamed to the
+      # name Tauri resolves at runtime (yleaf.exe, target triple stripped).
+      # Relies on the system WebView2 runtime (preinstalled on Win10/11).
+      - name: Package portable dashboard (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path portable | Out-Null
+          Copy-Item "dashboard\src-tauri\target\release\yleaf-dashboard.exe" "portable\yleaf-dashboard.exe"
+          Copy-Item "dashboard\src-tauri\binaries\yleaf-${{ matrix.tauri_target }}.exe" "portable\yleaf.exe"
+          Compress-Archive -Path portable\* -DestinationPath yleaf-dashboard-windows-portable.zip -Force
+          Get-ChildItem yleaf-dashboard-windows-portable.zip
+
       # ── Collect and upload installer artifacts ────────────────────────────
       - name: Upload Linux installers
         if: runner.os == 'Linux'
@@ -345,13 +380,16 @@ jobs:
           path: |
             dashboard/src-tauri/target/release/bundle/appimage/*.AppImage
             dashboard/src-tauri/target/release/bundle/deb/*.deb
+            yleaf-dashboard-linux-portable.zip
 
       - name: Upload macOS installer
         if: runner.os == 'macOS'
         uses: actions/upload-artifact@v4
         with:
           name: dashboard-macos
-          path: dashboard/src-tauri/target/release/bundle/dmg/*.dmg
+          path: |
+            dashboard/src-tauri/target/release/bundle/dmg/*.dmg
+            yleaf-dashboard-macos-portable.zip
 
       - name: Upload Windows installers
         if: runner.os == 'Windows'
@@ -361,6 +399,7 @@ jobs:
           path: |
             dashboard/src-tauri/target/release/bundle/nsis/*.exe
             dashboard/src-tauri/target/release/bundle/msi/*.msi
+            yleaf-dashboard-windows-portable.zip
 
   # ── Create GitHub Release with all artifacts ───────────────────────────────
   release:
@@ -405,7 +444,7 @@ jobs:
           # preserves subdirectory structure when multiple paths are specified
           while IFS= read -r -d '' f; do
             ASSETS+=("$f")
-          done < <(find . \( -name "*.AppImage" -o -name "*.deb" -o -name "*.dmg" -o -name "*.exe" -o -name "*.msi" \) -print0)
+          done < <(find . \( -name "*.AppImage" -o -name "*.deb" -o -name "*.dmg" -o -name "*.exe" -o -name "*.msi" -o -name "*-portable.zip" \) -print0)
           if gh release view ${{ github.ref_name }} &>/dev/null; then
             gh release upload ${{ github.ref_name }} "${ASSETS[@]}" --clobber
           else
