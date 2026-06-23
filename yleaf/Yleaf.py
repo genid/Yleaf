@@ -355,9 +355,13 @@ def run_vcf(
     # chrY.fa without needing reads at that position.  Without this the
     # prediction sees only the variant-position markers (a few hundred to a
     # few thousand) and the QC score collapses to NA for real WGS inputs.
-    df_out, inferred_count = _infer_from_reference(
-        df_out, full_markerfile, intersect_pos, _WORKER_CHRY_SEQ
-    )
+    if getattr(args, 'no_ref_inference', False):
+        # --no-ref-inference: predict from genotyped markers only (targeted panels).
+        inferred_count = 0
+    else:
+        df_out, inferred_count = _infer_from_reference(
+            df_out, full_markerfile, intersect_pos, _WORKER_CHRY_SEQ
+        )
 
     general_info_list.append("Markers with zero reads: " + str(len(df_belowzero)))
     general_info_list.append(
@@ -1024,6 +1028,13 @@ def get_arguments() -> argparse.Namespace:
                         action="store_true")
     parser.add_argument("-force", "--force", action="store_true",
                         help="Delete files without asking")
+    parser.add_argument("--no-ref-inference", dest="no_ref_inference", action="store_true",
+                        help="VCF input only: do not infer the state of marker positions that are "
+                             "absent from the VCF from the reference genome. By default Yleaf assumes "
+                             "such positions match the reference allele (correct for WGS, where absence "
+                             "means the site was sequenced and matched). Use this flag for targeted-panel "
+                             "VCFs, where untyped positions were never sequenced, to predict from the "
+                             "genotyped markers only.")
     parser.add_argument("-rg", "--reference_genome",
                         help="The reference genome build to be used (hg19, hg38, or t2t). "
                              "For BAM/CRAM input this can be omitted — Yleaf will auto-detect the build "
