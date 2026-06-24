@@ -109,7 +109,7 @@ def _init_vcf_worker(markerfile_path: Path, reference_genome: str, tree_name: st
         names=["chr", "marker_name", "haplogroup", "pos", "mutation", "anc", "der"],
         dtype={"chr": str, "marker_name": str, "haplogroup": str,
                "pos": int, "mutation": str, "anc": str, "der": str},
-    ).drop_duplicates(subset='pos', keep='first')
+    ).drop_duplicates(subset=['haplogroup', 'pos'], keep='first')
     _WORKER_CHRY_SEQ = _load_chry_seq(reference_genome)
     if tree_name:
         _WORKER_TREE = Tree(get_tree_path(tree_name))
@@ -185,7 +185,7 @@ def run_vcf(
             names=["chr", "marker_name", "haplogroup", "pos", "mutation", "anc", "der"],
             dtype={"chr": str, "marker_name": str, "haplogroup": str,
                    "pos": int, "mutation": str, "anc": str, "der": str},
-        ).drop_duplicates(subset='pos', keep='first', inplace=False)
+        ).drop_duplicates(subset=['haplogroup', 'pos'], keep='first', inplace=False)
         _WORKER_MARKERFILE_CACHE[_mf_key] = markerfile
 
     sample_vcf_folder = base_out_folder / _vcf_stem(sample_vcf_file)
@@ -625,7 +625,7 @@ def main_plink(args: argparse.Namespace, base_out_folder: Path):
         names=["chr", "marker_name", "haplogroup", "pos", "mutation", "anc", "der"],
         dtype={"chr": str, "marker_name": str, "haplogroup": str,
                "pos": int, "mutation": str, "anc": str, "der": str},
-    ).drop_duplicates(subset='pos', keep='first')
+    ).drop_duplicates(subset=['haplogroup', 'pos'], keep='first')
 
     for sample_id, sample_y_genos in y_genos.items():
         sample_folder = base_out_folder / sample_id
@@ -652,7 +652,7 @@ def main_plink_multi_tree(args: argparse.Namespace, base_out_folder: Path, trees
             names=["chr", "marker_name", "haplogroup", "pos", "mutation", "anc", "der"],
             dtype={"chr": str, "marker_name": str, "haplogroup": str,
                    "pos": int, "mutation": str, "anc": str, "der": str},
-        ).drop_duplicates(subset='pos', keep='first')
+        ).drop_duplicates(subset=['haplogroup', 'pos'], keep='first')
         for sample_id, sample_y_genos in y_genos.items():
             _write_plink_sample_out(sample_id, sample_y_genos, markerfile,
                                     base_out_folder / sample_id, args,
@@ -2280,7 +2280,7 @@ def extract_haplogroups(
     LOG.debug("Starting with extracting haplogroups...")
     markerfile = pd.read_csv(path_markerfile, header=None, sep="\t")
     markerfile.columns = ["chr", "marker_name", "haplogroup", "pos", "mutation", "anc", "der"]
-    markerfile = markerfile.drop_duplicates(subset='pos', keep='first', inplace=False)
+    markerfile = markerfile.drop_duplicates(subset=['haplogroup', 'pos'], keep='first', inplace=False)
 
     # packagemanagement is the best
     try:
@@ -2331,10 +2331,19 @@ def extract_haplogroups(
     df = df.drop(['refbase', 'align', 'quality'], axis=1)
 
     list_col_indices = np.argmax(df_freq_table.values, axis=1)
-    called_base = df_freq_table.columns[list_col_indices]  # noqa
+    per_pos_called_base = df_freq_table.columns[list_col_indices]  # noqa
     total_count_bases = np.sum(df_freq_table.values, axis=1)
-    max_count_bases = np.max(df_freq_table, axis=1)
-    called_perc = round((max_count_bases / total_count_bases) * 100, 1)
+    max_count_bases = np.max(df_freq_table.values, axis=1)
+    per_pos_called_perc = np.round((max_count_bases / total_count_bases) * 100, 1)
+
+    # df_freq_table is keyed by unique position, but df may hold several rows per
+    # position — a recurrent/homoplastic SNP is kept once per haplogroup by the
+    # per-(haplogroup, pos) dedup.  Map each per-position call onto every df row by
+    # position so the arrays align with df instead of assuming a 1:1 layout.
+    base_by_pos = dict(zip(df_freq_table.index, per_pos_called_base))
+    perc_by_pos = dict(zip(df_freq_table.index, per_pos_called_perc))
+    called_base = df['pos'].map(base_by_pos).values
+    called_perc = df['pos'].map(perc_by_pos).values
 
     bool_anc = np.equal(np.array(called_base), df["anc"].values)
     bool_der = np.equal(np.array(called_base), df["der"].values)
