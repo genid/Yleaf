@@ -39,7 +39,7 @@ import datetime
 
 from yleaf import __version__
 from yleaf.tree import Tree
-from yleaf import yleaf_constants, download_reference
+from yleaf import yleaf_constants, download_reference, update_check
 
 pd.options.mode.chained_assignment = None  # default='warn'
 
@@ -914,6 +914,9 @@ def main():
 
     LOG.info(f"Running Yleaf with command: {' '.join(sys.argv)}")
 
+    if not getattr(args, 'no_update_check', False):
+        update_check.log_update_notice(__version__)
+
     if args.mixture and args.base_majority < 99:
         LOG.info("Mixture mode active: overriding base majority to 99%")
         args.base_majority = 99
@@ -1108,6 +1111,11 @@ def get_arguments() -> argparse.Namespace:
                              "estimate mixture ratios, and assign a haplogroup per contributor. "
                              "Requires per-allele read counts (BAM/CRAM or VCF with FORMAT/AD). "
                              "Sets --base_majority to 99%% unless explicitly overridden.")
+
+    parser.add_argument("--no-update-check", dest="no_update_check", action="store_true",
+                        help="Do not check GitHub for a newer Yleaf release at startup. The check is "
+                             "notice-only and never modifies the installation; it can also be disabled "
+                             "by setting the YLEAF_NO_UPDATE_CHECK environment variable.")
 
     parser.add_argument("--report-json", dest="report_json", default=None, metavar="FILE",
                         help="Write a structured JSON report to FILE alongside the normal TSV output. "

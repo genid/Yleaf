@@ -234,6 +234,19 @@ By default Yleaf downloads the reference genome on first run. To skip the downlo
 
 Alternatively, set the `YLEAF_REF_DIR` environment variable to a directory containing files named `hg38.fa` (or `.fasta`/`.fna`) and Yleaf will find the right one automatically. You can also edit `yleaf/config.txt` to set persistent paths for each build.
 
+### Update check
+
+At startup Yleaf asks GitHub whether a newer release exists and, if so, logs a single line
+pointing at the releases page. It never modifies your installation — upgrading stays a
+deliberate step, which matters because Yleaf is installed in several different ways and
+analyses should stay reproducible.
+
+The check is best-effort: it times out after two seconds, caches its answer for 24 hours,
+and is silently skipped when the machine is offline. Disable it with `--no-update-check`,
+or by setting `YLEAF_NO_UPDATE_CHECK=1` for offline clusters:
+
+    Yleaf -bam file.bam -o output --reference_genome hg38 --no-update-check
+
 ## Additional information
 
 For a more comprehensive manual please have a look at the [yleaf_manual](yleaf_manual.pdf).
