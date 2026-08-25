@@ -461,7 +461,11 @@ def get_qc1_score(
                     score[0] += 1  # matches or undetermined — no penalty
     else:
         for name, marker_linker in intermediate_states.items():
-            expected_possible_states = expected_states[name]
+            expected_possible_states = expected_states.get(name)
+            if expected_possible_states is None:
+                # no expectation recorded for this backbone node — treat as
+                # neutral instead of crashing, matching the FTDNA branch above
+                continue
             state = marker_linker.get_state()
             if state in expected_possible_states:
                 score[0] += 1
