@@ -2,6 +2,7 @@ mod batch;
 mod db;
 mod jobs;
 mod results;
+mod update;
 mod uysd;
 
 use std::collections::HashMap;
@@ -58,6 +59,7 @@ pub fn run() {
             uysd::uysd_poll_result,
             uysd::uysd_resolve_map_url,
             uysd::uysd_get_known_locations,
+            update::check_for_update,
             batch::stage_batch_files,
             batch::cleanup_batch_dir,
         ])

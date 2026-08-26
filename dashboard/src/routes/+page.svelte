@@ -94,6 +94,28 @@
     localStorage.setItem("theme", darkMode ? "dark" : "light");
   });
 
+  // ── Update notice ─────────────────────────────────────────────────────────
+  interface UpdateInfo { current: string; latest: string; url: string }
+  let updateInfo = $state<UpdateInfo | null>(null);
+
+  /** Ask GitHub whether a newer release exists. Silent when up to date, when
+   *  offline, or when the user already dismissed this particular version. */
+  async function checkForUpdate() {
+    try {
+      const info = await invoke<UpdateInfo | null>("check_for_update");
+      if (info && localStorage.getItem("update-dismissed") !== info.latest) {
+        updateInfo = info;
+      }
+    } catch {
+      // never let a failed check affect the app
+    }
+  }
+
+  function dismissUpdate() {
+    if (updateInfo) localStorage.setItem("update-dismissed", updateInfo.latest);
+    updateInfo = null;
+  }
+
   // ── App state ────────────────────────────────────────────────────────────
   type View = "submit" | "result";
   let view = $state<View>("submit");
@@ -834,6 +856,9 @@
     // Pre-warm the UYSD known-locations cache so the submit panel's datalists
     // are populated by the time the user opens it (saves a visible ~500 ms).
     ensureKnownLocations();
+    // Not awaited: the banner appears whenever the answer arrives, and a slow
+    // or unreachable GitHub must never delay the UI.
+    checkForUpdate();
     unlisteners = await Promise.all([
       listen<{ job_id: number; line: string }>("yleaf-progress", (e) => {
         const { job_id, line } = e.payload;
@@ -999,6 +1024,23 @@
 
   <!-- ── Center panel ── -->
   <main class="flex-1 overflow-y-auto border-r border-slate-200 dark:border-well">
+
+    {#if updateInfo}
+      <div class="flex items-center gap-3 px-6 py-2.5 text-[0.76rem] border-b
+                  bg-brand/10 border-brand/30 text-slate-700 dark:text-pale">
+        <span class="flex-1">
+          Yleaf <strong>{updateInfo.latest}</strong> is available
+          &mdash; you are running {updateInfo.current}.
+        </span>
+        <button onclick={() => openUrl(updateInfo!.url)}
+                class="px-2.5 py-1 rounded font-medium bg-brand text-white hover:opacity-90">
+          Download
+        </button>
+        <button onclick={dismissUpdate}
+                class="px-2 py-1 rounded text-slate-500 dark:text-muted hover:opacity-70"
+                aria-label="Dismiss update notice">&times;</button>
+      </div>
+    {/if}
 
     {#if view === "submit"}
       <div class="p-6 flex flex-col gap-5 w-full">
