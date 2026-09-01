@@ -12,24 +12,24 @@
 The easiest way to use Yleaf is through the graphical dashboard. Download the installer for your platform from the [releases page](https://github.com/genid/Yleaf/releases):
 
 **Windows**
-- Download `Yleaf.4.1_4.1.4_x64-setup.exe` (or `Yleaf.4.1_4.1.4_x64_en-US.msi`) and run the installer.
+- Download `Yleaf.4.1_4.1.5_x64-setup.exe` (or `Yleaf.4.1_4.1.5_x64_en-US.msi`) and run the installer.
 - Launch **Yleaf 4.1** from the Start menu.
 
 **macOS** (Apple Silicon)
-- Download `Yleaf.4.1_4.1.4_aarch64.dmg`, open it, and drag **Yleaf 4.1** to your Applications folder.
+- Download `Yleaf.4.1_4.1.5_aarch64.dmg`, open it, and drag **Yleaf 4.1** to your Applications folder.
 - Open **Yleaf 4.1** from Applications.
 
 > **"Yleaf 4.1 is damaged and can't be opened" (Gatekeeper warning)**
 > macOS blocks apps that are not code-signed with a paid Apple Developer ID certificate.
 > To bypass this, run the following command in Terminal **before** opening the DMG:
 > ```bash
-> xattr -cr ~/Downloads/Yleaf.4.1_4.1.4_aarch64.dmg
+> xattr -cr ~/Downloads/Yleaf.4.1_4.1.5_aarch64.dmg
 > ```
 > Then open the DMG and drag the app to Applications. On the first launch you may need to right-click the app → **Open** instead of double-clicking.
 
 **Linux**
-- `.AppImage`: download `Yleaf.4.1_4.1.4_amd64.AppImage`, make it executable (`chmod +x`), and run directly.
-- `.deb`: install with `sudo dpkg -i Yleaf.4.1_4.1.4_amd64.deb` and launch from your application menu.
+- `.AppImage`: download `Yleaf.4.1_4.1.5_amd64.AppImage`, make it executable (`chmod +x`), and run directly.
+- `.deb`: install with `sudo dpkg -i Yleaf.4.1_4.1.5_amd64.deb` and launch from your application menu.
 
 No Python, samtools, or other tools need to be installed separately — everything is bundled.
 
