@@ -428,8 +428,10 @@ jobs:
           else
             PREV=$(git tag --sort=-v:refname | sed -n '2p')
             RANGE="${PREV:+${PREV}..}HEAD"
+            # Drop housekeeping commits (chore/ci/docs, with optional scope) so
+            # the notes show only user-facing changes.
             git log $RANGE --pretty=format:"- %s" \
-              | grep -v "Co-Authored-By" > release_notes.txt
+              | grep -viE "Co-Authored-By|^- (chore|ci|docs)(\([^)]*\))?:" > release_notes.txt
           fi
           cat release_notes.txt
 
