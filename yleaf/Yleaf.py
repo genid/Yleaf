@@ -2262,11 +2262,14 @@ def execute_mpileup(
         bam_file: Path,
         pileupfile: Path,
         quality_thresh: float,
-        reference: Union[Path, None]
+        reference: Union[Path, None],
+        region: Union[str, None] = None
 ):
     cmd = "samtools mpileup"
     if bed is not None:
         cmd += f' -l "{bed}"'
+    if region is not None:
+        cmd += f' -r "{region}"'
 
     if reference is not None:
         cmd += f' -f "{reference}"'
@@ -2514,7 +2517,11 @@ def find_private_mutations(
     # run mpileup
     pileup_file = output_folder / "temp_private_mutation_pileup.pu"
     # CRAM must be decoded with its own reference; chrY.fa lacks the other contigs and samtools hangs fetching them
-    execute_mpileup(None, path_file, pileup_file, args.quality_thresh, args.cram_reference if not is_bam else None)
+    # only the Y contig is used below, so do not pile up the whole genome
+    header = subprocess.run(f'samtools view -H "{path_file}"', shell=True, capture_output=True, text=True).stdout
+    y_contig = "Y" if "\tSN:Y\t" in header else "chrY"
+    execute_mpileup(None, path_file, pileup_file, args.quality_thresh, args.cram_reference if not is_bam else None,
+                    region=y_contig)
 
     LOG.debug("Loading reference files")
 
