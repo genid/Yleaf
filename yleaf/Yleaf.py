@@ -2532,7 +2532,7 @@ def find_private_mutations(
             except ValueError:
                 LOG.warning(f"failed to read line {index} of pileupfile")
                 continue
-            if chrom != "chrY":
+            if chrom not in ("chrY", "Y"):
                 continue
             # not enough reads
             if int(count) < args.reads_treshold:
