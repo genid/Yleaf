@@ -2513,7 +2513,8 @@ def find_private_mutations(
 
     # run mpileup
     pileup_file = output_folder / "temp_private_mutation_pileup.pu"
-    execute_mpileup(None, path_file, pileup_file, args.quality_thresh, snp_reference_file if not is_bam else None)
+    # CRAM must be decoded with its own reference; chrY.fa lacks the other contigs and samtools hangs fetching them
+    execute_mpileup(None, path_file, pileup_file, args.quality_thresh, args.cram_reference if not is_bam else None)
 
     LOG.debug("Loading reference files")
 
