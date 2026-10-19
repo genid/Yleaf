@@ -2533,6 +2533,7 @@ def find_private_mutations(
     LOG.debug("Finding private mutations...")
     private_mutations = []
     confirmed_private_mutations = []
+    y_lines = 0
     with open(pileup_file) as f:
         for index, line in enumerate(f):
             try:
@@ -2542,6 +2543,7 @@ def find_private_mutations(
                 continue
             if chrom not in ("chrY", "Y"):
                 continue
+            y_lines += 1
             # not enough reads
             if int(count) < args.reads_treshold:
                 continue
@@ -2586,6 +2588,9 @@ def find_private_mutations(
                                                    f"{major_allele}\t{actual_allele}\t{allele_count}\t"
                                                    f"{called_percentage}\t{frequency}\n")
     os.remove(pileup_file)
+    if y_lines == 0:
+        LOG.warning(f"Private mutations: no reads on {y_contig} passed the quality filters for {path_file.name}; "
+                    f"the .pmu file will be empty.")
     with open(output_folder / f"{output_folder.name}.pmu", "w") as f:
         f.write(f"chrom\tposition\trn_no\tmutation\treference\tdetected\treads\tcalled_percentage\t"
                 f"minor allele frequency\n")
