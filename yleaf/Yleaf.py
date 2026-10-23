@@ -1574,7 +1574,8 @@ def _run_bam_cram_multi_tree_inner(
             mpileup_input, mpileup_ref = tmp_chry_bam, None
         else:
             mpileup_input, mpileup_ref = input_file, None
-        execute_mpileup(merged_bed, mpileup_input, pileupfile, args.quality_thresh, mpileup_ref)
+        execute_mpileup(merged_bed, mpileup_input, pileupfile, args.quality_thresh, mpileup_ref,
+                        region=header)
         os.remove(merged_bed)
         if tmp_chry_bam is not None and tmp_chry_bam.exists():
             tmp_chry_bam.unlink()
@@ -2134,7 +2135,8 @@ def samtools(
     else:
         bed = output_folder / "temp_position_bed.bed"
         write_bed_file(bed, position_file, header)
-        execute_mpileup(bed, mpileup_input, pileupfile, args.quality_thresh, mpileup_ref)
+        execute_mpileup(bed, mpileup_input, pileupfile, args.quality_thresh, mpileup_ref,
+                        region=header)
 
     if tmp_chry_bam is not None and tmp_chry_bam.exists():
         tmp_chry_bam.unlink()
