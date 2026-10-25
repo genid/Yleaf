@@ -101,7 +101,8 @@ def _load_chry_seq(reference_genome: str) -> Union[str, None]:
         return None
 
 
-def _init_vcf_worker(markerfile_path: Path, reference_genome: str, tree_name: str = None) -> None:
+def _init_vcf_worker(markerfile_path: Path, reference_genome: str, tree_name: str = None,
+                     load_chry: bool = True) -> None:
     """Pool initializer: load markerfile, chrY FASTA, and optionally the tree once per worker."""
     global _WORKER_MARKERFILE, _WORKER_CHRY_SEQ, _WORKER_TREE
     _WORKER_MARKERFILE = pd.read_csv(
@@ -110,7 +111,8 @@ def _init_vcf_worker(markerfile_path: Path, reference_genome: str, tree_name: st
         dtype={"chr": str, "marker_name": str, "haplogroup": str,
                "pos": int, "mutation": str, "anc": str, "der": str},
     ).drop_duplicates(subset=['haplogroup', 'pos'], keep='first')
-    _WORKER_CHRY_SEQ = _load_chry_seq(reference_genome)
+    # chrY is only needed for reference inference; skip it (and its download) under --no-ref-inference
+    _WORKER_CHRY_SEQ = _load_chry_seq(reference_genome) if load_chry else None
     if tree_name:
         _WORKER_TREE = Tree(get_tree_path(tree_name))
 
@@ -839,7 +841,8 @@ def main_vcf_multi_tree(
         jobs = [(sample, tree) for sample in sample_vcf_files]
         with multiprocessing.Pool(processes=args.threads,
                                   initializer=_init_vcf_worker,
-                                  initargs=(mf_path, args.reference_genome, tree)) as p:
+                                  initargs=(mf_path, args.reference_genome, tree,
+                                            not getattr(args, 'no_ref_inference', False))) as p:
             for _ in p.imap_unordered(
                 partial(_run_vcf_job, base_out_folder=base_out_folder, args=args,
                         markerfile_paths={tree: mf_path}),
@@ -880,7 +883,8 @@ def main_vcf(
         LOG.info(f"[PROGRESS] extraction 0/{total_vcf}")
         with multiprocessing.Pool(processes=args.threads,
                                   initializer=_init_vcf_worker,
-                                  initargs=(path_markerfile, args.reference_genome, args.tree)) as p:
+                                  initargs=(path_markerfile, args.reference_genome, args.tree,
+                                            not getattr(args, 'no_ref_inference', False))) as p:
             for i, _ in enumerate(
                 p.imap_unordered(partial(run_vcf, path_markerfile, base_out_folder, args), sample_vcf_files),
                 1,
@@ -892,7 +896,8 @@ def main_vcf(
         LOG.info(f"[PROGRESS] extraction 0/{total_vcf}")
         with multiprocessing.Pool(processes=args.threads,
                                   initializer=_init_vcf_worker,
-                                  initargs=(path_markerfile, args.reference_genome, args.tree)) as p:
+                                  initargs=(path_markerfile, args.reference_genome, args.tree,
+                                            not getattr(args, 'no_ref_inference', False))) as p:
             for i, _ in enumerate(
                 p.imap_unordered(partial(run_vcf, path_markerfile, base_out_folder, args), files),
                 1,
@@ -950,7 +955,9 @@ def main():
         _apply_ref_dir_override(args.reference_genome)
 
     # make sure the reference genome is present before doing something else, if not present it is downloaded
-    check_reference(args.reference_genome)
+    # (VCF input with --no-ref-inference never reads the reference, so skip the ~3 GB download)
+    if not (args.vcffile and getattr(args, 'no_ref_inference', False)):
+        check_reference(args.reference_genome)
 
     if multi_tree:
         if args.fastq:
