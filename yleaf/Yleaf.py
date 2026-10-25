@@ -225,7 +225,7 @@ def _run_vcf_inner(
     sample_vcf_file_txt = sample_vcf_folder / (_vcf_stem(sample_vcf_file) + ".txt")
 
     if has_ad:
-        cmd = f"bcftools query -f '%CHROM\t%POS\t%REF\t%ALT[\t%AD]\n' \"{sample_vcf_file}\" > \"{sample_vcf_file_txt}\""
+        cmd = f'bcftools query -f "%CHROM\\t%POS\\t%REF\\t%ALT[\\t%AD]\\n" "{sample_vcf_file}" > "{sample_vcf_file_txt}"'
         call_command(cmd)
         pileupfile = pd.read_csv(sample_vcf_file_txt, dtype=str, header=None, sep="\t")
         _unlink_safe(sample_vcf_file_txt)
@@ -270,7 +270,7 @@ def _run_vcf_inner(
     else:
         # GT-only VCF: derive called_base from genotype allele index; no read depth available.
         LOG.debug(f"GT-only VCF (no FORMAT/AD): using genotype calls for {sample_vcf_file.name}")
-        cmd = f"bcftools query -f '%CHROM\t%POS\t%REF\t%ALT[\t%GT]\n' \"{sample_vcf_file}\" > \"{sample_vcf_file_txt}\""
+        cmd = f'bcftools query -f "%CHROM\\t%POS\\t%REF\\t%ALT[\\t%GT]\\n" "{sample_vcf_file}" > "{sample_vcf_file_txt}"'
         call_command(cmd)
         pileupfile = pd.read_csv(sample_vcf_file_txt, dtype=str, header=None, sep="\t")
         _unlink_safe(sample_vcf_file_txt)
@@ -740,7 +740,7 @@ def _main_vcf_split_inner(
         call_command(cmd)
 
     # get chromosome annotation from whichever file we are using
-    cmd = f'bcftools query -f "%CHROM\n" "{active_vcf}"'
+    cmd = f'bcftools query -f "%CHROM\\n" "{active_vcf}"'
     process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
     stdout, stderr = process.communicate()
     if process.returncode != 0:
