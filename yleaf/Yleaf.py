@@ -174,6 +174,21 @@ def run_vcf(
         out_suffix: str = '',
         tree_name: str = None,
 ):
+    # pool worker: a SystemExit escaping here never returns a result and hangs the pool (#59)
+    try:
+        _run_vcf_inner(path_markerfile, base_out_folder, args, sample_vcf_file, out_suffix, tree_name)
+    except SystemExit as e:
+        LOG.warning(f"Skipping {sample_vcf_file.name}: {e}")
+
+
+def _run_vcf_inner(
+        path_markerfile: Path,
+        base_out_folder: Path,
+        args: argparse.Namespace,
+        sample_vcf_file: Path,
+        out_suffix: str = '',
+        tree_name: str = None,
+):
     LOG.debug("Starting with extracting haplogroups...")
     # Use per-worker cached markerfile (single-tree global, or multi-tree lazy dict).
     _mf_key = str(path_markerfile)
@@ -671,6 +686,21 @@ def main_plink_multi_tree(args: argparse.Namespace, base_out_folder: Path, trees
 
 
 def main_vcf_split(
+        position_bed_file: Path,
+        base_out_folder: Path,
+        args: argparse.Namespace,
+        n_threads: int,
+        vcf_file: Path
+):
+    # pool worker: a SystemExit escaping here never returns a result and hangs the pool (#59)
+    try:
+        return _main_vcf_split_inner(position_bed_file, base_out_folder, args, n_threads, vcf_file)
+    except SystemExit as e:
+        LOG.warning(f"Skipping {vcf_file.name}: {e}")
+        return None
+
+
+def _main_vcf_split_inner(
         position_bed_file: Path,
         base_out_folder: Path,
         args: argparse.Namespace,
