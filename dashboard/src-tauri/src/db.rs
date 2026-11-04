@@ -29,6 +29,7 @@ pub struct Job {
     pub ancient_dna: bool,
     pub private_mutations: bool,
     pub collapsed_draw_mode: bool,
+    pub no_ref_inference: bool,
 }
 
 pub fn init_schema(conn: &Connection) -> SqlResult<()> {
@@ -78,7 +79,8 @@ pub fn init_schema(conn: &Connection) -> SqlResult<()> {
             draw_haplogroups   INTEGER NOT NULL DEFAULT 0,
             ancient_dna        INTEGER NOT NULL DEFAULT 0,
             private_mutations  INTEGER NOT NULL DEFAULT 0,
-            collapsed_draw_mode INTEGER NOT NULL DEFAULT 0
+            collapsed_draw_mode INTEGER NOT NULL DEFAULT 0,
+            no_ref_inference   INTEGER NOT NULL DEFAULT 0
         );",
     )?;
     // Migrate existing DBs — ignore errors if columns already exist
@@ -93,6 +95,7 @@ pub fn init_schema(conn: &Connection) -> SqlResult<()> {
         "ALTER TABLE jobs ADD COLUMN ancient_dna         INTEGER NOT NULL DEFAULT 0",
         "ALTER TABLE jobs ADD COLUMN private_mutations   INTEGER NOT NULL DEFAULT 0",
         "ALTER TABLE jobs ADD COLUMN collapsed_draw_mode INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE jobs ADD COLUMN no_ref_inference    INTEGER NOT NULL DEFAULT 0",
     ] {
         let _ = conn.execute_batch(col);
     }
@@ -143,18 +146,19 @@ pub fn insert_job(
     ancient_dna: bool,
     private_mutations: bool,
     collapsed_draw_mode: bool,
+    no_ref_inference: bool,
 ) -> SqlResult<i64> {
     conn.execute(
         "INSERT INTO jobs (sample_name, sample_path, output_dir, trees, status, start_ts,
                            reference_genome, threads, reads_threshold, quality_thresh,
                            base_majority, prediction_quality, draw_haplogroups, ancient_dna,
-                           private_mutations, collapsed_draw_mode)
-         VALUES (?1,?2,?3,?4,'running',?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15)",
+                           private_mutations, collapsed_draw_mode, no_ref_inference)
+         VALUES (?1,?2,?3,?4,'running',?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16)",
         params![
             sample_name, sample_path, output_dir, trees, start_ts,
             reference_genome, threads, reads_threshold, quality_thresh,
             base_majority, prediction_quality, draw_haplogroups as i64, ancient_dna as i64,
-            private_mutations as i64, collapsed_draw_mode as i64
+            private_mutations as i64, collapsed_draw_mode as i64, no_ref_inference as i64
         ],
     )?;
     Ok(conn.last_insert_rowid())
@@ -205,7 +209,7 @@ pub fn list_jobs(conn: &Connection) -> SqlResult<Vec<Job>> {
                 total_reads, valid_markers,
                 reference_genome, threads, reads_threshold, quality_thresh,
                 base_majority, prediction_quality, draw_haplogroups, ancient_dna,
-                private_mutations, collapsed_draw_mode
+                private_mutations, collapsed_draw_mode, no_ref_inference
          FROM jobs ORDER BY start_ts DESC",
     )?;
     let rows = stmt.query_map([], |row| {
@@ -235,6 +239,7 @@ pub fn list_jobs(conn: &Connection) -> SqlResult<Vec<Job>> {
             ancient_dna: row.get::<_, Option<i64>>(22)?.unwrap_or(0) != 0,
             private_mutations: row.get::<_, Option<i64>>(23)?.unwrap_or(0) != 0,
             collapsed_draw_mode: row.get::<_, Option<i64>>(24)?.unwrap_or(0) != 0,
+            no_ref_inference: row.get::<_, Option<i64>>(25)?.unwrap_or(0) != 0,
         })
     })?;
     rows.collect()

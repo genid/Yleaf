@@ -145,6 +145,7 @@ pub async fn run_yleaf(
     private_mutations: bool,
     collapsed_draw_mode: bool,
     mixture_mode: bool,
+    no_ref_inference: bool,
 ) -> Result<Vec<i64>, String> {
     let inputs = resolve_inputs_all(&bam_path)?;
     let multi = inputs.len() > 1;
@@ -221,6 +222,10 @@ pub async fn run_yleaf(
         if mixture_mode {
             args.push("-mix".into());
         }
+        // VCF-only flag; skip it for BAM/CRAM/FASTQ jobs from a mixed directory
+        if no_ref_inference && input_flag == "-vcf" {
+            args.push("--no-ref-inference".into());
+        }
         args.push("--report-json".into());
         args.push(format!("{}/report.json", job_output_dir));
         args.push("-force".into());
@@ -247,6 +252,7 @@ pub async fn run_yleaf(
                 &reference_genome, threads as i64, reads_threshold as i64,
                 quality_thresh as i64, base_majority as i64, prediction_quality,
                 draw_haplogroups, ancient_dna, private_mutations, collapsed_draw_mode,
+                no_ref_inference,
             ).map_err(|e| e.to_string())?
         };
 

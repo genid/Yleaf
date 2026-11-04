@@ -34,6 +34,7 @@
     ancient_dna: boolean;
     private_mutations: boolean;
     collapsed_draw_mode: boolean;
+    no_ref_inference: boolean;
   }
 
   interface HgPrediction {
@@ -259,6 +260,7 @@
     collapsedDrawMode = job.collapsed_draw_mode;
     ancientDna = job.ancient_dna;
     privateMutations = job.private_mutations;
+    noRefInference = job.no_ref_inference;
     selectedJob = null;
     jobResults = null;
     view = "submit";
@@ -291,6 +293,7 @@
   let ancientDna = $state(false);
   let privateMutations = $state(false);
   let mixtureMode = $state(false);
+  let noRefInference = $state(false);
 
   // Set to the temp dir path when the user multi-selected files via Browse
   // file; cleaned up on newRun(). Empty when bamPath points at a real file
@@ -723,6 +726,7 @@
     ancientDna = false;
     privateMutations = false;
     mixtureMode = false;
+    noRefInference = false;
 
     selectedJob = null;
     jobResults = null;
@@ -809,6 +813,7 @@
         ancientDna,
         privateMutations,
         mixtureMode,
+        noRefInference,
       });
       for (const jobId of jobIds) {
         runningJobIds.add(jobId);
@@ -1219,6 +1224,12 @@
                             text-slate-700 dark:text-pale">
                 <input type="checkbox" bind:checked={mixtureMode} class="accent-brand" />
                 Mixture mode (-mix)
+              </label>
+              <label class="flex items-center gap-2 text-[0.82rem] cursor-pointer
+                            text-slate-700 dark:text-pale"
+                     title="For array/panel VCFs: markers absent from the VCF are treated as untyped instead of reference">
+                <input type="checkbox" bind:checked={noRefInference} class="accent-brand" />
+                Panel/array VCF: don't infer missing markers from reference (--no-ref-inference)
               </label>
             </div>
           </div>
